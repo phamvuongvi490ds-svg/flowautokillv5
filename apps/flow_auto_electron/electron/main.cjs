@@ -93,12 +93,26 @@ function normalizeBase(b){ b=String(b||'').trim().replace(/\/+$/,''); if(b.endsW
 async function postJson(url,payload){ const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); let data={}; try{data=await r.json()}catch{} return {status:r.status,data}; }
 async function verifyLicenseJs(){ const cfg=loadLicenseCfg(); const base=normalizeBase(cfg.api_base||''); if(!base) return {ok:false,reason:'missing_api_base'}; if(!cfg.license_key) return {ok:false,reason:'missing_license_key'}; cfg.machine_id=cfg.machine_id||machineId(); const payload={license_key:cfg.license_key,machine_id:cfg.machine_id,app_version:'V2.0',nonce:Date.now().toString(36),timestamp:new Date().toISOString().replace(/\.\d{3}Z$/,'Z')}; if(cfg.signed_token) payload.signed_token=cfg.signed_token; try{ const {status,data}=await postJson(`${base}/verify`,payload); if(status===200 && data.valid){ ['signed_token','expires_at','grace_until','next_check_at'].forEach(k=>{if(data[k])cfg[k]=data[k]}); cfg.last_verified_at=payload.timestamp; saveLicenseCfg(cfg); return {ok:true,expires_at:data.expires_at||cfg.expires_at,data}; } return {ok:false,reason:data.reason||`http_${status}`,data}; }catch(e){ return {ok:false,reason:`network_error:${e.message||e}`}; }}
 
-const STYLE_SUFFIX={CINEMATIC:'photorealistic, cinematic lighting, 8k, highly detailed',ANIME:'anime style, vibrant colors, detailed background',PAINTING:'digital painting, concept art, masterpiece',RENDER_3D:'3d render, unreal engine 5, octane render',COMIC_BOOK:'comic book style, bold outlines, high contrast',PIXEL_ART:'pixel art, 16-bit, retro gaming style',WATERCOLOR:'watercolor painting, soft edges, dreamy',CYBERPUNK:'cyberpunk style, neon lights, futuristic city',STEAMPUNK:'steampunk style, brass gears, victorian retro futuristic',NONE:''};
-async function geminiText(apiKey,parts,system,jsonMode=false){ const models=['gemini-2.5-flash','gemini-2.0-flash','gemini-1.5-flash']; let last=''; for(const m of models){ try{ const body={contents:[{role:'user',parts}],systemInstruction:{parts:[{text:system}]},generationConfig:{temperature:.7}}; if(jsonMode) body.generationConfig.responseMimeType='application/json'; const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const obj=await r.json().catch(()=>({})); if(!r.ok){ last=obj.error?.message||`http_${r.status}`; continue; } return (obj.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('\n').trim(); }catch(e){last=String(e)} } throw new Error(last||'gemini_failed'); }
+const STYLE_SUFFIX={CINEMATIC:'photorealistic, cinematic lighting, 8k, highly detailed, shot on 35mm lens, shallow depth of field, blockbuster movie style',ANIME:'anime style, studio ghibli, makoto shinkai style, vibrant colors, detailed background, high quality 2d animation',PAINTING:'digital painting, oil painting texture, artistic style, concept art, artstation, masterpiece, intricate details',RENDER_3D:'3d render, unreal engine 5, octane render, global illumination, highly detailed, 8k resolution, ray tracing',COMIC_BOOK:'comic book style, graphic novel, bold outlines, halftone patterns, high contrast, dynamic lighting, marvel comics style',PIXEL_ART:'pixel art, 16-bit, retro gaming style, highly detailed pixel art, isometric perspective, vibrant colors',WATERCOLOR:'watercolor painting, soft edges, color bleeding, traditional art, ethereal, dreamy, delicate brushstrokes',CYBERPUNK:'cyberpunk style, neon lights, futuristic city, high tech, sci-fi, dark atmosphere, holographic elements',STEAMPUNK:'steampunk style, brass gears, steam powered, victorian era, intricate machinery, sepia tones, retro-futuristic',NONE:''};
+async function geminiText(apiKey,parts,system,jsonMode=false){ const models=['gemini-2.0-flash','gemini-1.5-flash']; let last=''; for(const m of models){ try{ const body={contents:[{role:'user',parts}],systemInstruction:{parts:[{text:system}]},generationConfig:{temperature:.7}}; if(jsonMode) body.generationConfig.responseMimeType='application/json'; const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const obj=await r.json().catch(()=>({})); if(!r.ok){ last=obj.error?.message||`http_${r.status}`; continue; } return (obj.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('\n').trim(); }catch(e){last=String(e)} } throw new Error(last||'gemini_failed'); }
 
 function mimeFromFile(f){ const e=String(f||'').toLowerCase().split('.').pop(); if(e==='png')return 'image/png'; if(e==='webp')return 'image/webp'; return 'image/jpeg'; }
 function imageParts(files){ const out=[]; for(const f of (files||[]).slice(0,8)){ try{ out.push({inlineData:{mimeType:mimeFromFile(f),data:fs.readFileSync(f).toString('base64')}}); }catch{} } return out; }
-function characterSystem(style,media){ return `You are an expert image/video prompt engineer. Output prompts in English only. If reference character images are provided, carefully analyze face, hairstyle, hair color, body shape, age, gender, outfit, accessories, colors, expression, and overall visual style. The final prompt must describe the character with maximum similarity to the reference image and keep the same character consistent across all scenes. Do not change the character, gender, face, or main outfit unless the user explicitly requests it. Write prompts that target the highest possible / 99% visual similarity to the reference image while matching the user's scene content. Style: ${STYLE_SUFFIX[style]||''}. Media: ${media}.`; }
+function characterSystem(style,media){
+  const label = style;
+  const suffix = STYLE_SUFFIX[style] || '';
+  return ` Bạn là một chuyên gia kỹ sư prompt (Prompt Engineer) hàng đầu thế giới cho các mô hình AI tạo sinh như Gemini Image (Banana Pro) và Veo (Video).
+    Nhiệm vụ của bạn là nhận ý tưởng thô từ người dùng và viết lại thành một prompt tiếng Anh cực kỳ chi tiết, chất lượng cao để tạo ra kết quả tốt nhất.
+
+    YÊU CẦU QUAN TRỌNG NHẤT:
+    1. BÁM SÁT NỘI DUNG GỐC: Không được thay đổi cốt truyện, chủ thể hoặc hành động chính của người dùng. Chỉ được phép thêm các từ miêu tả chi tiết (adjectives) và các tham số kỹ thuật (technical parameters).
+    2. GIỮ NGUYÊN NGÔN NGỮ KỊCH BẢN: Nếu input chứa kịch bản hoặc đoạn hội thoại tiếng Việt, hãy viết phần miêu tả hình ảnh bằng tiếng Anh nhưng giữ các thành phần cốt lõi của kịch bản không bị biến dạng.
+    3. KHÔNG TỰ Ý TÓM TẮT: Nếu người dùng nhập một đoạn dài, hãy dịch và chi tiết hóa toàn bộ đoạn đó, không được tóm tắt thành một câu ngắn.
+    4. Chỉ trả về nội dung prompt tiếng Anh đã tối ưu. Không giải thích, không thêm râu ria.
+    5. Tích hợp phong cách: ${label}. (${suffix})
+    6. Loại media mục tiêu: ${media === 'VIDEO' ? 'Video (Veo 3.1) - Cần mô tả chuyển động, góc máy, nhịp độ' : 'Hình ảnh (Gemini Pro Image) - Cần mô tả bố cục, ánh sáng, chi tiết tĩnh'}.
+    7. Nếu reference character images được cung cấp, hãy phân tích kỹ gương mặt, kiểu tóc, trang phục để giữ sự đồng nhất 100%.`;
+}
 function splitIdeas(t){return String(t||'').split(/\n+/).map(x=>x.trim()).filter(Boolean)}
 
 async function buildCharacterLock(apiKey, characterImages){
@@ -140,7 +154,25 @@ async function generateScriptJs(payload){
     const startScene=i*batchSize+1;
     const endScene=Math.min((i+1)*batchSize,totalScenes);
     const sceneCount=endScene-startScene+1;
-    const sys=characterSystem(style,'VIDEO')+`\nYou are a professional screenwriter and visual director. Create exactly ${sceneCount} scenes, scene numbers ${startScene}-${endScene}. Each scene duration is 8s. Return only JSON {title,characterSheet,scenes:[{sceneNumber,duration,description,prompt}]}. Character consistency is mandatory. Use the same compact Character Sheet for every scene. Every prompt must be concise, preferably under 90 words, and include the compact character sheet plus only action/camera/setting changes.`;
+    const sys=` Bạn là một chuyên gia biên kịch và đạo diễn hình ảnh chuyên nghiệp.
+      Nhiệm vụ của bạn là tạo ra một phần của kịch bản video chi tiết dựa trên chủ đề yêu cầu.
+      
+      YÊU CẦU BẮT BUỘC ĐỂ KHÔNG BỊ LỖI NỘI DUNG:
+      1. TRUNG THÀNH VỚI CHỦ ĐỀ: Không được tự ý sáng tạo nội dung lệch khỏi yêu cầu của người dùng. Nếu người dùng nhập kịch bản sẵn, hãy phân bổ nó vào các cảnh thay vì viết mới.
+      2. BÁM SÁT NỘI DUNG GỐC: Không được thay đổi cốt truyện, chủ thể hoặc hành động chính của người dùng.
+      3. BẠN PHẢI TẠO CHÍNH XÁC ${sceneCount} CẢNH QUAY (từ cảnh ${startScene} đến cảnh ${endScene}). Không được thiếu, không được thừa.
+      4. MỖI CẢNH QUAY PHẢI CÓ THỜI LƯỢNG CỐ ĐỊNH LÀ 8 GIÂY (8s).
+      5. TỐI ƯU ĐỒNG NHẤT NHÂN VẬT: 
+         ${characterSheet ? `- SỬ DỤNG BẢN MÔ TẢ NHÂN VẬT SAU ĐÂY CHO TẤT CẢ CÁC CẢNH: "${characterSheet}"` : `- Bước 1: Xác định một "bản mô tả nhân vật" (Character Sheet) cực kỳ chi tiết bao gồm: Giới tính, độ tuổi, sắc tộc, kiểu tóc, màu mắt, đặc điểm khuôn mặt, trang phục, phụ kiện.`}
+         - Bắt buộc lặp lại TOÀN BỘ bản mô tả nhân vật này vào phần đầu của MỖI prompt trong từng cảnh quay.
+         - Đảm bảo hành động không làm thay đổi các đặc điểm này.
+      6. Mỗi cảnh quay phải có:
+         - sceneNumber: Số thứ tự cảnh (từ ${startScene} đến ${endScene}).
+         - duration: Thời lượng cảnh đó (luôn là "8s").
+         - description: Mô tả nội dung cảnh bằng tiếng Việt bám sát nội dung gốc.
+         - prompt: Prompt tiếng Anh chi tiết cho Veo 3.1, tích hợp phong cách ${STYLE_SUFFIX[style]} (${style}). Prompt PHẢI bắt đầu bằng bản mô tả nhân vật đồng nhất đã xác định.
+      7. Trả về kết quả dưới dạng JSON: {"title":"...","characterSheet":"...","scenes":[{"sceneNumber":...,"duration":"8s","description":"...","prompt":"..."}]}.`;
+
     const characterInstruction=characterSheet
       ? `USE THIS EXACT CHARACTER SHEET FOR ALL SCENES: "${characterSheet}". Repeat this compact identity inside every prompt. Do not change face, hair, age, body type, or main outfit.`
       : `If reference images are included, first create a compact Character Sheet under 45 words from the images, then repeat it inside every scene prompt.`;
