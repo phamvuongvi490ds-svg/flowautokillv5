@@ -66,11 +66,14 @@ def refine_prompt(api_key: str, raw_input: str, style: str, media_type: str) -> 
     system_instruction = f"""
 Bạn là một chuyên gia kỹ sư prompt (Prompt Engineer) hàng đầu thế giới cho các mô hình AI tạo sinh như Gemini Image (Banana Pro) và Veo (Video).
 Nhiệm vụ của bạn là nhận ý tưởng thô từ người dùng và viết lại thành một prompt tiếng Anh cực kỳ chi tiết, chất lượng cao để tạo ra kết quả tốt nhất.
-YÊU CẦU:
-1. Chỉ trả về nội dung prompt tiếng Anh đã tối ưu. Không giải thích, không thêm râu ria.
-2. Tích hợp phong cách: {label}. ({suffix})
-3. Loại media mục tiêu: {'Video (Veo 3.1) - Cần mô tả chuyển động, góc máy' if media_type == 'VIDEO' else 'Hình ảnh (Gemini Pro Image) - Cần mô tả bố cục, chi tiết tĩnh'}.
-4. Nếu input là tiếng Việt, hãy dịch và phóng tác sang tiếng Anh thật hay.
+
+YÊU CẦU QUAN TRỌNG NHẤT:
+1. BÁM SÁT NỘI DUNG GỐC: Không được thay đổi cốt truyện, chủ thể hoặc hành động chính của người dùng. Chỉ được phép thêm các từ miêu tả chi tiết (adjectives) và các tham số kỹ thuật (technical parameters).
+2. GIỮ NGUYÊN NGÔN NGỮ KỊCH BẢN: Nếu input chứa kịch bản hoặc đoạn hội thoại tiếng Việt, hãy viết phần miêu tả hình ảnh bằng tiếng Anh nhưng giữ các thành phần cốt lõi của kịch bản không bị biến dạng.
+3. KHÔNG TỰ Ý TÓM TẮT: Nếu người dùng nhập một đoạn dài, hãy dịch và chi tiết hóa toàn bộ đoạn đó, không được tóm tắt thành một câu ngắn.
+4. Chỉ trả về nội dung prompt tiếng Anh đã tối ưu. Không giải thích, không thêm râu ria.
+5. Tích hợp phong cách: {label}. ({suffix})
+6. Loại media mục tiêu: {'Video (Veo 3.1) - Cần mô tả chuyển động, góc máy, nhịp độ' if media_type == 'VIDEO' else 'Hình ảnh (Gemini Pro Image) - Cần mô tả bố cục, ánh sáng, chi tiết tĩnh'}.
 """
     return _call_models(api_key, [{"text": raw_input}], system_instruction, temperature=0.7) or raw_input
 
@@ -125,12 +128,14 @@ def generate_video_script(api_key: str, topic: str, duration: str, style: str, c
     system_instruction = f"""
 Bạn là một chuyên gia biên kịch và đạo diễn hình ảnh chuyên nghiệp.
 Tạo kịch bản video chi tiết dựa trên chủ đề yêu cầu.
-YÊU CẦU BẮT BUỘC:
-1. Tạo chính xác {total_scenes} cảnh quay.
-2. Mỗi cảnh quay thời lượng cố định 8s.
-3. Tối ưu đồng nhất nhân vật: nếu có ảnh tham chiếu, phân tích ảnh để tạo character sheet chính xác; lặp lại character sheet trong prompt từng cảnh.
-4. Mỗi cảnh có sceneNumber, duration, description tiếng Việt, prompt tiếng Anh chi tiết cho Veo 3.1, phong cách {label} ({suffix}).
-5. Chỉ trả JSON hợp lệ dạng: {{"title":"...","characterSheet":"...","scenes":[{{"sceneNumber":1,"duration":"8s","description":"...","prompt":"..."}}]}}
+
+YÊU CẦU BẮT BUỘC ĐỂ KHÔNG BỊ LỖI NỘI DUNG:
+1. TRUNG THÀNH VỚI CHỦ ĐỀ: Không được tự ý sáng tạo nội dung lệch khỏi yêu cầu của người dùng. Nếu người dùng nhập kịch bản sẵn, hãy phân bổ nó vào các cảnh thay vì viết mới.
+2. TỔ CHỨC CẢNH: Tạo chính xác {total_scenes} cảnh quay. Mỗi cảnh 8s.
+3. CHI TIẾT HÓA PROMPT: Viết prompt tiếng Anh cho Veo 3.1 phải cực kỳ chi tiết, mô tả rõ nhân vật, hành động, góc máy và ánh sáng theo phong cách {label} ({suffix}).
+4. ĐỒNG NHẤT NHÂN VẬT: Nếu có ảnh tham chiếu, miêu tả nhân vật trong mọi cảnh phải khớp 100% với ảnh đó.
+5. NGÔN NGỮ: "description" viết bằng tiếng Việt bám sát nội dung gốc. "prompt" viết bằng tiếng Anh kỹ thuật cao.
+6. Trả về JSON: {{"title":"...","characterSheet":"...","scenes":[{{"sceneNumber":1,"duration":"8s","description":"Tiếng Việt bám sát nội dung người dùng nhập","prompt":"English technical prompt"}}]}}
 """
     parts = _image_parts(character_images)
     parts.append({"text": f"Chủ đề: {topic}. Tổng cảnh: {total_scenes}. Hãy giữ nhân vật đồng nhất theo ảnh tham chiếu nếu có."})
