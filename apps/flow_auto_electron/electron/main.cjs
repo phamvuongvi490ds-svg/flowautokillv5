@@ -105,21 +105,22 @@ function characterSystem(style,media){
     Nhiệm vụ của bạn là nhận ý tưởng thô từ người dùng và viết lại thành một prompt tiếng Anh cực kỳ chi tiết, chất lượng cao để tạo ra kết quả tốt nhất.
 
     YÊU CẦU QUAN TRỌNG NHẤT:
-    1. BÁM SÁT NỘI DUNG GỐC: Không được thay đổi cốt truyện, chủ thể hoặc hành động chính của người dùng. Chỉ được phép thêm các từ miêu tả chi tiết (adjectives) và các tham số kỹ thuật (technical parameters).
-    2. GIỮ NGUYÊN NGÔN NGỮ KỊCH BẢN: Nếu input chứa kịch bản hoặc đoạn hội thoại tiếng Việt, hãy viết phần miêu tả hình ảnh bằng tiếng Anh nhưng giữ các thành phần cốt lõi của kịch bản không bị biến dạng.
-    3. KHÔNG TỰ Ý TÓM TẮT: Nếu người dùng nhập một đoạn dài, hãy dịch và chi tiết hóa toàn bộ đoạn đó, không được tóm tắt thành một câu ngắn.
-    4. Chỉ trả về nội dung prompt tiếng Anh đã tối ưu. Không giải thích, không thêm râu ria.
-    5. Tích hợp phong cách: ${label}. (${suffix})
-    6. Loại media mục tiêu: ${media === 'VIDEO' ? 'Video (Veo 3.1) - Cần mô tả chuyển động, góc máy, nhịp độ' : 'Hình ảnh (Gemini Pro Image) - Cần mô tả bố cục, ánh sáng, chi tiết tĩnh'}.
-    7. Nếu reference character images được cung cấp, hãy phân tích kỹ gương mặt, kiểu tóc, trang phục để giữ sự đồng nhất 100%.`;
+    1. TUYỆT ĐỐI KHÔNG THAY ĐỔI ĐỐI TƯỢNG CHÍNH: Nếu kịch bản là về "chú chó" (dog), "con mèo" (cat), hay "vật thể" (object), TUYỆT ĐỐI KHÔNG ĐƯỢC biến nó thành con người (human). Phải giữ đúng loài vật/đối tượng mà người dùng đã nhập.
+    2. BÁM SÁT NỘI DUNG GỐC: Không được thay đổi cốt truyện, chủ thể hoặc hành động chính của người dùng. Chỉ được phép thêm các từ miêu tả chi tiết (adjectives) và các tham số kỹ thuật (technical parameters).
+    3. GIỮ NGUYÊN NGÔN NGỮ KỊCH BẢN: Nếu input chứa kịch bản hoặc đoạn hội thoại tiếng Việt, hãy viết phần miêu tả hình ảnh bằng tiếng Anh nhưng giữ các thành phần cốt lõi của kịch bản không bị biến dạng.
+    4. KHÔNG TỰ Ý TÓM TẮT: Nếu người dùng nhập một đoạn dài, hãy dịch và chi tiết hóa toàn bộ đoạn đó, không được tóm tắt thành một câu ngắn.
+    5. Chỉ trả về nội dung prompt tiếng Anh đã tối ưu. Không giải thích, không thêm râu ria.
+    6. Tích hợp phong cách: ${label}. (${suffix})
+    7. Loại media mục tiêu: ${media === 'VIDEO' ? 'Video (Veo 3.1) - Cần mô tả chuyển động, góc máy, nhịp độ' : 'Hình ảnh (Gemini Pro Image) - Cần mô tả bố cục, ánh sáng, chi tiết tĩnh'}.
+    8. Nếu reference character images được cung cấp, hãy phân tích kỹ loài vật/nhân vật, kiểu dáng, trang phục để giữ sự đồng nhất 100%.`;
 }
 function splitIdeas(t){return String(t||'').split(/\n+/).map(x=>x.trim()).filter(Boolean)}
 
 async function buildCharacterLock(apiKey, characterImages){
   const imgs=imageParts(characterImages);
   if(!imgs.length) return '';
-  const sys='You are a strict character consistency analyst. Analyze the reference character images and create a CHARACTER LOCK in English. Include only the most important stable identity traits: age range, gender presentation, face shape, hairstyle/hair color, skin tone, body type, main outfit, and 1-2 unique identifiers. Keep it compact, maximum 45 words. Do not invent unseen traits.';
-  return await geminiText(apiKey,[...imgs,{text:'Create a compact reusable CHARACTER LOCK, maximum 45 words, for AI video prompts. It must keep the same person identical across scenes without making prompts too long.'}],sys,false);
+  const sys='You are a strict subject consistency analyst. Analyze the reference images and create a SUBJECT LOCK in English. Identify the species/subject first (e.g., Golden Retriever dog, robotic arm, young woman). Include only the most important stable identity traits: species, color, breed/type, facial features, body markings, and clothing/accessories. Keep it compact, maximum 45 words. Do not invent unseen traits.';
+  return await geminiText(apiKey,[...imgs,{text:'Create a compact reusable SUBJECT LOCK, maximum 45 words, for AI video prompts. Identify if it is an animal or human and describe it accurately to keep it identical across scenes.'}],sys,false);
 }
 function lockPrompt(prompt, characterLock){
   if(!characterLock) return prompt;
