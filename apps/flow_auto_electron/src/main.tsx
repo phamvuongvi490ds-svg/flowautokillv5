@@ -111,13 +111,15 @@ function App(){
   function toggleScene(i:number){setTimeline(()=>baseTimeline().map((x,k)=>k===i?{...x,keep:!x.keep}:x))}
   async function generatePrompt(){append('Đang tạo prompt AI tiếng Anh bám sát ảnh nhân vật...'); const r=await api().generatePrompt({apiKey:firstKey(),style,mediaType,ideas,characterImages}); if(r?.generated?.file)setGeneratedFile(r.generated.file); append(r)}
   async function generateScript(){
+    const scriptTopic=(topic || ideas || '').trim();
+    if(!scriptTopic){ append('❌ Vui lòng nhập Ý tưởng / chủ đề kịch bản trước.'); return; }
     append('🎬 Đang tạo kịch bản video...');
     const duration=`${durationValue} ${durationUnit}`;
     try {
-      const r=await api().generateScript({apiKey:apiKeys,style,topic,duration,characterImages});
+      const r=await api().generateScript({apiKey:apiKeys,style,topic:scriptTopic,duration,characterImages});
       if(r?.ok) {
         if(r.generated?.file) setGeneratedFile(r.generated.file);
-        append('✅ Đã tạo kịch bản thành công.');
+        append(`✅ Đã tạo kịch bản thành công: ${r.generated?.count || 0} cảnh.`);
       } else {
         append(`❌ Lỗi: ${r?.error || 'Không rõ nguyên nhân'}`);
       }
