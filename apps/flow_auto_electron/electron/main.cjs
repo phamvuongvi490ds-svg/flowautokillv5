@@ -94,7 +94,32 @@ async function postJson(url,payload){ const r=await fetch(url,{method:'POST',hea
 async function verifyLicenseJs(){ const cfg=loadLicenseCfg(); const base=normalizeBase(cfg.api_base||''); if(!base) return {ok:false,reason:'missing_api_base'}; if(!cfg.license_key) return {ok:false,reason:'missing_license_key'}; cfg.machine_id=cfg.machine_id||machineId(); const payload={license_key:cfg.license_key,machine_id:cfg.machine_id,app_version:'V2.0',nonce:Date.now().toString(36),timestamp:new Date().toISOString().replace(/\.\d{3}Z$/,'Z')}; if(cfg.signed_token) payload.signed_token=cfg.signed_token; try{ const {status,data}=await postJson(`${base}/verify`,payload); if(status===200 && data.valid){ ['signed_token','expires_at','grace_until','next_check_at'].forEach(k=>{if(data[k])cfg[k]=data[k]}); cfg.last_verified_at=payload.timestamp; saveLicenseCfg(cfg); return {ok:true,expires_at:data.expires_at||cfg.expires_at,data}; } return {ok:false,reason:data.reason||`http_${status}`,data}; }catch(e){ return {ok:false,reason:`network_error:${e.message||e}`}; }}
 
 const STYLE_SUFFIX={CINEMATIC:'photorealistic, cinematic lighting, 8k, highly detailed, shot on 35mm lens, shallow depth of field, blockbuster movie style',ANIME:'anime style, studio ghibli, makoto shinkai style, vibrant colors, detailed background, high quality 2d animation',PAINTING:'digital painting, oil painting texture, artistic style, concept art, artstation, masterpiece, intricate details',RENDER_3D:'3d render, unreal engine 5, octane render, global illumination, highly detailed, 8k resolution, ray tracing',COMIC_BOOK:'comic book style, graphic novel, bold outlines, halftone patterns, high contrast, dynamic lighting, marvel comics style',PIXEL_ART:'pixel art, 16-bit, retro gaming style, highly detailed pixel art, isometric perspective, vibrant colors',WATERCOLOR:'watercolor painting, soft edges, color bleeding, traditional art, ethereal, dreamy, delicate brushstrokes',CYBERPUNK:'cyberpunk style, neon lights, futuristic city, high tech, sci-fi, dark atmosphere, holographic elements',STEAMPUNK:'steampunk style, brass gears, steam powered, victorian era, intricate machinery, sepia tones, retro-futuristic',NONE:''};
-async function geminiText(apiKey,parts,system,jsonMode=false){ const models=['gemini-2.0-flash','gemini-1.5-flash']; let last=''; for(const m of models){ try{ const body={contents:[{role:'user',parts}],systemInstruction:{parts:[{text:system}]},generationConfig:{temperature:.7}}; if(jsonMode) body.generationConfig.responseMimeType='application/json'; const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const obj=await r.json().catch(()=>({})); if(!r.ok){ last=obj.error?.message||`http_${r.status}`; continue; } return (obj.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('\n').trim(); }catch(e){last=String(e)} } throw new Error(last||'gemini_failed'); }
+async function geminiText(apiKey,parts,system,jsonMode=false){
+  const keys=String(apiKey||'').split(/[\n,]+/).map(s=>s.trim()).filter(Boolean);
+  if(!keys.length) throw new Error('missing_api_key');
+  const models=['gemini-2.0-flash','gemini-1.5-flash'];
+  let lastErr='';
+  
+  for(const key of keys){
+    for(const m of models){
+      try{
+        const body={contents:[{role:'user',parts}],systemInstruction:{parts:[{text:system}]},generationConfig:{temperature:.7}};
+        if(jsonMode) body.generationConfig.responseMimeType='application/json';
+        const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        const obj=await r.json().catch(()=>({}));
+        if(!r.ok){
+          lastErr=obj.error?.message||`http_${r.status}`;
+          if(lastErr.includes('quota') || lastErr.includes('429')) continue; // Try next model/key
+          throw new Error(lastErr);
+        }
+        const resTxt = (obj.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('\n').trim();
+        if(!resTxt) throw new Error('empty_response');
+        return resTxt;
+      }catch(e){ lastErr=String(e.message||e); }
+    }
+  }
+  throw new Error(lastErr||'gemini_failed');
+}
 
 function mimeFromFile(f){ const e=String(f||'').toLowerCase().split('.').pop(); if(e==='png')return 'image/png'; if(e==='webp')return 'image/webp'; return 'image/jpeg'; }
 function imageParts(files){ const out=[]; for(const f of (files||[]).slice(0,8)){ try{ out.push({inlineData:{mimeType:mimeFromFile(f),data:fs.readFileSync(f).toString('base64')}}); }catch{} } return out; }
@@ -179,7 +204,14 @@ async function generateScriptJs(payload){
       : `If reference images are included, first create a compact Character Sheet under 45 words from the images, then repeat it inside every scene prompt.`;
     const parts=[...(i===0?imgs:[]),{text:`Topic/content: ${payload.topic}. Total video scenes: ${totalScenes}. Generate scenes ${startScene}-${endScene}. ${characterInstruction} Prompts must be in English. Descriptions can be Vietnamese. Keep prompts short but preserve character consistency.`}];
     const txt=await geminiText(payload.apiKey,parts,sys,true);
-    const obj=JSON.parse(txt.replace(/^```json\s*|```$/g,''));
+    let obj;
+    try {
+      obj=JSON.parse(txt.replace(/^```json\s*|```$/g,''));
+    } catch (e) {
+      console.error("JSON parse failed, attempt fuzzy match:", e);
+      const m = txt.match(/\{[\s\S]*\}/);
+      if (m) obj = JSON.parse(m[0]); else throw e;
+    }
     if(i===0){ title=obj.title||payload.topic||''; if(obj.characterSheet) characterSheet=String(obj.characterSheet).replace(/\s+/g,' ').trim(); }
     const scenes=(obj.scenes||[]).map(sc=>({
       ...sc,
