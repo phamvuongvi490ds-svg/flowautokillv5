@@ -97,25 +97,44 @@ const STYLE_SUFFIX={CINEMATIC:'photorealistic, cinematic lighting, 8k, highly de
 async function geminiText(apiKey,parts,system,jsonMode=false){
   const keys=String(apiKey||'').split(/[\n,]+/).map(s=>s.trim()).filter(Boolean);
   if(!keys.length) throw new Error('missing_api_key');
-  const models=['gemini-2.0-flash','gemini-1.5-flash'];
+  const models=['gemini-1.5-flash','gemini-1.5-pro'];
   let lastErr='';
   
   for(const key of keys){
     for(const m of models){
       try{
+        console.log(`[gemini] Trying model ${m} with key ${key.slice(0,6)}...`);
         const body={contents:[{role:'user',parts}],systemInstruction:{parts:[{text:system}]},generationConfig:{temperature:.7}};
         if(jsonMode) body.generationConfig.responseMimeType='application/json';
-        const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+
+        const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`,{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(body),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
         const obj=await r.json().catch(()=>({}));
         if(!r.ok){
           lastErr=obj.error?.message||`http_${r.status}`;
-          if(lastErr.includes('quota') || lastErr.includes('429')) continue; // Try next model/key
+          console.error(`[gemini] Model ${m} error: ${lastErr}`);
+          if(lastErr.includes('quota') || lastErr.includes('429') || r.status === 429) continue;
+          if(r.status >= 500) continue; 
           throw new Error(lastErr);
         }
         const resTxt = (obj.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('\n').trim();
         if(!resTxt) throw new Error('empty_response');
+        console.log(`[gemini] Success with model ${m}`);
         return resTxt;
-      }catch(e){ lastErr=String(e.message||e); }
+      }catch(e){ 
+        lastErr=String(e.message||e);
+        console.error(`[gemini] Exception with model ${m}: ${lastErr}`);
+        if (lastErr.includes('aborted')) continue; // Try next on timeout
+      }
     }
   }
   throw new Error(lastErr||'gemini_failed');
