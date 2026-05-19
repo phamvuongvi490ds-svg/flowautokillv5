@@ -110,7 +110,21 @@ function App(){
   function moveScene(i:number,dir:number){setTimeline(()=>{const a=[...baseTimeline()]; const j=i+dir; if(j<0||j>=a.length)return a; [a[i],a[j]]=[a[j],a[i]]; return a.map((x,k)=>({...x,order:k+1}));})}
   function toggleScene(i:number){setTimeline(()=>baseTimeline().map((x,k)=>k===i?{...x,keep:!x.keep}:x))}
   async function generatePrompt(){append('Đang tạo prompt AI tiếng Anh bám sát ảnh nhân vật...'); const r=await api().generatePrompt({apiKey:firstKey(),style,mediaType,ideas,characterImages}); if(r?.generated?.file)setGeneratedFile(r.generated.file); append(r)}
-  async function generateScript(){append('Đang tạo kịch bản video...'); const duration=`${durationValue} ${durationUnit}`; const r=await api().generateScript({apiKey:firstKey(),style,topic,duration,characterImages}); if(r?.generated?.file)setGeneratedFile(r.generated.file); append(r)}
+  async function generateScript(){
+    append('🎬 Đang tạo kịch bản video...');
+    const duration=`${durationValue} ${durationUnit}`;
+    try {
+      const r=await api().generateScript({apiKey:apiKeys,style,topic,duration,characterImages});
+      if(r?.ok) {
+        if(r.generated?.file) setGeneratedFile(r.generated.file);
+        append('✅ Đã tạo kịch bản thành công.');
+      } else {
+        append(`❌ Lỗi: ${r?.error || 'Không rõ nguyên nhân'}`);
+      }
+    } catch (e) {
+      append(`❌ Lỗi kết nối: ${String(e)}`);
+    }
+  }
   async function pause(){append('⏸ Đang tạm dừng tiến trình...'); const r=await api().pause(); append(r); setTimeout(()=>api().status().then(append).catch(()=>{}),500)}
   async function resume(){append('▶ Đang tiếp tục tiến trình...'); const r=await api().resume(); append(r); setTimeout(()=>api().status().then(append).catch(()=>{}),500)}
   async function stop(){append(await api().stop())}

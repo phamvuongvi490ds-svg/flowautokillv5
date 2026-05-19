@@ -471,4 +471,12 @@ ipcMain.handle('video:analyzeSample', async(_e,payload={})=>{
   return {ok:true,script:text,scriptFile,frames};
 });
 
-ipcMain.handle('prompt:script', async(_e,payload)=>{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; return generateScriptJs(payload||{}); });
+ipcMain.handle('prompt:script', async(_e,payload)=>{
+  const lic=await onlineLicenseGuard(); if(!lic.ok) return lic;
+  try {
+    return await generateScriptJs(payload||{});
+  } catch (err) {
+    console.error("IPC generateScript error:", err);
+    return { ok: false, error: String(err.message || err) };
+  }
+});
