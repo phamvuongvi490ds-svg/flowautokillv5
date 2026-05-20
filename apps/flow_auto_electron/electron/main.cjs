@@ -97,7 +97,7 @@ const STYLE_SUFFIX={CINEMATIC:'photorealistic, cinematic lighting, 8k, highly de
 async function geminiText(apiKey,parts,system,jsonMode=false){
   const keys=String(apiKey||'').split(/[\n,]+/).map(s=>s.trim()).filter(Boolean);
   if(!keys.length) throw new Error('missing_api_key');
-  const models=['gemini-1.5-flash','gemini-1.5-pro'];
+  const models=['gemini-2.0-flash','gemini-2.0-flash-lite','gemini-1.5-flash','gemini-1.5-flash-8b'];
   let lastErr='';
   
   for(const key of keys){
@@ -123,6 +123,7 @@ async function geminiText(apiKey,parts,system,jsonMode=false){
           lastErr=obj.error?.message||`http_${r.status}`;
           console.error(`[gemini] Model ${m} error: ${lastErr}`);
           if(lastErr.includes('quota') || lastErr.includes('429') || r.status === 429) continue;
+          if(lastErr.includes('not found') || lastErr.includes('404')) continue;
           if(r.status >= 500) continue; 
           throw new Error(lastErr);
         }
