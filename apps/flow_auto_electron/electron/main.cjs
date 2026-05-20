@@ -97,44 +97,51 @@ const STYLE_SUFFIX={CINEMATIC:'photorealistic, cinematic lighting, 8k, highly de
 async function geminiText(apiKey,parts,system,jsonMode=false){
   const keys=String(apiKey||'').split(/[\n,]+/).map(s=>s.trim()).filter(Boolean);
   if(!keys.length) throw new Error('missing_api_key');
-  const models=['gemini-2.0-flash','gemini-2.0-flash-lite','gemini-1.5-flash','gemini-1.5-flash-8b'];
+
   let lastErr='';
-  
   for(const key of keys){
+    let models=[];
+    try{
+      const listR=await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+      const listData=await listR.json().catch(()=>({}));
+      if(!listR.ok){ lastErr=listData.error?.message||`list_models_http_${listR.status}`; }
+      models=(listData.models||[])
+        .filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent'))
+        .map(m=>String(m.name||'').replace(/^models\//,''))
+        .filter(Boolean)
+        .sort((a,b)=>{
+          const score=x=> (x.includes('flash')?100:0) + (x.includes('2.0')?20:0) + (x.includes('1.5')?10:0) - (x.includes('vision')?50:0);
+          return score(b)-score(a);
+        });
+    }catch(e){ lastErr=`list_models_failed:${e.message||e}`; }
+
+    // Fallback only if ListModels is unavailable; unavailable models are skipped silently.
+    if(!models.length) models=['gemini-2.0-flash','gemini-1.5-flash'];
+
     for(const m of models){
       try{
-        console.log(`[gemini] Trying model ${m} with key ${key.slice(0,6)}...`);
+        console.log(`[gemini] Trying supported model ${m}`);
         const body={contents:[{role:'user',parts}],systemInstruction:{parts:[{text:system}]},generationConfig:{temperature:.7}};
         if(jsonMode) body.generationConfig.responseMimeType='application/json';
-        
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
-
+        const controller=new AbortController();
+        const timeoutId=setTimeout(()=>controller.abort(),60000);
         const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`,{
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify(body),
-          signal: controller.signal
+          method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal
         });
         clearTimeout(timeoutId);
-
         const obj=await r.json().catch(()=>({}));
         if(!r.ok){
           lastErr=obj.error?.message||`http_${r.status}`;
-          console.error(`[gemini] Model ${m} error: ${lastErr}`);
-          if(lastErr.includes('quota') || lastErr.includes('429') || r.status === 429) continue;
-          if(lastErr.includes('not found') || lastErr.includes('404')) continue;
-          if(r.status >= 500) continue; 
-          throw new Error(lastErr);
+          console.error(`[gemini] ${m} failed: ${lastErr}`);
+          continue;
         }
-        const resTxt = (obj.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('\n').trim();
-        if(!resTxt) throw new Error('empty_response');
-        console.log(`[gemini] Success with model ${m}`);
-        return resTxt;
-      }catch(e){ 
+        const resTxt=(obj.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('\n').trim();
+        if(resTxt) return resTxt;
+        lastErr='empty_response';
+      }catch(e){
         lastErr=String(e.message||e);
-        console.error(`[gemini] Exception with model ${m}: ${lastErr}`);
-        if (lastErr.includes('aborted')) continue; // Try next on timeout
+        console.error(`[gemini] ${m} exception: ${lastErr}`);
+        continue;
       }
     }
   }
