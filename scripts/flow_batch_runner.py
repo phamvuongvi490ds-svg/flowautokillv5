@@ -596,7 +596,7 @@ def apply_flow_settings(page, args):
                 nano_banana_pro:['Nano Banana Pro'], nano_banana2:['Nano Banana 2'], nano_banana:['Nano Banana 2','Nano Banana'], imagen4:['Imagen 4'], omni_flash:['Omni Flash','Omni']
               };
               const aliases = models[cfg.model] || (isImage ? models.nano_banana_pro : models.veo3_fast);
-              const matchAlias = (text) => aliases.some(a => { const t=norm(text), m=norm(a); return t.includes(m) || m.includes(t); });
+              const matchAlias = (text) => aliases.some(a => { const t=norm(text).trim(), m=norm(a).trim(); return t === m || t.includes(m) || (m.length > 5 && m.includes(t)); });
               let modelRes = {ok:true, skipped: cfg.model === 'custom'};
               if (cfg.model !== 'custom') {
                 await openPanel();
@@ -1717,6 +1717,7 @@ def run(args):
 
     state = load_state(args.state)
     done = int(state.get("done", 0))
+    settings_applied = False
     if args.start_from is not None:
         done = max(0, args.start_from - 1)
 
