@@ -593,7 +593,7 @@ def apply_flow_settings(page, args):
                 veo3_lite:['Veo 3.1 - Lite','Veo 3.1 Lite','Veo 3 Lite','Lite'],
                 veo3_fast:['Veo 3.1 - Fast','Veo 3.1 Fast','Veo 3 Fast','Fast'],
                 veo3_quality:['Veo 3.1 - Quality','Veo 3.1 Quality','Veo 3 Quality','Quality'],
-                nano_banana_pro:['Nano Banana Pro'], nano_banana2:['Nano Banana 2'], nano_banana:['Nano Banana 2','Nano Banana'], imagen4:['Imagen 4']
+                nano_banana_pro:['Nano Banana Pro'], nano_banana2:['Nano Banana 2'], nano_banana:['Nano Banana 2','Nano Banana'], imagen4:['Imagen 4'], omni_flash:['Omni Flash','Omni']
               };
               const aliases = models[cfg.model] || (isImage ? models.nano_banana_pro : models.veo3_fast);
               const matchAlias = (text) => aliases.some(a => { const t=norm(text), m=norm(a); return t.includes(m) || m.includes(t); });
@@ -1963,7 +1963,7 @@ def main():
 
     # Flow settings (đồng bộ với extension)
     ap.add_argument("--task-mode", default="createvideo", choices=["createvideo", "createimage"], help="Chế độ tạo: video hoặc image")
-    ap.add_argument("--flow-model", default="default", help="Model key: default|veo3_lite|veo3_fast|veo3_quality|nano_banana_pro|nano_banana2|imagen4")
+    ap.add_argument("--flow-model", default="default", help="Model key: default|veo3_lite|veo3_fast|veo3_quality|nano_banana_pro|nano_banana2|imagen4|omni_flash")
     ap.add_argument("--flow-aspect-ratio", default="16:9", help="Tỉ lệ: 16:9 | 9:16 | square | landscape_4_3 | portrait_3_4")
     ap.add_argument("--flow-count", default="1", help="Số lượng output x1/x2/x3/x4")
     ap.add_argument("--video-sub-mode", default="frames", choices=["frames", "ingredients"], help="Video sub mode")

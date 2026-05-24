@@ -6,7 +6,7 @@ import './style.css';
 declare global { interface Window { flowAPI: any } }
 
 const styles = ['CINEMATIC','ANIME','PAINTING','RENDER_3D','COMIC_BOOK','PIXEL_ART','WATERCOLOR','CYBERPUNK','STEAMPUNK','NONE'];
-const models = ['default','veo3_lite','veo3_fast','veo3_quality','nano_banana_pro','nano_banana2','imagen4'];
+const models = ['default','veo3_lite','veo3_fast','veo3_quality','omni_flash','nano_banana_pro','nano_banana2','imagen4'];
 const ratios = ['16:9','9:16','square','landscape_4_3','portrait_3_4'];
 
 const api = () => window.flowAPI || {
