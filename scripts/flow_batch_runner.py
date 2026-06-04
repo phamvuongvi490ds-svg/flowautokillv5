@@ -1947,6 +1947,7 @@ def main():
     ap.add_argument("--download-delay-prompts", type=int, default=0, help="Chế độ chạy liên tục: chờ N prompt sau mới tải prompt cũ")
 
     # Flow settings (đồng bộ với extension)
+    ap.add_argument("--browser", default="chrome", choices=["chrome", "firefox"], help="Browser to use")
     ap.add_argument("--task-mode", default="createvideo", choices=["createvideo", "createimage"], help="Chế độ tạo: video hoặc image")
     ap.add_argument("--flow-model", default="default", help="Model key: default|veo3_lite|veo3_fast|veo3_quality|nano_banana_pro|nano_banana2|imagen4|omni_flash")
     ap.add_argument("--flow-aspect-ratio", default="16:9", help="Tỉ lệ: 16:9 | 9:16 | square | landscape_4_3 | portrait_3_4")
