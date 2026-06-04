@@ -35,7 +35,8 @@ function App(){
   const [model,setModel]=useState('default');
   const [ratio,setRatio]=useState('16:9');
   const [count,setCount]=useState('1');
-  const [spacing, browser,setSpacing]=useState('10');
+  const [browser, setBrowser] = useState('chrome');
+  const [spacing, setSpacing] = useState('10');
   const [runMode,setRunMode]=useState('single');
   const [flowThreads,setFlowThreads]=useState('1');
   const [profiles,setProfiles]=useState<any[]>([{name:'Profile 1',script:'',promptFile:'',refsDir:''},{name:'Profile 2',script:'',promptFile:'',refsDir:''}]);
@@ -139,6 +140,7 @@ function App(){
     return el?.value || fallback;
   }
   function runPayload(file?:string){
+    const liveBrowser=domValue("flow-browser", browser);
     const liveMode=domValue('flow-mode', mode);
     const liveSubMode=domValue('flow-sub-mode', subMode);
     const liveModel=domValue('flow-model', model);
@@ -149,6 +151,7 @@ function App(){
     const liveThreads=domValue('flow-threads', flowThreads);
     const payload={
       promptFile:file||promptFile||generatedFile,
+      browser: liveBrowser,
       mode:liveMode, taskMode:liveMode,
       model:liveModel, flowModel:liveModel,
       ratio:liveRatio, aspectRatio:liveRatio, flowAspectRatio:liveRatio,
@@ -162,7 +165,7 @@ function App(){
       subMode:liveSubMode, videoSubMode:liveSubMode,
       referenceMode:'ingredients'
     };
-    append(`⚙️ Setting gửi vào worker: mode=${payload.mode}, model=${payload.model}, ratio=${payload.ratio}, count=${payload.count}, sub=${payload.subMode}`);
+    append(`⚙️ Setting gửi vào worker: browser=${payload.browser}, mode=${payload.mode}, model=${payload.model}, ratio=${payload.ratio}, count=${payload.count}, sub=${payload.subMode}`);
     return payload;
   }
   async function start(file?:string){ const p=runPayload(file); append(`🚀 Start (ID: ${Date.now()}): mode=${p.mode}, model=${p.model}`); append(await api().start(p))}
@@ -171,7 +174,7 @@ function App(){
     <aside className="side"><div className="brand"><Bot/><div><b>FLOW AUTO VEO 3</b><span>Modern UI</span></div></div><div className="lang-switch"><button type="button" className={lang==='VI'?'active':''} onClick={(e)=>{e.preventDefault();e.stopPropagation();switchLang('VI')}}>VI</button><button type="button" className={lang==='EN'?'active':''} onClick={(e)=>{e.preventDefault();e.stopPropagation();switchLang('EN')}}>EN</button></div>{nav.map(([id,label,Icon]:any)=><button key={id} onClick={()=>setPage(id)} className={page===id?'active':''}><Icon size={18}/>{label}</button>)}<div className="price">{T('100K / tháng','100K / month')}<br/>{T('1.200K vĩnh viễn','1.200K lifetime')}</div></aside>
     <main className="main">
       <header><div><h1>{page==='ai'?'AI Prompt Studio':page==='flow'?T('Vận hành Flow','Flow Operation'):page==='license'?T('License & Đăng ký','License & Activation'):page==='payment'?T('Thanh toán','Payment'):page==='multi'?T('Đa luồng Flow','Multi-profile Flow'):page==='post'?T('Hậu kì video','Video Post-production'):'FLOW AUTO VEO 3'}</h1><p>FLOW AUTO VEO 3 Modern UI</p></div><div className="header-actions"><div className="status">{activity}</div><div className="lang-switch header-lang"><button type="button" className={lang==='VI'?'active':''} onClick={(e)=>{e.preventDefault();switchLang('VI')}}>VI</button><button type="button" className={lang==='EN'?'active':''} onClick={(e)=>{e.preventDefault();switchLang('EN')}}>EN</button></div></div></header>
-      {page==='flow'&&<div className="grid"><Card title="Thiết lập chạy" icon={<Film/>}><div className="actions"><Button onClick={pickPrompt}>📄 Chọn file prompt</Button><Button onClick={pickRefs}>🖼 Chọn đường dẫn thư mục ảnh</Button><Button onClick={ensureCdp}>🌐 Mở Chrome Flow</Button></div><p className="hint">Prompt: {promptFile || generatedFile || 'chưa chọn'}<br/>Đường dẫn thư mục ảnh: {refsDir || 'chưa chọn'}</p><div className="form4"><Field label="Trình duyệt"><select value={browser} onChange={e=>setBrowser(e.target.value)}><option value="chrome">Google Chrome</option><option value="firefox">Mozilla Firefox</option></select></Field><Field label="Mode"><select id="flow-mode" value={mode} onChange={e=>setMode(e.target.value)}><option value="createvideo">createvideo</option><option value="createimage">createimage</option></select></Field><Field label="Chế độ video"><select id="flow-sub-mode" value={subMode} onChange={e=>setSubMode(e.target.value)} disabled={mode==='createimage'}><option value="ingredients">Video thành phần</option><option value="frames">Khung hình</option></select></Field><Field label="Model"><select id="flow-model" value={model} onChange={e=>setModel(e.target.value)}>{models.map(x=><option key={x} value={x}>{x}</option>)}</select></Field><Field label="Tỉ lệ"><select id="flow-ratio" value={ratio} onChange={e=>setRatio(e.target.value)}>{ratios.map(x=><option key={x} value={x}>{x}</option>)}</select></Field><Field label="Số output"><select id="flow-count" value={count} onChange={e=>setCount(e.target.value)}>{['1','2','3','4'].map(x=><option key={x} value={x}>{x}x</option>)}</select></Field><Field label="Giãn cách prompt"><input id="flow-spacing" value={spacing} onChange={e=>setSpacing(e.target.value)}/></Field><Field label="Chế độ chạy"><select id="flow-run-mode" value={runMode} onChange={e=>setRunMode(e.target.value)}><option value="single">Chạy từng prompt một</option><option value="continuous_submit_only">Chạy liên tục - chỉ submit</option><option value="continuous_download_delay_3">Chạy liên tục - download trễ sau 3 prompt</option></select></Field><Field label="Số tab Flow"><select id="flow-threads" value={flowThreads} onChange={e=>setFlowThreads(e.target.value)}>{Array.from({length:100},(_,i)=>String(i+1)).map(x=><option key={x} value={x}>{x} tab</option>)}</select></Field></div></Card><Card title="Điều khiển" icon={<Play/>}><div className="actions"><Button variant="primary" onClick={()=>start()}><Play size={16}/> Bắt đầu</Button><Button variant="danger" onClick={stop}><Square size={16}/> Stop</Button></div></Card></div>}
+      {page==='flow'&&<div className="grid"><Card title="Thiết lập chạy" icon={<Film/>}><div className="actions"><Button onClick={pickPrompt}>📄 Chọn file prompt</Button><Button onClick={pickRefs}>🖼 Chọn đường dẫn thư mục ảnh</Button><Button onClick={ensureCdp}>🌐 Mở Chrome Flow</Button></div><p className="hint">Prompt: {promptFile || generatedFile || 'chưa chọn'}<br/>Đường dẫn thư mục ảnh: {refsDir || 'chưa chọn'}</p><div className="form4"><Field label="Trình duyệt"><select id="flow-browser" value={browser} onChange={e=>setBrowser(e.target.value)}><option value="chrome">Google Chrome</option><option value="firefox">Mozilla Firefox</option></select></Field><Field label="Mode"><select id="flow-mode" value={mode} onChange={e=>setMode(e.target.value)}><option value="createvideo">createvideo</option><option value="createimage">createimage</option></select></Field><Field label="Chế độ video"><select id="flow-sub-mode" value={subMode} onChange={e=>setSubMode(e.target.value)} disabled={mode==='createimage'}><option value="ingredients">Video thành phần</option><option value="frames">Khung hình</option></select></Field><Field label="Model"><select id="flow-model" value={model} onChange={e=>setModel(e.target.value)}>{models.map(x=><option key={x} value={x}>{x}</option>)}</select></Field><Field label="Tỉ lệ"><select id="flow-ratio" value={ratio} onChange={e=>setRatio(e.target.value)}>{ratios.map(x=><option key={x} value={x}>{x}</option>)}</select></Field><Field label="Số output"><select id="flow-count" value={count} onChange={e=>setCount(e.target.value)}>{['1','2','3','4'].map(x=><option key={x} value={x}>{x}x</option>)}</select></Field><Field label="Giãn cách prompt"><input id="flow-spacing" value={spacing} onChange={e=>setSpacing(e.target.value)}/></Field><Field label="Chế độ chạy"><select id="flow-run-mode" value={runMode} onChange={e=>setRunMode(e.target.value)}><option value="single">Chạy từng prompt một</option><option value="continuous_submit_only">Chạy liên tục - chỉ submit</option><option value="continuous_download_delay_3">Chạy liên tục - download trễ sau 3 prompt</option></select></Field><Field label="Số tab Flow"><select id="flow-threads" value={flowThreads} onChange={e=>setFlowThreads(e.target.value)}>{Array.from({length:100},(_,i)=>String(i+1)).map(x=><option key={x} value={x}>{x} tab</option>)}</select></Field></div></Card><Card title="Điều khiển" icon={<Play/>}><div className="actions"><Button variant="primary" onClick={()=>start()}><Play size={16}/> Bắt đầu</Button><Button variant="danger" onClick={stop}><Square size={16}/> Stop</Button></div></Card></div>}
       {page==='ai'&&<div className="grid ai">
         <Card title="API & Kịch bản" icon={<Wand2/>}>
           <Field label="Gemini API keys">
@@ -198,7 +201,7 @@ function App(){
         </Card>
         <Card title="Thiết lập Flow" icon={<Film/>}>
           <div className="form4">
-            <Field label="Trình duyệt"><select value={browser} onChange={e=>setBrowser(e.target.value)}><option value="chrome">Google Chrome</option><option value="firefox">Mozilla Firefox</option></select></Field><Field label="Mode"><select value={mode} onChange={e=>setMode(e.target.value)}><option value="createvideo">createvideo</option><option value="createimage">createimage</option></select></Field>
+            <Field label="Trình duyệt"><select id="flow-browser" value={browser} onChange={e=>setBrowser(e.target.value)}><option value="chrome">Google Chrome</option><option value="firefox">Mozilla Firefox</option></select></Field><Field label="Mode"><select value={mode} onChange={e=>setMode(e.target.value)}><option value="createvideo">createvideo</option><option value="createimage">createimage</option></select></Field>
             <Field label="Chế độ video"><select id="flow-sub-mode" value={subMode} onChange={e=>setSubMode(e.target.value)} disabled={mode==='createimage'}><option value="ingredients">Video thành phần</option><option value="frames">Khung hình</option></select></Field>
             <Field label="Model"><select id="flow-model-multi" value={model} onChange={e=>setModel(e.target.value)}>{models.map(x=><option key={x} value={x}>{x}</option>)}</select></Field>
             <Field label="Tỉ lệ"><select id="flow-ratio-multi" value={ratio} onChange={e=>setRatio(e.target.value)}>{ratios.map(x=><option key={x} value={x}>{x}</option>)}</select></Field>
