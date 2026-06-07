@@ -1725,10 +1725,22 @@ def run(args):
     log_line(f"[flow] starting from prompt #{done + 1}")
 
     with sync_playwright() as p:
-        browser = p.chromium.connect_over_cdp(args.cdp)
-        page = find_flow_page(browser)
-        if not page:
-            raise RuntimeError("Không tìm thấy tab Flow đang mở")
+        if args.browser == "firefox":
+            log_line("[flow] starting Firefox...")
+            user_data_dir = os.path.join(os.getcwd(), "profiles", f"firefox_profile_{args.run_id}")
+            browser_context = p.firefox.launch_persistent_context(
+                user_data_dir=user_data_dir,
+                headless=False,
+                args=['--lang=vi-VN'],
+                slow_mo=100
+            )
+            page = browser_context.pages[0]
+            page.goto("https://labs.google/fx/vi/tools/flow", wait_until="networkidle")
+        else:
+            browser = p.chromium.connect_over_cdp(args.cdp)
+            page = find_flow_page(browser)
+            if not page:
+                raise RuntimeError("Không tìm thấy tab Flow đang mở")
 
         page = ensure_project_page(page)
         page.bring_to_front()
