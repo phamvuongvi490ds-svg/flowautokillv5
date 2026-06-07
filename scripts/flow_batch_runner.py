@@ -1726,8 +1726,19 @@ def run(args):
 
     with sync_playwright() as p:
         if args.browser == "firefox":
+            try:
+                import subprocess
+                log_line("[flow] verifying firefox binaries...")
+                # Chạy lệnh install để đảm bảo có browser
+                subprocess.run([sys.executable, "-m", "playwright", "install", "firefox"], capture_output=True)
+            except Exception as e:
+                log_line(f"[flow] playwright install warning: {e}")
+            
             log_line("[flow] starting Firefox...")
-            user_data_dir = os.path.join(os.getcwd(), "profiles", f"firefox_profile_{args.run_id}")
+            profile_root = os.path.join(os.path.expanduser("~"), ".flow_auto_profiles")
+            os.makedirs(profile_root, exist_ok=True)
+            user_data_dir = os.path.join(profile_root, f"firefox_{args.run_id}")
+    
             browser_context = p.firefox.launch_persistent_context(
                 user_data_dir=user_data_dir,
                 headless=False,
@@ -1735,7 +1746,7 @@ def run(args):
                 slow_mo=100
             )
             page = browser_context.pages[0]
-            page.goto("https://labs.google/fx/vi/tools/flow", wait_until="networkidle")
+            page.goto("https://labs.google/fx/vi/tools/flow", wait_until="domcontentloaded", timeout=60000)
         else:
             browser = p.chromium.connect_over_cdp(args.cdp)
             page = find_flow_page(browser)
