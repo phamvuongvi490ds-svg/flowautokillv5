@@ -298,6 +298,16 @@ function resetRunnerWorkers(){
   try{ fs.rmSync(PAUSE_FILE,{force:true}); }catch{}
   return {ok:true,killed:[...new Set(killed)]};
 }
+
+function safeProfileSlug(name, idx=0){
+  const raw=String(name||`profile-${idx+1}`).trim().toLowerCase().replace(/[^a-z0-9._-]+/g,'-').replace(/^-+|-+$/g,'');
+  return raw || `profile-${idx+1}`;
+}
+function flowProfileDir(profile, idx=0){
+  const label=profile?.accountEmail || profile?.name || `profile-${idx+1}`;
+  return path.join(BASE_DIR,'chrome-flow-accounts',`${String(idx+1).padStart(2,'0')}-${safeProfileSlug(label,idx)}`);
+}
+
 function chromeCandidates(){
   if(process.platform==='win32') return [
     path.join(process.env['PROGRAMFILES']||'C:/Program Files','Google/Chrome/Application/chrome.exe'),
@@ -320,7 +330,7 @@ async function ensureCdpOn(port=CDP_PORT, profile=CDP_PROFILE){
   return {ok:false,error:'cdp_not_ready',port};
 }
 async function ensureCdp(){ return ensureCdpOn(CDP_PORT, CDP_PROFILE); }
-async function ensureCdpThreads(n){ const out=[]; for(let i=0;i<n;i++){ const port=CDP_PORT+i; const profile=i===0?CDP_PROFILE:path.join(BASE_DIR,`chrome-cdp-profile-${i+1}`); const r=await ensureCdpOn(port,profile); out.push(r); if(!r.ok) return {ok:false,error:r.error,port}; } return {ok:true,threads:n,cdp:out}; }
+async function ensureCdpThreads(n, profiles=[]){ const out=[]; for(let i=0;i<n;i++){ const port=CDP_PORT+i; const profile=profiles&&profiles[i]?flowProfileDir(profiles[i],i):(i===0?CDP_PROFILE:path.join(BASE_DIR,`chrome-cdp-profile-${i+1}`)); const r=await ensureCdpOn(port,profile); out.push({...r,profileDir:profile,accountEmail:profiles?.[i]?.accountEmail||''}); if(!r.ok) return {ok:false,error:r.error,port}; } return {ok:true,threads:n,cdp:out}; }
 function writePromptFile(name, text){ ensureDirs(); const file=path.join(JOB_DIR,name); const blocks=(text||'').split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean); fs.writeFileSync(file, blocks.join('\n\n')+'\n','utf8'); return file; }
 function saveGeneratedPrompts(jsonPath, fallbackText, outName){
   let prompts=[]; try{ const obj=JSON.parse(fs.readFileSync(jsonPath,'utf8')); if(obj.results) prompts=obj.results.filter(r=>r.ok&&r.prompt).map(r=>String(r.prompt).replace(/\s+/g,' ').trim()); if(obj.script?.scenes) prompts=obj.script.scenes.sort((a,b)=>(a.sceneNumber||0)-(b.sceneNumber||0)).map(s=>String(s.prompt||'').replace(/\s+/g,' ').trim()).filter(Boolean); }catch{}
@@ -394,7 +404,8 @@ ipcMain.handle('dialog:openFile', async (_e, opts={})=>{ const r=await dialog.sh
 ipcMain.handle('shell:openPath', (_e,p)=>shell.openPath(p));
 ipcMain.handle('flow:status', async()=>runState());
 ipcMain.handle('flow:ensureCdp', async()=>ensureCdp());
-ipcMain.handle('flow:start', async(_e,payload)=>{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; const reset=resetRunnerWorkers(); const n=Math.max(1,Math.min(100,Array.isArray((payload||{}).profiles)&&payload.profiles.length?payload.profiles.length:Number((payload||{}).flowThreads||1)||1)); let c={ok:true}; if((payload||{}).browser!=='firefox'){ c=await ensureCdpThreads(n); if(!c.ok) return c; } const r=startRunner(payload||{}); return {...r, reset}; });
+ipcMain.handle('flow:openProfileLogin', async(_e,profile,idx=0)=>{ const port=CDP_PORT+Number(idx||0); const dir=flowProfileDir(profile||{},Number(idx||0)); return ensureCdpOn(port,dir); });
+ipcMain.handle('flow:start', async(_e,payload)=>{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; const reset=resetRunnerWorkers(); const n=Math.max(1,Math.min(100,Array.isArray((payload||{}).profiles)&&payload.profiles.length?payload.profiles.length:Number((payload||{}).flowThreads||1)||1)); let c={ok:true}; if((payload||{}).browser!=='firefox'){ c=await ensureCdpThreads(n,(payload||{}).profiles||[]); if(!c.ok) return c; } const r=startRunner(payload||{}); return {...r, reset}; });
 ipcMain.handle('flow:pause', async()=>{ if(!anyRunnerRunning()) return {ok:false,error:'process_not_running'}; ensureDirs(); fs.writeFileSync(PAUSE_FILE,String(Date.now())); return {ok:true, paused:true}; });
 ipcMain.handle('flow:resume', async()=>{ if(!anyRunnerRunning() && !fs.existsSync(PAUSE_FILE)) return {ok:false,error:'process_not_running'}; try{fs.rmSync(PAUSE_FILE,{force:true})}catch{} return {ok:true, paused:false}; });
 ipcMain.handle('flow:stop', async()=>{ const reset=resetRunnerWorkers(); return {ok:true, running:false, reset}; });
