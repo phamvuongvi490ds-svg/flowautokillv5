@@ -596,13 +596,13 @@ def apply_flow_settings(page, args):
                 nano_banana_pro:['Nano Banana Pro'], nano_banana2:['Nano Banana 2'], nano_banana:['Nano Banana 2','Nano Banana'], imagen4:['Imagen 4'], omni_flash:['Omni Flash','Omni']
               };
               const aliases = models[cfg.model] || (isImage ? models.nano_banana_pro : models.veo3_fast);
-              const matchAlias = (text) => aliases.some(a => { const t=norm(text).trim(), m=norm(a).trim(); return t === m || t.includes(m) || (m.length > 5 && m.includes(t)); });
+              const matchAlias = (text) => aliases.some(a => { const t=norm(text).trim(), m=norm(a).trim(); if (!t || !m) return false; if (cfg.model === 'omni_flash') return t === m || t.includes('omni flash') || t === 'omni'; return t === m || t.includes(m) || (m.length > 5 && m.includes(t)); });
               let modelRes = {ok:true, skipped: cfg.model === 'custom'};
               if (cfg.model !== 'custom') {
                 await openPanel();
                 const buttons = () => Array.from((document.querySelector('[role="menu"][data-state="open"]') || document).querySelectorAll('button')).filter(visible);
                 let trigger = buttons().find(b => matchAlias(b.innerText||b.textContent||''))
-                  || buttons().find(b => (b.getAttribute('aria-haspopup')||'').includes('menu') && /veo|banana|imagen|fast|lite|quality/i.test(b.innerText||''));
+                  || buttons().find(b => (b.getAttribute('aria-haspopup')||'').includes('menu') && /veo|banana|imagen|omni|fast|lite|quality/i.test(b.innerText||''));
                 const before = trigger ? (trigger.innerText || trigger.textContent || '') : '';
                 if (trigger && matchAlias(before)) {
                   modelRes = {ok:true, already:true, before, aliases};
@@ -610,10 +610,10 @@ def apply_flow_settings(page, args):
                   clickExt(trigger); await p(750);
                   const opts = Array.from(document.querySelectorAll('[role="menuitem"] button, [role="option"], button')).filter(visible);
                   const exact = aliases[0];
-                  const btn = opts.find(b => String(b.innerText||b.textContent||'').trim().includes(exact)) || opts.find(b => matchAlias(b.innerText||b.textContent||''));
+                  const btn = cfg.model === 'omni_flash' ? (opts.find(b => norm(b.innerText||b.textContent||'').trim() === 'omni flash') || opts.find(b => norm(b.innerText||b.textContent||'').trim() === 'omni') || opts.find(b => norm(b.innerText||b.textContent||'').includes('omni flash'))) : (opts.find(b => String(b.innerText||b.textContent||'').trim().includes(exact)) || opts.find(b => matchAlias(b.innerText||b.textContent||''))); 
                   if (btn) { clickExt(btn); await p(1500); }
                   await openPanel();
-                  const afterBtn = buttons().find(b => /veo|banana|imagen|fast|lite|quality/i.test(b.innerText||''));
+                  const afterBtn = buttons().find(b => /veo|banana|imagen|omni|fast|lite|quality/i.test(b.innerText||''));
                   const after = afterBtn ? (afterBtn.innerText || afterBtn.textContent || '') : '';
                   modelRes = {ok:!!btn && (matchAlias(after) || matchAlias(btn.innerText||btn.textContent||'')), before, after, clicked:btn ? (btn.innerText||btn.textContent||'') : '', aliases};
                 } else {
@@ -634,14 +634,7 @@ def apply_flow_settings(page, args):
     except Exception as e:
         log_line(f"[flow] settings apply exception/fallback: {e}")
 
-    # Fallback old per-setting path if Flow UI changed.
-    apply_task_mode(page, task_mode)
-    apply_model(page, model_key)
-    apply_task_mode(page, task_mode)
-    if task_mode == "createvideo":
-        apply_video_sub_mode(page, args.video_sub_mode)
-    apply_aspect_ratio(page, args.flow_aspect_ratio)
-    apply_output_count(page, args.flow_count)
+    # Do not retry model/ratio/count multiple times. One settings pass only.
     close_open_menus(page)
     return False
 
@@ -787,49 +780,64 @@ def human_type_text(page, text: str, base_delay_ms: float = 12.0):
 
 def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retries: int = 3):
     prompt = (prompt or "").strip()
-    if not prompt:
-        return False
+    if not prompt: return True
 
-    for _ in range(retries):
+    for attempt in range(1, retries + 1):
         try:
-            # đóng menu/popover còn mở trước khi nhập
-            try:
-                page.keyboard.press("Escape")
-            except Exception:
-                pass
-
+            # Ưu tiên find_input_box đã có sẵn logic New Project
             box = find_input_box(page)
-            clicked = move_virtual_cursor_to_box(page, box)
-            if not clicked:
-                try:
-                    box.click(timeout=3000)
-                except Exception:
-                    box.click(timeout=3000, force=True)
-
-            human_type_text(page, prompt, base_delay_ms=type_delay_ms)
+            
+            # Click vào tọa độ trung tâm để đảm bảo focus sâu vào editor
+            rect = box.bounding_box()
+            if rect:
+                page.mouse.click(rect['x'] + rect['width']/2, rect['y'] + rect['height']/2)
+            else:
+                box.click(force=True)
+            
+            time.sleep(0.3)
+            page.keyboard.press("Control+A")
+            page.keyboard.press("Backspace")
+            time.sleep(0.2)
+            
+            # Use Playwright's native fill() which handles events correctly for most editors
+            box.fill(prompt)
             time.sleep(0.5)
-
-            txt = get_box_text(box)
-            if txt and len(txt.strip()) >= min(8, len(prompt)):
+            
+            # Verify
+            txt = box.inner_text() or box.input_value() or ""
+            if len(txt.strip()) >= min(5, len(prompt)):
+                return True
+            
+            # Fallback 2: insert_text
+            page.keyboard.insert_text(prompt)
+            time.sleep(0.5)
+            if (box.inner_text() or box.input_value() or "").strip():
+                return True
+                
+            # Fallback 3: Strong JS injection with multiple events
+            page.evaluate("""
+                (args) => {
+                    const el = args.el;
+                    const val = args.txt;
+                    el.focus();
+                    if ('value' in el) {
+                        el.value = val;
+                    } else {
+                        el.innerText = val;
+                        el.textContent = val;
+                    }
+                    const evts = ['input', 'change', 'beforeinput', 'keydown', 'keyup'];
+                    evts.forEach(n => el.dispatchEvent(new Event(n, { bubbles: true, composed: true })));
+                }
+            """, {"el": box, "txt": prompt})
+            time.sleep(0.5)
+            if (box.inner_text() or box.input_value() or "").strip():
                 return True
 
-            # fallback insert_text nếu type thường không vào box
-            try:
-                page.keyboard.insert_text(prompt)
-            except Exception:
-                pass
-            time.sleep(0.5)
-            txt = get_box_text(box)
-            if txt and len(txt.strip()) >= min(8, len(prompt)):
-                return True
-        except Exception:
-            pass
-
-        time.sleep(0.6)
-
+        except Exception as e:
+            log_line(f"[flow] attempt {attempt} input error: {e}")
+        time.sleep(1.0)
     return False
-
-
 def _open_plus_menu(page, prompt_box=None):
     # Ưu tiên click đúng dấu cộng nằm cạnh ô prompt (tránh click nhầm dấu cộng khu khác)
     try:
@@ -1722,33 +1730,10 @@ def run(args):
         done = max(0, args.start_from - 1)
 
     log_line(f"[flow] total prompts: {total}")
-    log_line(f"[flow] starting from prompt #{done + 1}")
+    log_line(f"[flow] starting from prompt #{done + 1} (RUN ID: {args.run_id})")
 
     with sync_playwright() as p:
-        if args.browser == "firefox":
-            try:
-                import subprocess
-                log_line("[flow] verifying firefox binaries...")
-                # Chạy lệnh install để đảm bảo có browser
-                subprocess.run([sys.executable, "-m", "playwright", "install", "firefox"], capture_output=True)
-            except Exception as e:
-                log_line(f"[flow] playwright install warning: {e}")
-            
-            log_line("[flow] starting Firefox...")
-            profile_root = os.path.join(os.path.expanduser("~"), ".flow_auto_profiles")
-            os.makedirs(profile_root, exist_ok=True)
-            user_data_dir = os.path.join(profile_root, f"firefox_{args.run_id}")
-    
-            browser_context = p.firefox.launch_persistent_context(
-                user_data_dir=user_data_dir,
-                headless=False,
-                args=['--lang=vi-VN'],
-                slow_mo=100
-            )
-            page = browser_context.pages[0]
-            page.goto("https://labs.google/fx/vi/tools/flow", wait_until="domcontentloaded", timeout=60000)
-        else:
-            browser = p.chromium.connect_over_cdp(args.cdp)
+        browser = p.chromium.connect_over_cdp(args.cdp)
             page = find_flow_page(browser)
             if not page:
                 raise RuntimeError("Không tìm thấy tab Flow đang mở")
@@ -1949,6 +1934,7 @@ def run(args):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--run-id", default="manual")
     ap.add_argument("--prompts", type=Path, required=True)
     default_state = Path.home() / ".openclaw" / "workspace" / ".flow_state.json"
     ap.add_argument("--state", type=Path, default=default_state)
@@ -1970,7 +1956,6 @@ def main():
     ap.add_argument("--download-delay-prompts", type=int, default=0, help="Chế độ chạy liên tục: chờ N prompt sau mới tải prompt cũ")
 
     # Flow settings (đồng bộ với extension)
-    ap.add_argument("--browser", default="chrome", choices=["chrome", "firefox"], help="Browser to use")
     ap.add_argument("--task-mode", default="createvideo", choices=["createvideo", "createimage"], help="Chế độ tạo: video hoặc image")
     ap.add_argument("--flow-model", default="default", help="Model key: default|veo3_lite|veo3_fast|veo3_quality|nano_banana_pro|nano_banana2|imagen4|omni_flash")
     ap.add_argument("--flow-aspect-ratio", default="16:9", help="Tỉ lệ: 16:9 | 9:16 | square | landscape_4_3 | portrait_3_4")

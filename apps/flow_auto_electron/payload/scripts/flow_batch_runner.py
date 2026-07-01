@@ -596,13 +596,13 @@ def apply_flow_settings(page, args):
                 nano_banana_pro:['Nano Banana Pro'], nano_banana2:['Nano Banana 2'], nano_banana:['Nano Banana 2','Nano Banana'], imagen4:['Imagen 4'], omni_flash:['Omni Flash','Omni']
               };
               const aliases = models[cfg.model] || (isImage ? models.nano_banana_pro : models.veo3_fast);
-              const matchAlias = (text) => aliases.some(a => { const t=norm(text).trim(), m=norm(a).trim(); return t === m || t.includes(m) || (m.length > 5 && m.includes(t)); });
+              const matchAlias = (text) => aliases.some(a => { const t=norm(text).trim(), m=norm(a).trim(); if (!t || !m) return false; if (cfg.model === 'omni_flash') return t === m || t.includes('omni flash') || t === 'omni'; return t === m || t.includes(m) || (m.length > 5 && m.includes(t)); });
               let modelRes = {ok:true, skipped: cfg.model === 'custom'};
               if (cfg.model !== 'custom') {
                 await openPanel();
                 const buttons = () => Array.from((document.querySelector('[role="menu"][data-state="open"]') || document).querySelectorAll('button')).filter(visible);
                 let trigger = buttons().find(b => matchAlias(b.innerText||b.textContent||''))
-                  || buttons().find(b => (b.getAttribute('aria-haspopup')||'').includes('menu') && /veo|banana|imagen|fast|lite|quality/i.test(b.innerText||''));
+                  || buttons().find(b => (b.getAttribute('aria-haspopup')||'').includes('menu') && /veo|banana|imagen|omni|fast|lite|quality/i.test(b.innerText||''));
                 const before = trigger ? (trigger.innerText || trigger.textContent || '') : '';
                 if (trigger && matchAlias(before)) {
                   modelRes = {ok:true, already:true, before, aliases};
@@ -610,10 +610,10 @@ def apply_flow_settings(page, args):
                   clickExt(trigger); await p(750);
                   const opts = Array.from(document.querySelectorAll('[role="menuitem"] button, [role="option"], button')).filter(visible);
                   const exact = aliases[0];
-                  const btn = opts.find(b => String(b.innerText||b.textContent||'').trim().includes(exact)) || opts.find(b => matchAlias(b.innerText||b.textContent||''));
+                  const btn = cfg.model === 'omni_flash' ? (opts.find(b => norm(b.innerText||b.textContent||'').trim() === 'omni flash') || opts.find(b => norm(b.innerText||b.textContent||'').trim() === 'omni') || opts.find(b => norm(b.innerText||b.textContent||'').includes('omni flash'))) : (opts.find(b => String(b.innerText||b.textContent||'').trim().includes(exact)) || opts.find(b => matchAlias(b.innerText||b.textContent||''))); 
                   if (btn) { clickExt(btn); await p(1500); }
                   await openPanel();
-                  const afterBtn = buttons().find(b => /veo|banana|imagen|fast|lite|quality/i.test(b.innerText||''));
+                  const afterBtn = buttons().find(b => /veo|banana|imagen|omni|fast|lite|quality/i.test(b.innerText||''));
                   const after = afterBtn ? (afterBtn.innerText || afterBtn.textContent || '') : '';
                   modelRes = {ok:!!btn && (matchAlias(after) || matchAlias(btn.innerText||btn.textContent||'')), before, after, clicked:btn ? (btn.innerText||btn.textContent||'') : '', aliases};
                 } else {
@@ -634,14 +634,7 @@ def apply_flow_settings(page, args):
     except Exception as e:
         log_line(f"[flow] settings apply exception/fallback: {e}")
 
-    # Fallback old per-setting path if Flow UI changed.
-    apply_task_mode(page, task_mode)
-    apply_model(page, model_key)
-    apply_task_mode(page, task_mode)
-    if task_mode == "createvideo":
-        apply_video_sub_mode(page, args.video_sub_mode)
-    apply_aspect_ratio(page, args.flow_aspect_ratio)
-    apply_output_count(page, args.flow_count)
+    # Do not retry model/ratio/count multiple times. One settings pass only.
     close_open_menus(page)
     return False
 
@@ -1740,30 +1733,7 @@ def run(args):
     log_line(f"[flow] starting from prompt #{done + 1} (RUN ID: {args.run_id})")
 
     with sync_playwright() as p:
-        if args.browser == "firefox":
-            try:
-                import subprocess
-                log_line("[flow] verifying firefox binaries...")
-                # Chạy lệnh install để đảm bảo có browser
-                subprocess.run([sys.executable, "-m", "playwright", "install", "firefox"], capture_output=True)
-            except Exception as e:
-                log_line(f"[flow] playwright install warning: {e}")
-            
-            log_line("[flow] starting Firefox...")
-            profile_root = os.path.join(os.path.expanduser("~"), ".flow_auto_profiles")
-            os.makedirs(profile_root, exist_ok=True)
-            user_data_dir = os.path.join(profile_root, f"firefox_{args.run_id}")
-    
-            browser_context = p.firefox.launch_persistent_context(
-                user_data_dir=user_data_dir,
-                headless=False,
-                args=['--lang=vi-VN'],
-                slow_mo=100
-            )
-            page = browser_context.pages[0]
-            page.goto("https://labs.google/fx/vi/tools/flow", wait_until="domcontentloaded", timeout=60000)
-        else:
-            browser = p.chromium.connect_over_cdp(args.cdp)
+        browser = p.chromium.connect_over_cdp(args.cdp)
             page = find_flow_page(browser)
             if not page:
                 raise RuntimeError("Không tìm thấy tab Flow đang mở")
@@ -1986,7 +1956,6 @@ def main():
     ap.add_argument("--download-delay-prompts", type=int, default=0, help="Chế độ chạy liên tục: chờ N prompt sau mới tải prompt cũ")
 
     # Flow settings (đồng bộ với extension)
-    ap.add_argument("--browser", default="chrome", choices=["chrome", "firefox"], help="Browser to use")
     ap.add_argument("--task-mode", default="createvideo", choices=["createvideo", "createimage"], help="Chế độ tạo: video hoặc image")
     ap.add_argument("--flow-model", default="default", help="Model key: default|veo3_lite|veo3_fast|veo3_quality|nano_banana_pro|nano_banana2|imagen4|omni_flash")
     ap.add_argument("--flow-aspect-ratio", default="16:9", help="Tỉ lệ: 16:9 | 9:16 | square | landscape_4_3 | portrait_3_4")
