@@ -1734,9 +1734,9 @@ def run(args):
 
     with sync_playwright() as p:
         browser = p.chromium.connect_over_cdp(args.cdp)
-            page = find_flow_page(browser)
-            if not page:
-                raise RuntimeError("Không tìm thấy tab Flow đang mở")
+        page = find_flow_page(browser)
+        if not page:
+            raise RuntimeError("Không tìm thấy tab Flow đang mở")
 
         page = ensure_project_page(page)
         page.bring_to_front()
