@@ -620,9 +620,14 @@ def apply_flow_settings(page, args):
                   modelRes = {ok:false, reason:'model_trigger_missing', aliases};
                 }
               }
+              let durationRes = {ok:true, skipped: cfg.model !== 'omni_flash' || !cfg.omniDuration};
+              if (cfg.model === 'omni_flash' && cfg.omniDuration) {
+                await openPanel();
+                durationRes = await clickGroup(groupBy([], ['4s','6s','8s','10s','4 s','6 s','8 s','10 s']), t => norm(tabText(t)).replace(/\s+/g,'') === norm(cfg.omniDuration).replace(/\s+/g,''), 'omniDuration');
+              }
               closeMenus(); await p(300);
-              const ok = !!(typeRes.ok && subRes.ok && ratioRes.ok && countRes.ok && modelRes.ok);
-              return {ok, step:ok?'done':'verify_failed', typeRes, subRes, ratioRes, countRes, modelRes, cfg};
+              const ok = !!(typeRes.ok && subRes.ok && ratioRes.ok && countRes.ok && modelRes.ok && durationRes.ok);
+              return {ok, step:ok?'done':'verify_failed', typeRes, subRes, ratioRes, countRes, modelRes, durationRes, cfg};
             }
             """,
             payload,
@@ -1960,6 +1965,7 @@ def main():
     ap.add_argument("--flow-model", default="default", help="Model key: default|veo3_lite|veo3_fast|veo3_quality|nano_banana_pro|nano_banana2|imagen4|omni_flash")
     ap.add_argument("--flow-aspect-ratio", default="16:9", help="Tỉ lệ: 16:9 | 9:16 | square | landscape_4_3 | portrait_3_4")
     ap.add_argument("--flow-count", default="1", help="Số lượng output x1/x2/x3/x4")
+    ap.add_argument("--omni-duration", default="", choices=["", "4s", "6s", "8s", "10s"], help="Thời lượng chỉ áp dụng cho omni_flash")
     ap.add_argument("--video-sub-mode", default="frames", choices=["frames", "ingredients"], help="Video sub mode")
     ap.add_argument("--reference-mode", default="ingredients", choices=["ingredients", "tag"], help="Reference mode")
     ap.add_argument("--paired-mode", dest="paired_mode", action="store_true", help="Map ảnh theo số prompt (1.jpg->prompt1)")
