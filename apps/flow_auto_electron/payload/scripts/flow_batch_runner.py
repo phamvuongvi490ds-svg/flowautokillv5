@@ -1748,10 +1748,12 @@ def run(args):
         time.sleep(1.0)
         capture_startup_screenshot(page)
         try:
-            log_line('[flow] applying GUI settings after New Project')
-            apply_flow_settings(page, args)
+            log_line('[flow] applying GUI settings once after New Project')
+            settings_applied = bool(apply_flow_settings(page, args))
+            log_line(f'[flow] settings applied once: {settings_applied}')
             time.sleep(0.7)
         except Exception as e:
+            settings_applied = False
             log_line(f'[flow] apply settings after New Project failed: {e}')
 
         needs_clear_before_insert = True
@@ -1771,13 +1773,14 @@ def run(args):
                     license_guard_or_raise()
                     page.bring_to_front()
 
-                    # Áp dụng toàn bộ setting truyền từ GUI/worker theo thứ tự chuẩn trước khi nhập prompt
-                    log_line(f'[flow] apply settings before typing: task={args.task_mode}, sub={args.video_sub_mode}, model={args.flow_model}, ratio={args.flow_aspect_ratio}, count={args.flow_count}')
-                    for _ in range(3):
-                        if apply_flow_settings(page, args):
-                            break
-                        time.sleep(1.5)
-                    time.sleep(0.5)
+                    # Settings are applied only once per run. Do not re-select model/ratio/count for later prompts.
+                    if not settings_applied:
+                        log_line(f'[flow] apply settings once before typing: task={args.task_mode}, sub={args.video_sub_mode}, model={args.flow_model}, ratio={args.flow_aspect_ratio}, count={args.flow_count}')
+                        settings_applied = bool(apply_flow_settings(page, args))
+                        log_line(f'[flow] settings applied once: {settings_applied}')
+                        time.sleep(0.5)
+                    else:
+                        log_line('[flow] skip settings: already applied once in this run')
 
                     box = find_input_box(page)
 
