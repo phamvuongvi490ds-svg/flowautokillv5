@@ -30,6 +30,7 @@ function App(){
   const oldDuration=(localStorage.getItem('ai_duration')||'60 seconds');
   const [durationValue,setDurationValue]=useState(localStorage.getItem('ai_duration_value')||((oldDuration.match(/\d+/)||['60'])[0]));
   const [durationUnit,setDurationUnit]=useState<'seconds'|'minutes'>((localStorage.getItem('ai_duration_unit') as any)||(oldDuration.toLowerCase().includes('minute')||oldDuration.toLowerCase().includes('phút')?'minutes':'seconds'));
+  const [promptLang,setPromptLang]=useState(localStorage.getItem('ai_prompt_lang')||'en');
   const [mode,setMode]=useState('createvideo');
   const [subMode,setSubMode]=useState('frames');
   const [model,setModel]=useState('default');
