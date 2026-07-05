@@ -111,7 +111,7 @@ function App(){
   const baseTimeline=()=>timeline.length?timeline:videoFiles.map((f,i)=>({id:`manual_${i+1}`,file:f,name:f.split(/[\\/]/).pop(),keep:true,order:i+1,reason:'Thủ công'}));
   function moveScene(i:number,dir:number){setTimeline(()=>{const a=[...baseTimeline()]; const j=i+dir; if(j<0||j>=a.length)return a; [a[i],a[j]]=[a[j],a[i]]; return a.map((x,k)=>({...x,order:k+1}));})}
   function toggleScene(i:number){setTimeline(()=>baseTimeline().map((x,k)=>k===i?{...x,keep:!x.keep}:x))}
-  async function generatePrompt(){append('Đang tạo prompt AI theo ngôn ngữ đã chọn...'); const r=await api().generatePrompt({apiKey:firstKey(),style,mediaType,ideas,characterImages,promptLang}); if(r?.generated?.file)setGeneratedFile(r.generated.file); append(r)}
+  async function generatePrompt(){ await generateScript(); }
   async function generateScript(){
     const scriptTopic=(topic || ideas || '').trim();
     if(!scriptTopic){ append('❌ Vui lòng nhập Ý tưởng / chủ đề kịch bản trước.'); return; }
@@ -198,8 +198,7 @@ function App(){
             <Button onClick={pickImages}><ImagePlus size={16}/> Upload ảnh nhân vật</Button>
             <Button onClick={pickSampleVideo}>🎞 Chọn video mẫu</Button>
             <Button onClick={analyzeSampleVideoForAi}>🧠 AI phân tích video mẫu</Button>
-            <Button onClick={generatePrompt}>✨ Tạo prompt AI</Button>
-            <Button variant="primary" onClick={generateScript}>🎬 Tạo kịch bản</Button>
+            <Button variant="primary" onClick={generatePrompt}>✨ Tạo prompt</Button>
           </div>
           <p className="hint">Đã chọn {characterImages.length} ảnh nhân vật • Video mẫu: {sampleVideo||'chưa chọn'} • Prompt/kịch bản sẽ ưu tiên giữ nhân vật tương đồng tối đa theo ảnh tham chiếu và xuất theo ngôn ngữ đã chọn{generatedFile?` • File prompt: ${generatedFile}`:''}</p>
         </Card>

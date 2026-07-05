@@ -150,18 +150,18 @@ async function geminiText(apiKey,parts,system,jsonMode=false){
 
 function mimeFromFile(f){ const e=String(f||'').toLowerCase().split('.').pop(); if(e==='png')return 'image/png'; if(e==='webp')return 'image/webp'; return 'image/jpeg'; }
 function imageParts(files){ const out=[]; for(const f of (files||[]).slice(0,8)){ try{ out.push({inlineData:{mimeType:mimeFromFile(f),data:fs.readFileSync(f).toString('base64')}}); }catch{} } return out; }
-function characterSystem(style,media){
+function characterSystem(style,media,outLang='English'){
   const label = style;
   const suffix = STYLE_SUFFIX[style] || '';
   return ` Bạn là một chuyên gia kỹ sư prompt (Prompt Engineer) hàng đầu thế giới cho các mô hình AI tạo sinh như Gemini Image (Banana Pro) và Veo (Video).
-    Nhiệm vụ của bạn là nhận ý tưởng thô từ người dùng và viết lại thành một prompt tiếng Anh cực kỳ chi tiết, chất lượng cao để tạo ra kết quả tốt nhất.
+    Nhiệm vụ của bạn là nhận ý tưởng thô từ người dùng và viết lại thành một prompt cực kỳ chi tiết bằng đúng ngôn ngữ được yêu cầu, chất lượng cao để tạo ra kết quả tốt nhất.
 
     YÊU CẦU QUAN TRỌNG NHẤT:
     1. TUYỆT ĐỐI KHÔNG THAY ĐỔI ĐỐI TƯỢNG CHÍNH: Nếu kịch bản là về "chú chó" (dog), "con mèo" (cat), hay "vật thể" (object), TUYỆT ĐỐI KHÔNG ĐƯỢC biến nó thành con người (human). Phải giữ đúng loài vật/đối tượng mà người dùng đã nhập.
     2. BÁM SÁT NỘI DUNG GỐC: Không được thay đổi cốt truyện, chủ thể hoặc hành động chính của người dùng. Chỉ được phép thêm các từ miêu tả chi tiết (adjectives) và các tham số kỹ thuật (technical parameters).
-    3. GIỮ NGUYÊN NGÔN NGỮ KỊCH BẢN: Nếu input chứa kịch bản hoặc đoạn hội thoại tiếng Việt, hãy viết phần miêu tả hình ảnh bằng tiếng Anh nhưng giữ các thành phần cốt lõi của kịch bản không bị biến dạng.
+    3. NGÔN NGỮ ĐẦU RA BẮT BUỘC: Toàn bộ prompt, description và lời thoại phải viết bằng ${outLang}. Không được tự đổi sang tiếng Anh nếu ${outLang} không phải English.
     4. KHÔNG TỰ Ý TÓM TẮT: Nếu người dùng nhập một đoạn dài, hãy dịch và chi tiết hóa toàn bộ đoạn đó, không được tóm tắt thành một câu ngắn.
-    5. Chỉ trả về nội dung prompt tiếng Anh đã tối ưu. Không giải thích, không thêm râu ria.
+    5. Chỉ trả về nội dung prompt đã tối ưu bằng ${outLang}. Không giải thích, không thêm râu ria.
     6. Tích hợp phong cách: ${label}. (${suffix})
     7. Loại media mục tiêu: ${media === 'VIDEO' ? 'Video (Veo 3.1) - Cần mô tả chuyển động, góc máy, nhịp độ' : 'Hình ảnh (Gemini Pro Image) - Cần mô tả bố cục, ánh sáng, chi tiết tĩnh'}.
     8. Nếu reference character images được cung cấp, hãy phân tích kỹ loài vật/nhân vật, kiểu dáng, trang phục để giữ sự đồng nhất 100%.`;
@@ -174,9 +174,9 @@ async function buildCharacterLock(apiKey, characterImages){
   const sys='You are a strict subject consistency analyst. Analyze the reference images and create a SUBJECT LOCK in English. Identify the species/subject first (e.g., Golden Retriever dog, robotic arm, young woman). Include only the most important stable identity traits: species, color, breed/type, facial features, body markings, and clothing/accessories. Keep it compact, maximum 45 words. Do not invent unseen traits.';
   return await geminiText(apiKey,[...imgs,{text:'Create a compact reusable SUBJECT LOCK, maximum 45 words, for AI video prompts. Identify if it is an animal or human and describe it accurately to keep it identical across scenes.'}],sys,false);
 }
-function lockPrompt(prompt, characterLock){
+function lockPrompt(prompt, characterLock, outLang='English'){
   if(!characterLock) return prompt;
-  const guard=`Same character throughout: ${characterLock}. Keep face, hair, age, body type, and main outfit consistent. `;
+  const guard = outLang==='Vietnamese' ? `Giữ cùng một nhân vật xuyên suốt: ${characterLock}. Giữ nguyên khuôn mặt, tóc, độ tuổi, vóc dáng và trang phục chính. ` : outLang==='Chinese' ? `始终保持同一个角色：${characterLock}。保持相同的脸、头发、年龄、体型和主要服装。 ` : outLang==='Korean' ? `전체 장면에서 동일한 캐릭터 유지: ${characterLock}. 얼굴, 머리, 나이, 체형, 주요 의상을 그대로 유지. ` : outLang==='Spanish' ? `Mantener el mismo personaje en todo momento: ${characterLock}. Conservar rostro, cabello, edad, tipo de cuerpo y atuendo principal. ` : `Same character throughout: ${characterLock}. Keep face, hair, age, body type, and main outfit consistent. `;
   const p=String(prompt||'').trim();
   return p.includes('CHARACTER CONSISTENCY LOCK') ? p : guard + p;
 }
@@ -187,11 +187,11 @@ ${obj.characterSheet}`:'', 'SCENES:', ...scenes.map(s=>`Scene ${s.sceneNumber||'
 function langName(code){ return ({vi:'Vietnamese',en:'English',zh:'Chinese',ko:'Korean',es:'Spanish'}[String(code||'en')]||'English'); }
 async function generatePromptsJs(payload){
   const apiKey=payload.apiKey||''; const style=payload.style||'CINEMATIC'; const media=payload.mediaType||'IMAGE'; const outLang=langName(payload.promptLang);
-  const sys=characterSystem(style,media); const imgs=imageParts(payload.characterImages); const characterLock=await buildCharacterLock(apiKey,payload.characterImages);
+  const sys=characterSystem(style,media,outLang); const imgs=imageParts(payload.characterImages); const characterLock=await buildCharacterLock(apiKey,payload.characterImages);
   const results=[];
   for(const idea of splitIdeas(payload.ideas)){
     const prompt=await geminiText(apiKey,[...imgs,{text:`CHARACTER LOCK TO KEEP EXACTLY:\n${characterLock||'(no reference character)'}\n\nScene/content to generate prompt for: ${idea}\nRequirement: write the prompt in ${outLang} only, follow the content exactly. If a character lock exists, include the compact identity description, but keep the full prompt concise and under 90 words if possible.`}],sys,false);
-    results.push(lockPrompt(prompt,characterLock));
+    results.push(lockPrompt(prompt,characterLock,outLang));
   }
   return {ok:true,characterLock,generated:writeGenerated('electron-ai-generated-prompts.txt',results)};
 }
@@ -229,8 +229,8 @@ async function generateScriptJs(payload){
       7. Trả về kết quả dưới dạng JSON: {"title":"...","characterSheet":"...","scenes":[{"sceneNumber":...,"duration":"8s","description":"...","prompt":"..."}]}.`;
 
     const characterInstruction=characterSheet
-      ? `USE THIS EXACT CHARACTER SHEET FOR ALL SCENES: "${characterSheet}". Repeat this compact identity inside every prompt. Do not change face, hair, age, body type, or main outfit.`
-      : `If reference images are included, first create a compact Character Sheet under 45 words from the images, then repeat it inside every scene prompt.`;
+      ? `USE THIS EXACT CHARACTER SHEET FOR ALL SCENES: "${characterSheet}". Repeat this compact identity inside every prompt, translated/written in ${outLang}. Do not change face, hair, age, body type, or main outfit.`
+      : `If reference images are included, first create a compact Character Sheet under 45 words from the images in ${outLang}, then repeat it inside every scene prompt.`;
     const parts=[...(i===0?imgs:[]),{text:`Topic/content: ${payload.topic}. Total video scenes: ${totalScenes}. Generate scenes ${startScene}-${endScene}. ${characterInstruction} Prompts and descriptions must be in ${outLang}. Keep prompts short but preserve character consistency.`}];
     const txt=await geminiText(payload.apiKey,parts,sys,true);
     let obj;
@@ -245,7 +245,7 @@ async function generateScriptJs(payload){
     const scenes=(obj.scenes||[]).map(sc=>({
       ...sc,
       duration: sc.duration||'8s',
-      prompt: lockPrompt(sc.prompt,characterSheet)
+      prompt: lockPrompt(sc.prompt,characterSheet,outLang)
     }));
     allScenes.push(...scenes);
   }
