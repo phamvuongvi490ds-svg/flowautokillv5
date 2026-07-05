@@ -54,6 +54,7 @@ jobs:
 
 
   build-macos-protected:
+    if: false
     runs-on: macos-latest
     defaults: { run: { working-directory: apps/flow_auto_electron } }
     steps:

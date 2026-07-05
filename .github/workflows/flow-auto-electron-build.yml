@@ -36,6 +36,7 @@ jobs:
           path: apps/flow_auto_electron/out/FlowAutoElectron-Windows.exe
 
   build-macos:
+    if: false
     runs-on: macos-latest
     defaults: { run: { working-directory: apps/flow_auto_electron } }
     steps:
