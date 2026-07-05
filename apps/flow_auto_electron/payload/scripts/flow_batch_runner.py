@@ -640,9 +640,32 @@ def apply_flow_settings(page, args):
     except Exception as e:
         log_line(f"[flow] settings apply exception/fallback: {e}")
 
-    # Do not retry model/ratio/count multiple times. One settings pass only.
+    # One-time fallback only: force correct mode first, then sub-mode/model/ratio/count/duration.
+    fallback_ok = False
+    try:
+        log_line(f"[flow] one-time fallback force settings: task={task_mode}, model={model_key}")
+        apply_task_mode(page, task_mode)
+        time.sleep(0.45)
+        if task_mode == "createvideo":
+            apply_video_sub_mode(page, args.video_sub_mode)
+            time.sleep(0.25)
+        apply_model(page, model_key)
+        time.sleep(0.35)
+        apply_aspect_ratio(page, args.flow_aspect_ratio)
+        time.sleep(0.25)
+        apply_output_count(page, args.flow_count)
+        time.sleep(0.25)
+        if model_key == "omni_flash" and getattr(args, "omni_duration", ""):
+            try:
+                page.locator("button[role='tab'],button").filter(has_text=re.compile(rf"^{re.escape(args.omni_duration)}$|^{re.escape(args.omni_duration.replace('s',' s'))}$", re.I)).first.click(timeout=1800)
+                time.sleep(0.2)
+            except Exception:
+                pass
+        fallback_ok = True
+    except Exception as e:
+        log_line(f"[flow] settings one-time fallback failed: {e}")
     close_open_menus(page)
-    return False
+    return fallback_ok
 
 
 def get_box_text(box):
