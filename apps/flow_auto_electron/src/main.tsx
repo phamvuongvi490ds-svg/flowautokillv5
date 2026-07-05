@@ -31,6 +31,7 @@ function App(){
   const [durationValue,setDurationValue]=useState(localStorage.getItem('ai_duration_value')||((oldDuration.match(/\d+/)||['60'])[0]));
   const [durationUnit,setDurationUnit]=useState<'seconds'|'minutes'>((localStorage.getItem('ai_duration_unit') as any)||(oldDuration.toLowerCase().includes('minute')||oldDuration.toLowerCase().includes('phút')?'minutes':'seconds'));
   const [promptLang,setPromptLang]=useState(localStorage.getItem('ai_prompt_lang')||'en');
+  const [voiceLang,setVoiceLang]=useState(localStorage.getItem('ai_voice_lang')||'vi');
   const [mode,setMode]=useState('createvideo');
   const [subMode,setSubMode]=useState('frames');
   const [model,setModel]=useState('default');
@@ -93,7 +94,7 @@ function App(){
   const T=(vi:string,en:string)=>lang==='EN'?en:vi;
   const nav=[['flow',T('Vận hành Flow','Flow Operation'),Film],['ai','AI Prompt Studio',Wand2],['multi',T('Đa luồng','Multi-profile'),Film],['post',T('Hậu kì video','Video Post-production'),Scissors],['payment',T('Thanh toán','Payment'),CreditCard],['license','License',KeyRound]];
   function switchLang(next:string){localStorage.setItem('flow_lang',next); setLang(next); setLangNotice(true); setActivity(next==='EN'?'Language changed. Please restart app to fully apply.':'Đã đổi ngôn ngữ. Vui lòng khởi động lại app để áp dụng đầy đủ.')}
-  function saveApiConfig(){localStorage.setItem('gemini_api_keys',apiKeys); localStorage.setItem('ai_style',style); localStorage.setItem('ai_media_type',mediaType); localStorage.setItem('ai_duration_value',durationValue); localStorage.setItem('ai_duration_unit',durationUnit); localStorage.setItem('ai_prompt_lang',promptLang); append(lang==='EN'?'✅ API configuration saved.':'✅ Đã lưu cấu hình API.')}
+  function saveApiConfig(){localStorage.setItem('gemini_api_keys',apiKeys); localStorage.setItem('ai_style',style); localStorage.setItem('ai_media_type',mediaType); localStorage.setItem('ai_duration_value',durationValue); localStorage.setItem('ai_duration_unit',durationUnit); localStorage.setItem('ai_prompt_lang',promptLang); localStorage.setItem('ai_voice_lang',voiceLang); append(lang==='EN'?'✅ API configuration saved.':'✅ Đã lưu cấu hình API.')}
   async function pickImages(){const r=await api().openFile({properties:['openFile','multiSelections'],filters:[{name:'Images',extensions:['jpg','jpeg','png','webp']}]}); if(r?.length){setCharacterImages(r); append(`Đã chọn ${r.length} ảnh nhân vật`)}}
   async function pickPrompt(){const r=await api().openFile({properties:['openFile'],filters:[{name:'Text',extensions:['txt','json']},{name:'All',extensions:['*']}]}); if(r?.[0]){setPromptFile(r[0]); append(`Prompt file: ${r[0]}`)}}
   async function pickRefs(){const r=await api().openFile({properties:['openDirectory']}); if(r?.[0]){setRefsDir(r[0]); append(`Đường dẫn thư mục ảnh: ${r[0]}`)}}
@@ -118,7 +119,7 @@ function App(){
     append('🎬 Đang tạo kịch bản video...');
     const duration=`${durationValue} ${durationUnit}`;
     try {
-      const r=await api().generateScript({apiKey:apiKeys,style,topic:scriptTopic,duration,characterImages,promptLang});
+      const r=await api().generateScript({apiKey:apiKeys,style,topic:scriptTopic,duration,characterImages,promptLang,voiceLang});
       if(r?.ok) {
         if(r.generated?.file) setGeneratedFile(r.generated.file);
         append(`✅ Đã tạo kịch bản thành công: ${r.generated?.count || 0} cảnh.`);
@@ -186,7 +187,7 @@ function App(){
           </Field>
           <div className="form4">
             <Field label="Style"><select value={style} onChange={e=>setStyle(e.target.value)}>{styles.map(x=><option key={x} value={x}>{x}</option>)}</select></Field>
-            <Field label="Loại"><select value={mediaType} onChange={e=>setMediaType(e.target.value)}><option value="IMAGE">IMAGE</option><option value="VIDEO">VIDEO</option></select></Field><Field label="Ngôn ngữ prompt"><select value={promptLang} onChange={e=>setPromptLang(e.target.value)}><option value="vi">Tiếng Việt</option><option value="en">Tiếng Anh</option><option value="zh">Tiếng Trung</option><option value="ko">Tiếng Hàn</option><option value="es">Tiếng Tây Ban Nha</option></select></Field>
+            <Field label="Loại"><select value={mediaType} onChange={e=>setMediaType(e.target.value)}><option value="IMAGE">IMAGE</option><option value="VIDEO">VIDEO</option></select></Field><Field label="Ngôn ngữ prompt"><select value={promptLang} onChange={e=>setPromptLang(e.target.value)}><option value="vi">Tiếng Việt</option><option value="en">Tiếng Anh</option><option value="zh">Tiếng Trung</option><option value="ko">Tiếng Hàn</option><option value="es">Tiếng Tây Ban Nha</option></select></Field><Field label="Ngôn ngữ giọng nói nhân vật"><select value={voiceLang} onChange={e=>setVoiceLang(e.target.value)}><option value="vi">Nhân vật nói tiếng Việt</option><option value="en">Nhân vật nói tiếng Anh</option></select></Field>
             <Field label="Thời lượng"><div className="duration-row"><input value={durationValue} onChange={e=>setDurationValue(e.target.value.replace(/[^0-9]/g,''))} placeholder="60"/><select value={durationUnit} onChange={e=>setDurationUnit(e.target.value as 'seconds'|'minutes')}><option value="seconds">Giây</option><option value="minutes">Phút</option></select></div></Field>
             <Field label="Giãn cách"><input value={spacing} onChange={e=>setSpacing(e.target.value)} /></Field>
           </div>
