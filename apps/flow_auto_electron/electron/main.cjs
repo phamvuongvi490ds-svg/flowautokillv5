@@ -184,12 +184,13 @@ function lockPrompt(prompt, characterLock){
 function writeGenerated(name,prompts){ const file=path.join(JOB_DIR,name); fs.writeFileSync(file,prompts.map(x=>String(x).replace(/\s+/g,' ').trim()).filter(Boolean).join('\n\n')+'\n','utf8'); return {file,count:prompts.length,prompts}; }
 function writeScriptText(obj){ const file=path.join(JOB_DIR,'electron-ai-video-script.txt'); const scenes=(obj.scenes||[]).sort((a,b)=>(a.sceneNumber||0)-(b.sceneNumber||0)); const lines=[`TITLE: ${obj.title||''}`, obj.characterSheet?`CHARACTER SHEET:
 ${obj.characterSheet}`:'', 'SCENES:', ...scenes.map(s=>`Scene ${s.sceneNumber||''} (${s.duration||''})\nDescription: ${s.description||''}\nPrompt: ${s.prompt||''}`)].filter(Boolean); fs.writeFileSync(file,lines.join('\n\n'),'utf8'); return file; }
+function langName(code){ return ({vi:'Vietnamese',en:'English',zh:'Chinese',ko:'Korean',es:'Spanish'}[String(code||'en')]||'English'); }
 async function generatePromptsJs(payload){
-  const apiKey=payload.apiKey||''; const style=payload.style||'CINEMATIC'; const media=payload.mediaType||'IMAGE';
+  const apiKey=payload.apiKey||''; const style=payload.style||'CINEMATIC'; const media=payload.mediaType||'IMAGE'; const outLang=langName(payload.promptLang);
   const sys=characterSystem(style,media); const imgs=imageParts(payload.characterImages); const characterLock=await buildCharacterLock(apiKey,payload.characterImages);
   const results=[];
   for(const idea of splitIdeas(payload.ideas)){
-    const prompt=await geminiText(apiKey,[...imgs,{text:`CHARACTER LOCK TO KEEP EXACTLY:\n${characterLock||'(no reference character)'}\n\nScene/content to generate prompt for: ${idea}\nRequirement: write the prompt in English only, follow the content exactly. If a character lock exists, include the compact identity description, but keep the full prompt concise and under 90 words if possible.`}],sys,false);
+    const prompt=await geminiText(apiKey,[...imgs,{text:`CHARACTER LOCK TO KEEP EXACTLY:\n${characterLock||'(no reference character)'}\n\nScene/content to generate prompt for: ${idea}\nRequirement: write the prompt in ${outLang} only, follow the content exactly. If a character lock exists, include the compact identity description, but keep the full prompt concise and under 90 words if possible.`}],sys,false);
     results.push(lockPrompt(prompt,characterLock));
   }
   return {ok:true,characterLock,generated:writeGenerated('electron-ai-generated-prompts.txt',results)};
@@ -200,6 +201,7 @@ async function generateScriptJs(payload){
   const imgs=imageParts(payload.characterImages);
   let characterSheet=await buildCharacterLock(payload.apiKey,payload.characterImages);
   const style=payload.style||'CINEMATIC';
+  const outLang=langName(payload.promptLang);
   const batchSize=20;
   const batches=Math.ceil(totalScenes/batchSize);
   let title=''; const allScenes=[];
@@ -222,14 +224,14 @@ async function generateScriptJs(payload){
       6. Mỗi cảnh quay phải có:
          - sceneNumber: Số thứ tự cảnh (từ ${startScene} đến ${endScene}).
          - duration: Thời lượng cảnh đó (luôn là "8s").
-         - description: Mô tả nội dung cảnh bằng tiếng Việt bám sát nội dung gốc.
-         - prompt: Prompt tiếng Anh chi tiết cho Veo 3.1, tích hợp phong cách ${STYLE_SUFFIX[style]} (${style}). Prompt PHẢI bắt đầu bằng bản mô tả nhân vật đồng nhất đã xác định.
+         - description: Mô tả nội dung cảnh bằng ${outLang} bám sát nội dung gốc.
+         - prompt: Prompt chi tiết bằng ${outLang} cho Veo 3.1, tích hợp phong cách ${STYLE_SUFFIX[style]} (${style}). Prompt PHẢI bắt đầu bằng bản mô tả nhân vật đồng nhất đã xác định.
       7. Trả về kết quả dưới dạng JSON: {"title":"...","characterSheet":"...","scenes":[{"sceneNumber":...,"duration":"8s","description":"...","prompt":"..."}]}.`;
 
     const characterInstruction=characterSheet
       ? `USE THIS EXACT CHARACTER SHEET FOR ALL SCENES: "${characterSheet}". Repeat this compact identity inside every prompt. Do not change face, hair, age, body type, or main outfit.`
       : `If reference images are included, first create a compact Character Sheet under 45 words from the images, then repeat it inside every scene prompt.`;
-    const parts=[...(i===0?imgs:[]),{text:`Topic/content: ${payload.topic}. Total video scenes: ${totalScenes}. Generate scenes ${startScene}-${endScene}. ${characterInstruction} Prompts must be in English. Descriptions can be Vietnamese. Keep prompts short but preserve character consistency.`}];
+    const parts=[...(i===0?imgs:[]),{text:`Topic/content: ${payload.topic}. Total video scenes: ${totalScenes}. Generate scenes ${startScene}-${endScene}. ${characterInstruction} Prompts and descriptions must be in ${outLang}. Keep prompts short but preserve character consistency.`}];
     const txt=await geminiText(payload.apiKey,parts,sys,true);
     let obj;
     try {

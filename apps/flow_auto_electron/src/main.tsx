@@ -92,7 +92,7 @@ function App(){
   const T=(vi:string,en:string)=>lang==='EN'?en:vi;
   const nav=[['flow',T('Vận hành Flow','Flow Operation'),Film],['ai','AI Prompt Studio',Wand2],['multi',T('Đa luồng','Multi-profile'),Film],['post',T('Hậu kì video','Video Post-production'),Scissors],['payment',T('Thanh toán','Payment'),CreditCard],['license','License',KeyRound]];
   function switchLang(next:string){localStorage.setItem('flow_lang',next); setLang(next); setLangNotice(true); setActivity(next==='EN'?'Language changed. Please restart app to fully apply.':'Đã đổi ngôn ngữ. Vui lòng khởi động lại app để áp dụng đầy đủ.')}
-  function saveApiConfig(){localStorage.setItem('gemini_api_keys',apiKeys); localStorage.setItem('ai_style',style); localStorage.setItem('ai_media_type',mediaType); localStorage.setItem('ai_duration_value',durationValue); localStorage.setItem('ai_duration_unit',durationUnit); append(lang==='EN'?'✅ API configuration saved.':'✅ Đã lưu cấu hình API.')}
+  function saveApiConfig(){localStorage.setItem('gemini_api_keys',apiKeys); localStorage.setItem('ai_style',style); localStorage.setItem('ai_media_type',mediaType); localStorage.setItem('ai_duration_value',durationValue); localStorage.setItem('ai_duration_unit',durationUnit); localStorage.setItem('ai_prompt_lang',promptLang); append(lang==='EN'?'✅ API configuration saved.':'✅ Đã lưu cấu hình API.')}
   async function pickImages(){const r=await api().openFile({properties:['openFile','multiSelections'],filters:[{name:'Images',extensions:['jpg','jpeg','png','webp']}]}); if(r?.length){setCharacterImages(r); append(`Đã chọn ${r.length} ảnh nhân vật`)}}
   async function pickPrompt(){const r=await api().openFile({properties:['openFile'],filters:[{name:'Text',extensions:['txt','json']},{name:'All',extensions:['*']}]}); if(r?.[0]){setPromptFile(r[0]); append(`Prompt file: ${r[0]}`)}}
   async function pickRefs(){const r=await api().openFile({properties:['openDirectory']}); if(r?.[0]){setRefsDir(r[0]); append(`Đường dẫn thư mục ảnh: ${r[0]}`)}}
@@ -110,14 +110,14 @@ function App(){
   const baseTimeline=()=>timeline.length?timeline:videoFiles.map((f,i)=>({id:`manual_${i+1}`,file:f,name:f.split(/[\\/]/).pop(),keep:true,order:i+1,reason:'Thủ công'}));
   function moveScene(i:number,dir:number){setTimeline(()=>{const a=[...baseTimeline()]; const j=i+dir; if(j<0||j>=a.length)return a; [a[i],a[j]]=[a[j],a[i]]; return a.map((x,k)=>({...x,order:k+1}));})}
   function toggleScene(i:number){setTimeline(()=>baseTimeline().map((x,k)=>k===i?{...x,keep:!x.keep}:x))}
-  async function generatePrompt(){append('Đang tạo prompt AI tiếng Anh bám sát ảnh nhân vật...'); const r=await api().generatePrompt({apiKey:firstKey(),style,mediaType,ideas,characterImages}); if(r?.generated?.file)setGeneratedFile(r.generated.file); append(r)}
+  async function generatePrompt(){append('Đang tạo prompt AI theo ngôn ngữ đã chọn...'); const r=await api().generatePrompt({apiKey:firstKey(),style,mediaType,ideas,characterImages,promptLang}); if(r?.generated?.file)setGeneratedFile(r.generated.file); append(r)}
   async function generateScript(){
     const scriptTopic=(topic || ideas || '').trim();
     if(!scriptTopic){ append('❌ Vui lòng nhập Ý tưởng / chủ đề kịch bản trước.'); return; }
     append('🎬 Đang tạo kịch bản video...');
     const duration=`${durationValue} ${durationUnit}`;
     try {
-      const r=await api().generateScript({apiKey:apiKeys,style,topic:scriptTopic,duration,characterImages});
+      const r=await api().generateScript({apiKey:apiKeys,style,topic:scriptTopic,duration,characterImages,promptLang});
       if(r?.ok) {
         if(r.generated?.file) setGeneratedFile(r.generated.file);
         append(`✅ Đã tạo kịch bản thành công: ${r.generated?.count || 0} cảnh.`);
@@ -185,7 +185,7 @@ function App(){
           </Field>
           <div className="form4">
             <Field label="Style"><select value={style} onChange={e=>setStyle(e.target.value)}>{styles.map(x=><option key={x} value={x}>{x}</option>)}</select></Field>
-            <Field label="Loại"><select value={mediaType} onChange={e=>setMediaType(e.target.value)}><option value="IMAGE">IMAGE</option><option value="VIDEO">VIDEO</option></select></Field>
+            <Field label="Loại"><select value={mediaType} onChange={e=>setMediaType(e.target.value)}><option value="IMAGE">IMAGE</option><option value="VIDEO">VIDEO</option></select></Field><Field label="Ngôn ngữ prompt"><select value={promptLang} onChange={e=>setPromptLang(e.target.value)}><option value="vi">Tiếng Việt</option><option value="en">Tiếng Anh</option><option value="zh">Tiếng Trung</option><option value="ko">Tiếng Hàn</option><option value="es">Tiếng Tây Ban Nha</option></select></Field>
             <Field label="Thời lượng"><div className="duration-row"><input value={durationValue} onChange={e=>setDurationValue(e.target.value.replace(/[^0-9]/g,''))} placeholder="60"/><select value={durationUnit} onChange={e=>setDurationUnit(e.target.value as 'seconds'|'minutes')}><option value="seconds">Giây</option><option value="minutes">Phút</option></select></div></Field>
             <Field label="Giãn cách"><input value={spacing} onChange={e=>setSpacing(e.target.value)} /></Field>
           </div>
@@ -197,10 +197,10 @@ function App(){
             <Button onClick={pickImages}><ImagePlus size={16}/> Upload ảnh nhân vật</Button>
             <Button onClick={pickSampleVideo}>🎞 Chọn video mẫu</Button>
             <Button onClick={analyzeSampleVideoForAi}>🧠 AI phân tích video mẫu</Button>
-            <Button onClick={generatePrompt}>✨ Tạo prompt tiếng Anh</Button>
+            <Button onClick={generatePrompt}>✨ Tạo prompt AI</Button>
             <Button variant="primary" onClick={generateScript}>🎬 Tạo kịch bản</Button>
           </div>
-          <p className="hint">Đã chọn {characterImages.length} ảnh nhân vật • Video mẫu: {sampleVideo||'chưa chọn'} • Prompt/kịch bản sẽ ưu tiên giữ nhân vật tương đồng tối đa theo ảnh tham chiếu và xuất bằng tiếng Anh{generatedFile?` • File prompt: ${generatedFile}`:''}</p>
+          <p className="hint">Đã chọn {characterImages.length} ảnh nhân vật • Video mẫu: {sampleVideo||'chưa chọn'} • Prompt/kịch bản sẽ ưu tiên giữ nhân vật tương đồng tối đa theo ảnh tham chiếu và xuất theo ngôn ngữ đã chọn{generatedFile?` • File prompt: ${generatedFile}`:''}</p>
         </Card>
         <Card title="Thiết lập Flow" icon={<Film/>}>
           <div className="form4">
