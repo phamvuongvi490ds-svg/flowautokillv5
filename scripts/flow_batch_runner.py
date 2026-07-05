@@ -251,6 +251,7 @@ MODEL_LABELS = {
     "nano_banana2": "Nano Banana 2",
     "nano_banana": "Nano Banana 2",
     "imagen4": "Imagen 4",
+    "omni_flash": "Omni Flash",
 }
 
 
