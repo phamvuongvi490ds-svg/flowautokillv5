@@ -202,7 +202,7 @@ function App(){
             <textarea className="masked" value={apiKeys} onChange={e=>setApiKeys(e.target.value)} placeholder="Dán key, mỗi dòng hoặc dấu phẩy 1 key" />
           </Field>
           <div className="form4">
-            <Field label="Style"><select value={style} onChange={e=>setStyle(e.target.value)}>{styles.map(x=><option key={x} value={x}>{x}</option>)}</select></Field>
+            <Field label="Style"><select value={style} onChange={e=>setStyle(e.target.value)}>{styles.map(x=><option key={x} value={x}>{x==='CINEMATIC'?'LIVE ACTION - người thật':x}</option>)}</select></Field>
             <Field label="Ngôn ngữ prompt"><select value={promptLang} onChange={e=>setPromptLang(e.target.value)}><option value="vi">Tiếng Việt</option><option value="en">Tiếng Anh</option><option value="zh">Tiếng Trung</option><option value="ko">Tiếng Hàn</option><option value="es">Tiếng Tây Ban Nha</option></select></Field>
           </div>
           <Field label="Danh sách nhân vật - mỗi dòng là 1 nhân vật">

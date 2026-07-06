@@ -225,7 +225,8 @@ async function generateCharacterPromptsJs(payload){
   const apiKey=payload.apiKey||'';
   const style=payload.style||'CINEMATIC';
   const outLang=langName(payload.promptLang);
-  const suffix=STYLE_SUFFIX[style]||'';
+  let suffix=STYLE_SUFFIX[style]||'';
+  if(style==='CINEMATIC') suffix='LIVE ACTION real human person, photorealistic portrait/full-body photography, natural human skin texture, real face, realistic clothing, realistic lighting, cinematic live-action camera, not anime, not cartoon, not 3D render, not illustration';
   const lines=String(payload.ideas||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
   if(!lines.length) return {ok:false,error:'missing_character_ideas'};
 
