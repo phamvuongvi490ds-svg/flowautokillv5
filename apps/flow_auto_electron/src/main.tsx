@@ -62,6 +62,7 @@ function App(){
   const [postScript,setPostScript]=useState('');
   const [sampleVideo,setSampleVideo]=useState('');
   const [timeline,setTimeline]=useState<any[]>([]);
+  function timeoutPromise<T>(p:Promise<T>, ms:number, label:string):Promise<T>{ return Promise.race([p, new Promise<T>((_,rej)=>setTimeout(()=>rej(new Error(label)),ms))]); }
   const firstKey=()=>apiKeys.split(/[\n,]+/).map(s=>s.trim()).filter(Boolean)[0]||'';
   const friendly=(x:any)=>{
     if(typeof x==='string') return x;
@@ -118,9 +119,11 @@ function App(){
     const text=(characterIdeas||'').trim();
     if(!text){ append('❌ Vui lòng nhập danh sách nhân vật, mỗi dòng một nhân vật.'); return; }
     append('🧑‍🎨 Đang tạo prompt ảnh nhân vật...');
-    const r=await api().generateCharacters({apiKey:apiKeys,style,ideas:text,promptLang});
+    let r:any;
+    try{ r=await timeoutPromise(api().generateCharacters({apiKey:apiKeys,style,ideas:text,promptLang}), 80000, 'character_prompt_timeout_80s'); }
+    catch(e:any){ r={ok:false,error:e?.message||String(e)}; }
     if(r?.generated?.file) setGeneratedFile(r.generated.file);
-    if(r?.ok===false || r?.error) append(r); else append(r);
+    append(r);
 
   }
 
