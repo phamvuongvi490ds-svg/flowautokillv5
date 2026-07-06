@@ -228,11 +228,17 @@ async function generateCharacterPromptsJs(payload){
   const suffix=STYLE_SUFFIX[style]||'';
   const lines=String(payload.ideas||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
   if(!lines.length) return {ok:false,error:'missing_character_ideas'};
-  const sys=`You are a professional image prompt designer. Create one standalone character image prompt per input line. Output language: ${outLang}. Use the requested visual style: ${style}. Do not merge characters together. No markdown table.`;
-  const prompt=`Create exactly ${lines.length} image prompts. Each input line is one separate character. For each character, write:\nPrompt 01: ...\nPrompt 02: ...\n\nRequirements for every prompt:\n- full character design, face, hairstyle, outfit, pose, expression, body type, accessories\n- strong visual identity, consistent single-character portrait/full-body concept art\n- background/environment matching the character\n- style suffix: ${suffix}\n- output in ${outLang}\n\nCharacter lines:\n${lines.map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
-  const text=await geminiTextFast(apiKey,[{text:prompt}],sys,false,60000);
-  const generated=writeGenerated(`character_prompts_${Date.now()}.txt`, [text]);
-  return {ok:true,generated:{file:generated.file,count:lines.length}};
+  const sys=`You are a professional image prompt designer. Output exactly ONE standalone single-character image prompt. Output language: ${outLang}. Visual style: ${style}. Never add other characters. Never create group scenes. No markdown.`;
+  const prompts=[];
+  for(let i=0;i<lines.length;i++){
+    const character=lines[i];
+    const prompt=`Create ONE image prompt for ONE character only.\nCharacter input: ${character}\n\nStrict rules:\n- This prompt must contain exactly one character, not a group.\n- Do not include any other character from the list.\n- Full character design: face, hairstyle, outfit, pose, expression, body type, accessories.\n- Strong visual identity, solo portrait or full-body concept art.\n- Background/environment matching only this character.\n- Style suffix: ${suffix}\n- Output in ${outLang}.\n- Start with: Prompt ${String(i+1).padStart(2,'0')}:`;
+    const text=await geminiTextFast(apiKey,[{text:prompt}],sys,false,60000);
+    const clean=String(text||'').trim().replace(/^```[a-z]*\s*|```$/gi,'').trim();
+    prompts.push(clean.startsWith('Prompt')?clean:`Prompt ${String(i+1).padStart(2,'0')}: ${clean}`);
+  }
+  const generated=writeGenerated(`character_prompts_${Date.now()}.txt`, prompts);
+  return {ok:true,generated:{file:generated.file,count:prompts.length,prompts}};
 }
 
 async function generateScriptJs(payload){
