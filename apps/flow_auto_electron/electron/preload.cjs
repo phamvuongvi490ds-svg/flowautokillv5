@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('flowAPI', {
   activateLicense: (payload) => ipcRenderer.invoke('license:activate', payload),
   generatePrompt: (payload) => ipcRenderer.invoke('prompt:generate', payload),
   generateScript: (payload) => ipcRenderer.invoke('prompt:script', payload),
+  generateCharacters: (payload) => ipcRenderer.invoke('prompt:characters', payload),
   videoList: (folder) => ipcRenderer.invoke('video:list', folder),
   videoMerge: (payload) => ipcRenderer.invoke('video:merge', payload),
   videoExtractAudio: (payload) => ipcRenderer.invoke('video:extractAudio', payload),

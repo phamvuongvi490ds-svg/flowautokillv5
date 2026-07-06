@@ -12,7 +12,7 @@ const ratios = ['16:9','9:16','square','landscape_4_3','portrait_3_4'];
 const api = () => window.flowAPI || {
   openFile: async()=>[], status: async()=>({ok:true,running:false}), licenseCached: async()=>({ok:true}), machineId: async()=>({machineId:''}),
   ensureCdp: async()=>({ok:false,error:'flowAPI_not_ready'}), openProfileLogin: async()=>({ok:false,error:'flowAPI_not_ready'}), start: async()=>({ok:false,error:'flowAPI_not_ready'}), pause: async()=>({ok:false,error:'flowAPI_not_ready'}), resume: async()=>({ok:false,error:'flowAPI_not_ready'}), stop: async()=>({ok:false,error:'flowAPI_not_ready'}),
-  licenseCheck: async()=>({ok:false,error:'flowAPI_not_ready'}), activateLicense: async()=>({ok:false,error:'flowAPI_not_ready'}), generatePrompt: async()=>({ok:false,error:'flowAPI_not_ready'}), generateScript: async()=>({ok:false,error:'flowAPI_not_ready'}),
+  licenseCheck: async()=>({ok:false,error:'flowAPI_not_ready'}), activateLicense: async()=>({ok:false,error:'flowAPI_not_ready'}), generatePrompt: async()=>({ok:false,error:'flowAPI_not_ready'}), generateScript: async()=>({ok:false,error:'flowAPI_not_ready'}), generateCharacters: async()=>({ok:false,error:'flowAPI_not_ready'}),
   videoList: async()=>({ok:true,files:[]}), videoMerge: async()=>({ok:false,error:'flowAPI_not_ready'}), videoExtractAudio: async()=>({ok:false,error:'flowAPI_not_ready'}), videoAnalyzeSample: async()=>({ok:false,error:'flowAPI_not_ready'})
 };
 
@@ -26,6 +26,7 @@ function App(){
   const [style,setStyle]=useState('CINEMATIC');
   const [mediaType,setMediaType]=useState('VIDEO');
   const [ideas,setIdeas]=useState('');
+  const [characterIdeas,setCharacterIdeas]=useState('');
   const [topic,setTopic]=useState('');
   const oldDuration=(localStorage.getItem('ai_duration')||'60 seconds');
   const [durationValue,setDurationValue]=useState(localStorage.getItem('ai_duration_value')||((oldDuration.match(/\d+/)||['60'])[0]));
@@ -92,7 +93,7 @@ function App(){
   };
   const append=(x:any)=>setActivity(`${new Date().toLocaleTimeString()}  ${friendly(x)}`);
   const T=(vi:string,en:string)=>lang==='EN'?en:vi;
-  const nav=[['flow',T('Vận hành Flow','Flow Operation'),Film],['ai','AI Prompt Studio',Wand2],['multi',T('Đa luồng','Multi-profile'),Film],['post',T('Hậu kì video','Video Post-production'),Scissors],['payment',T('Thanh toán','Payment'),CreditCard],['license','License',KeyRound]];
+  const nav=[['flow',T('Vận hành Flow','Flow Operation'),Film],['ai','AI Prompt Studio',Wand2],['chars','Prompt nhân vật',ImagePlus],['multi',T('Đa luồng','Multi-profile'),Film],['post',T('Hậu kì video','Video Post-production'),Scissors],['payment',T('Thanh toán','Payment'),CreditCard],['license','License',KeyRound]];
   function switchLang(next:string){localStorage.setItem('flow_lang',next); setLang(next); setLangNotice(true); setActivity(next==='EN'?'Language changed. Please restart app to fully apply.':'Đã đổi ngôn ngữ. Vui lòng khởi động lại app để áp dụng đầy đủ.')}
   function saveApiConfig(){localStorage.setItem('gemini_api_keys',apiKeys); localStorage.setItem('ai_style',style); localStorage.setItem('ai_media_type',mediaType); localStorage.setItem('ai_duration_value',durationValue); localStorage.setItem('ai_duration_unit',durationUnit); localStorage.setItem('ai_prompt_lang',promptLang); localStorage.setItem('ai_voice_lang',voiceLang); append(lang==='EN'?'✅ API configuration saved.':'✅ Đã lưu cấu hình API.')}
   async function pickImages(){const r=await api().openFile({properties:['openFile','multiSelections'],filters:[{name:'Images',extensions:['jpg','jpeg','png','webp']}]}); if(r?.length){setCharacterImages(r); append(`Đã chọn ${r.length} ảnh nhân vật`)}}
@@ -112,6 +113,16 @@ function App(){
   const baseTimeline=()=>timeline.length?timeline:videoFiles.map((f,i)=>({id:`manual_${i+1}`,file:f,name:f.split(/[\\/]/).pop(),keep:true,order:i+1,reason:'Thủ công'}));
   function moveScene(i:number,dir:number){setTimeline(()=>{const a=[...baseTimeline()]; const j=i+dir; if(j<0||j>=a.length)return a; [a[i],a[j]]=[a[j],a[i]]; return a.map((x,k)=>({...x,order:k+1}));})}
   function toggleScene(i:number){setTimeline(()=>baseTimeline().map((x,k)=>k===i?{...x,keep:!x.keep}:x))}
+
+  async function generateCharacterPrompts(){
+    const text=(characterIdeas||'').trim();
+    if(!text){ append('❌ Vui lòng nhập danh sách nhân vật, mỗi dòng một nhân vật.'); return; }
+    append('🧑‍🎨 Đang tạo prompt ảnh nhân vật...');
+    const r=await api().generateCharacters({apiKey:apiKeys,style,ideas:text,promptLang});
+    if(r?.generated?.file) setGeneratedFile(r.generated.file);
+    append(r);
+  }
+
   async function generatePrompt(){ await generateScript(); }
   async function generateScript(){
     const scriptTopic=(topic || ideas || '').trim();
@@ -178,8 +189,33 @@ function App(){
   return <div className="app">{bootLoading&&<div className="boot-loading"><div className="loader-card"><div className="spinner"></div><b>Đang tải ứng dụng... {bootPct}%</b><div className="boot-bar"><div style={{width:`${bootPct}%`}}></div></div><span>FLOW AUTO VEO 3 đang khởi động, vui lòng chờ.</span></div></div>}{langNotice&&<div className="modal-backdrop"><div className="small-modal"><b>{T('Đã đổi ngôn ngữ','Language changed')}</b><p>{T('Vui lòng khởi động lại app để áp dụng đầy đủ cài đặt ngôn ngữ.','Please restart the app to fully apply the language setting.')}</p><Button variant="primary" onClick={()=>setLangNotice(false)}>OK</Button></div></div>}
     <aside className="side"><div className="brand"><Bot/><div><b>FLOW AUTO VEO 3</b><span>Modern UI</span></div></div><div className="lang-switch"><button type="button" className={lang==='VI'?'active':''} onClick={(e)=>{e.preventDefault();e.stopPropagation();switchLang('VI')}}>VI</button><button type="button" className={lang==='EN'?'active':''} onClick={(e)=>{e.preventDefault();e.stopPropagation();switchLang('EN')}}>EN</button></div>{nav.map(([id,label,Icon]:any)=><button key={id} onClick={()=>setPage(id)} className={page===id?'active':''}><Icon size={18}/>{label}</button>)}<div className="price">{T('1200K / vĩnh viễn','1200K / lifetime')}</div></aside>
     <main className="main">
-      <header><div><h1>{page==='ai'?'AI Prompt Studio':page==='flow'?T('Vận hành Flow','Flow Operation'):page==='license'?T('License & Đăng ký','License & Activation'):page==='payment'?T('Thanh toán','Payment'):page==='multi'?T('Đa luồng Flow','Multi-profile Flow'):page==='post'?T('Hậu kì video','Video Post-production'):'FLOW AUTO VEO 3'}</h1><p>FLOW AUTO VEO 3 Modern UI</p></div><div className="header-actions"><div className="status">{activity}</div><div className="lang-switch header-lang"><button type="button" className={lang==='VI'?'active':''} onClick={(e)=>{e.preventDefault();switchLang('VI')}}>VI</button><button type="button" className={lang==='EN'?'active':''} onClick={(e)=>{e.preventDefault();switchLang('EN')}}>EN</button></div></div></header>
+      <header><div><h1>{page==='ai'?'AI Prompt Studio':page==='flow'?T('Vận hành Flow','Flow Operation'):page==='license'?T('License & Đăng ký','License & Activation'):page==='payment'?T('Thanh toán','Payment'):page==='chars'?'Prompt nhân vật':page==='multi'?T('Đa luồng Flow','Multi-profile Flow'):page==='post'?T('Hậu kì video','Video Post-production'):'FLOW AUTO VEO 3'}</h1><p>FLOW AUTO VEO 3 Modern UI</p></div><div className="header-actions"><div className="status">{activity}</div><div className="lang-switch header-lang"><button type="button" className={lang==='VI'?'active':''} onClick={(e)=>{e.preventDefault();switchLang('VI')}}>VI</button><button type="button" className={lang==='EN'?'active':''} onClick={(e)=>{e.preventDefault();switchLang('EN')}}>EN</button></div></div></header>
       {page==='flow'&&<div className="grid"><Card title="Thiết lập chạy" icon={<Film/>}><div className="actions"><Button onClick={pickPrompt}>📄 Chọn file prompt</Button><Button onClick={pickRefs}>🖼 Chọn đường dẫn thư mục ảnh</Button><Button onClick={ensureCdp}>🌐 Mở Chrome Flow</Button></div><p className="hint">Prompt: {promptFile || generatedFile || 'chưa chọn'}<br/>Đường dẫn thư mục ảnh: {refsDir || 'chưa chọn'}</p><div className="form4"><Field label="Mode"><select id="flow-mode" value={mode} onChange={e=>setMode(e.target.value)}><option value="createvideo">createvideo</option><option value="createimage">createimage</option></select></Field><Field label="Chế độ video"><select id="flow-sub-mode" value={subMode} onChange={e=>setSubMode(e.target.value)} disabled={mode==='createimage'}><option value="ingredients">Video thành phần</option><option value="frames">Khung hình</option></select></Field><Field label="Model"><select id="flow-model" value={model} onChange={e=>setModel(e.target.value)}>{models.map(x=><option key={x} value={x}>{x}</option>)}</select></Field>{model==='omni_flash'&&<Field label="Thời lượng Omni Flash"><select id="flow-omni-duration" value={omniDuration} onChange={e=>setOmniDuration(e.target.value)}>{['4s','6s','8s','10s'].map(x=><option key={x} value={x}>{x}</option>)}</select></Field>}<Field label="Tỉ lệ"><select id="flow-ratio" value={ratio} onChange={e=>setRatio(e.target.value)}>{ratios.map(x=><option key={x} value={x}>{x}</option>)}</select></Field><Field label="Số output"><select id="flow-count" value={count} onChange={e=>setCount(e.target.value)}>{['1','2','3','4'].map(x=><option key={x} value={x}>{x}x</option>)}</select></Field><Field label="Giãn cách prompt"><input id="flow-spacing" value={spacing} onChange={e=>setSpacing(e.target.value)}/></Field><Field label="Chế độ chạy"><select id="flow-run-mode" value={runMode} onChange={e=>setRunMode(e.target.value)}><option value="single">Chạy từng prompt một</option><option value="continuous_submit_only">Chạy liên tục - chỉ submit</option><option value="continuous_download_delay_3">Chạy liên tục - download trễ sau 3 prompt</option></select></Field><Field label="Số tab Flow"><select id="flow-threads" value={flowThreads} onChange={e=>setFlowThreads(e.target.value)}>{Array.from({length:100},(_,i)=>String(i+1)).map(x=><option key={x} value={x}>{x} tab</option>)}</select></Field></div></Card><Card title="Điều khiển" icon={<Play/>}><div className="actions"><Button variant="primary" onClick={()=>start()}><Play size={16}/> Bắt đầu</Button><Button variant="danger" onClick={stop}><Square size={16}/> Stop</Button></div></Card></div>}
+
+      {page==='chars'&&<div className="grid ai">
+        <Card title="Prompt ảnh tạo nhân vật" icon={<ImagePlus/>}>
+          <Field label="Gemini API keys">
+            <textarea className="masked" value={apiKeys} onChange={e=>setApiKeys(e.target.value)} placeholder="Dán key, mỗi dòng hoặc dấu phẩy 1 key" />
+          </Field>
+          <div className="form4">
+            <Field label="Style"><select value={style} onChange={e=>setStyle(e.target.value)}>{styles.map(x=><option key={x} value={x}>{x}</option>)}</select></Field>
+            <Field label="Ngôn ngữ prompt"><select value={promptLang} onChange={e=>setPromptLang(e.target.value)}><option value="vi">Tiếng Việt</option><option value="en">Tiếng Anh</option><option value="zh">Tiếng Trung</option><option value="ko">Tiếng Hàn</option><option value="es">Tiếng Tây Ban Nha</option></select></Field>
+          </div>
+          <Field label="Danh sách nhân vật - mỗi dòng là 1 nhân vật">
+            <textarea value={characterIdeas} onChange={e=>setCharacterIdeas(e.target.value)} placeholder={'Ví dụ:\nCô gái chiến binh cyberpunk tóc bạc\nÔng lão pháp sư mặc áo choàng xanh\nCậu bé phi hành gia trên sao Hỏa'} />
+          </Field>
+          <div className="actions">
+            <Button onClick={saveApiConfig}>💾 Lưu cấu hình API</Button>
+            <Button variant="primary" onClick={generateCharacterPrompts}>✨ Tạo prompt nhân vật</Button>
+          </div>
+          <p className="hint">Mỗi dòng sẽ xuất ra 1 prompt ảnh cho 1 nhân vật riêng. Dùng chung phong cách với AI Prompt Studio. File prompt: {generatedFile || 'chưa tạo'}</p>
+        </Card>
+        <Card title="Thiết lập Flow ảnh" icon={<Film/>}>
+          <div className="form4"><Field label="Mode"><select value={mode} onChange={e=>setMode(e.target.value)}><option value="createimage">createimage</option><option value="createvideo">createvideo</option></select></Field><Field label="Model"><select value={model} onChange={e=>setModel(e.target.value)}>{models.map(x=><option key={x} value={x}>{x}</option>)}</select></Field><Field label="Tỉ lệ"><select value={ratio} onChange={e=>setRatio(e.target.value)}>{ratios.map(x=><option key={x} value={x}>{x}</option>)}</select></Field><Field label="Số output"><select value={count} onChange={e=>setCount(e.target.value)}>{['1','2','3','4'].map(x=><option key={x} value={x}>{x}x</option>)}</select></Field></div>
+          <div className="actions"><Button variant="primary" onClick={()=>start(generatedFile)}>▶ Chạy prompt nhân vật</Button><Button variant="danger" onClick={stop}>⏹ Stop</Button></div>
+        </Card>
+      </div>}
+
       {page==='ai'&&<div className="grid ai">
         <Card title="API & Kịch bản" icon={<Wand2/>}>
           <Field label="Gemini API keys">

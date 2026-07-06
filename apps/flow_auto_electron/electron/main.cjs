@@ -197,6 +197,22 @@ async function generatePromptsJs(payload){
   return {ok:true,characterLock,generated:writeGenerated('electron-ai-generated-prompts.txt',results)};
 }
 function durationScenes(d){ const s=String(d||'60 seconds').toLowerCase(); let sec=0; let m=s.match(/(\d+)\s*(m|minute|phút)/); if(m)sec+=Number(m[1])*60; m=s.match(/(\d+)\s*(s|second|giây)/); if(m)sec+=Number(m[1]); if(!sec){m=s.match(/^(\d+)$/); if(m)sec=Number(m[1])*60;} return Math.max(1,Math.ceil((sec||60)/8)); }
+
+async function generateCharacterPromptsJs(payload){
+  const apiKey=payload.apiKey||'';
+  const style=payload.style||'CINEMATIC';
+  const outLang=langName(payload.promptLang);
+  const suffix=STYLE_SUFFIX[style]||'';
+  const lines=String(payload.ideas||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+  if(!lines.length) return {ok:false,error:'missing_character_ideas'};
+  const sys=`You are a professional image prompt designer. Create one standalone character image prompt per input line. Output language: ${outLang}. Use the requested visual style: ${style}. Do not merge characters together. No markdown table.`;
+  const prompt=`Create exactly ${lines.length} image prompts. Each input line is one separate character. For each character, write:\nPrompt 01: ...\nPrompt 02: ...\n\nRequirements for every prompt:\n- full character design, face, hairstyle, outfit, pose, expression, body type, accessories\n- strong visual identity, consistent single-character portrait/full-body concept art\n- background/environment matching the character\n- style suffix: ${suffix}\n- output in ${outLang}\n\nCharacter lines:\n${lines.map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
+  const text=await geminiText(apiKey,[{text:prompt}],sys,false);
+  ensureDirs(); const out=path.join(WORK_DIR,`character_prompts_${Date.now()}.txt`);
+  fs.writeFileSync(out,text,'utf8');
+  return {ok:true,generated:{file:out,count:lines.length}};
+}
+
 async function generateScriptJs(payload){
   const totalScenes=durationScenes(payload.duration);
   const imgs=imageParts(payload.characterImages);
@@ -419,6 +435,7 @@ ipcMain.handle('license:cached', async()=>cachedLicense() || {ok:false, reason:'
 ipcMain.handle('license:activate', async(_e,payload)=>activateLicenseJs(payload?.licenseKey, DEFAULT_API_BASE));
 ipcMain.handle('license:check', async()=>{ const r=await verifyLicenseJs(); if(r.ok) return r; const cached=cachedLicense(); if(cached) return {...cached, warning:r.reason||r.error||'online_check_failed'}; return r; });
 ipcMain.handle('prompt:generate', async(_e,payload)=>{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; return generatePromptsJs(payload||{}); });
+ipcMain.handle('prompt:characters', async(_e,payload)=>{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; return generateCharacterPromptsJs(payload||{}); });
 
 function videoFiles(dir){ const exts=new Set(['.mp4','.mov','.mkv','.webm','.avi','.m4v']); try{return fs.readdirSync(dir).filter(f=>exts.has(path.extname(f).toLowerCase())).sort().map(f=>path.join(dir,f));}catch{return []} }
 function ffmpegBin(){
