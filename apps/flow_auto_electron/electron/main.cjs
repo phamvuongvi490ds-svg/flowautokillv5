@@ -228,15 +228,54 @@ async function generateCharacterPromptsJs(payload){
   const suffix=STYLE_SUFFIX[style]||'';
   const lines=String(payload.ideas||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
   if(!lines.length) return {ok:false,error:'missing_character_ideas'};
-  const sys=`You are a professional image prompt designer. Output exactly ONE standalone single-character image prompt. Output language: ${outLang}. Visual style: ${style}. Never add other characters. Never create group scenes. No markdown.`;
-  const prompts=[];
-  for(let i=0;i<lines.length;i++){
-    const character=lines[i];
-    const prompt=`Create ONE image prompt for ONE character only.\nCharacter input: ${character}\n\nStrict rules:\n- This prompt must contain exactly one character, not a group.\n- Do not include any other character from the list.\n- Full character design: face, hairstyle, outfit, pose, expression, body type, accessories.\n- Strong visual identity, solo portrait or full-body concept art.\n- Background/environment matching only this character.\n- Style suffix: ${suffix}\n- Output in ${outLang}.\n- Start with: Prompt ${String(i+1).padStart(2,'0')}:`;
-    const text=await geminiTextFast(apiKey,[{text:prompt}],sys,false,60000);
-    const clean=String(text||'').trim().replace(/^```[a-z]*\s*|```$/gi,'').trim();
-    prompts.push(clean.startsWith('Prompt')?clean:`Prompt ${String(i+1).padStart(2,'0')}: ${clean}`);
+
+  const sys=`You are a professional image prompt designer. Output valid JSON only. Output language: ${outLang}. Visual style: ${style}. Every item must be one standalone single-character image prompt. Never create group scenes. Never combine characters.`;
+  const prompt=`Create exactly ${lines.length} separate image prompts from the input list.
+
+CRITICAL RULES:
+- Return ONLY valid JSON: {"prompts":["Prompt 01: ...", "Prompt 02: ..."]}
+- The JSON array length MUST be exactly ${lines.length}.
+- Each input line becomes exactly ONE output prompt.
+- Each output prompt must contain exactly ONE character only.
+- Do NOT include other characters from the list inside a prompt.
+- Do NOT create a group image.
+- Do NOT merge multiple lines.
+- Each prompt must include: face, hairstyle, outfit, pose, expression, body type, accessories, background/environment.
+- Style suffix for every prompt: ${suffix}
+- Write every prompt in ${outLang}.
+
+INPUT CHARACTER LINES:
+${lines.map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
+
+  let text='';
+  try{
+    text=await geminiTextFast(apiKey,[{text:prompt}],sys,true,60000);
+  }catch(e){
+    // Fallback to normal text mode if JSON mode is not supported/quota model behavior differs.
+    text=await geminiTextFast(apiKey,[{text:prompt}],sys,false,60000);
   }
+
+  let prompts=[];
+  try{
+    const clean=String(text||'').replace(/^```json\s*|^```\s*|```$/g,'').trim();
+    const obj=JSON.parse(clean);
+    prompts=Array.isArray(obj)?obj:(Array.isArray(obj.prompts)?obj.prompts:[]);
+  }catch{}
+
+  if(!prompts.length){
+    prompts=String(text||'').split(/\n\s*(?=Prompt\s*\d+\s*:)/i).map(x=>x.trim()).filter(Boolean);
+  }
+
+  // Final guard: force one output item per input line even if Gemini under/over returns.
+  prompts=prompts.slice(0,lines.length).map((x,i)=>{
+    const body=String(x||'').replace(/^Prompt\s*\d+\s*:\s*/i,'').trim();
+    return `Prompt ${String(i+1).padStart(2,'0')}: ${body || lines[i]}. Single character only, solo portrait/full-body image, ${suffix}`;
+  });
+  while(prompts.length<lines.length){
+    const i=prompts.length;
+    prompts.push(`Prompt ${String(i+1).padStart(2,'0')}: ${lines[i]}. Single character only, solo portrait/full-body image, detailed face, hairstyle, outfit, pose, expression, body type, accessories, matching background, ${suffix}`);
+  }
+
   const generated=writeGenerated(`character_prompts_${Date.now()}.txt`, prompts);
   return {ok:true,generated:{file:generated.file,count:prompts.length,prompts}};
 }
