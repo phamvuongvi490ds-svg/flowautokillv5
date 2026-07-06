@@ -120,7 +120,8 @@ function App(){
     append('🧑‍🎨 Đang tạo prompt ảnh nhân vật...');
     const r=await api().generateCharacters({apiKey:apiKeys,style,ideas:text,promptLang});
     if(r?.generated?.file) setGeneratedFile(r.generated.file);
-    append(r);
+    if(r?.ok===false || r?.error) append(r); else append(r);
+
   }
 
   async function generatePrompt(){ await generateScript(); }

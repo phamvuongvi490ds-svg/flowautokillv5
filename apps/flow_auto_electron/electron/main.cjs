@@ -94,6 +94,29 @@ async function postJson(url,payload){ const r=await fetch(url,{method:'POST',hea
 async function verifyLicenseJs(){ const cfg=loadLicenseCfg(); const base=normalizeBase(cfg.api_base||''); if(!base) return {ok:false,reason:'missing_api_base'}; if(!cfg.license_key) return {ok:false,reason:'missing_license_key'}; cfg.machine_id=cfg.machine_id||machineId(); const payload={license_key:cfg.license_key,machine_id:cfg.machine_id,app_version:'V2.0',nonce:Date.now().toString(36),timestamp:new Date().toISOString().replace(/\.\d{3}Z$/,'Z')}; if(cfg.signed_token) payload.signed_token=cfg.signed_token; try{ const {status,data}=await postJson(`${base}/verify`,payload); if(status===200 && data.valid){ ['signed_token','expires_at','grace_until','next_check_at'].forEach(k=>{if(data[k])cfg[k]=data[k]}); cfg.last_verified_at=payload.timestamp; saveLicenseCfg(cfg); return {ok:true,expires_at:data.expires_at||cfg.expires_at,data}; } return {ok:false,reason:data.reason||`http_${status}`,data}; }catch(e){ return {ok:false,reason:`network_error:${e.message||e}`}; }}
 
 const STYLE_SUFFIX={CINEMATIC:'photorealistic, cinematic lighting, 8k, highly detailed, shot on 35mm lens, shallow depth of field, blockbuster movie style',ANIME:'anime style, studio ghibli, makoto shinkai style, vibrant colors, detailed background, high quality 2d animation',PAINTING:'digital painting, oil painting texture, artistic style, concept art, artstation, masterpiece, intricate details',RENDER_3D:'3d render, unreal engine 5, octane render, global illumination, highly detailed, 8k resolution, ray tracing',COMIC_BOOK:'comic book style, graphic novel, bold outlines, halftone patterns, high contrast, dynamic lighting, marvel comics style',PIXEL_ART:'pixel art, 16-bit, retro gaming style, highly detailed pixel art, isometric perspective, vibrant colors',WATERCOLOR:'watercolor painting, soft edges, color bleeding, traditional art, ethereal, dreamy, delicate brushstrokes',CYBERPUNK:'cyberpunk style, neon lights, futuristic city, high tech, sci-fi, dark atmosphere, holographic elements',STEAMPUNK:'steampunk style, brass gears, steam powered, victorian era, intricate machinery, sepia tones, retro-futuristic',NONE:''};
+
+async function geminiTextFast(apiKey,parts,system,jsonMode=false,timeoutMs=60000){
+  const keys=String(apiKey||'').split(/[\n,]+/).map(s=>s.trim()).filter(Boolean);
+  if(!keys.length) throw new Error('missing_api_key');
+  let lastErr='';
+  for(const key of keys){
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),timeoutMs);
+    try{
+      const body={contents:[{role:'user',parts}],systemInstruction:{parts:[{text:system}]},generationConfig:{temperature:.55}};
+      if(jsonMode) body.generationConfig.responseMimeType='application/json';
+      const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal});
+      const data=await r.json().catch(()=>({}));
+      if(!r.ok){ lastErr=data.error?.message||`http_${r.status}`; continue; }
+      const text=(data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('\n').trim();
+      if(text) return text;
+      lastErr='empty_response';
+    }catch(e){ lastErr=e.name==='AbortError'?'timeout_60s':String(e.message||e); }
+    finally{ clearTimeout(timer); }
+  }
+  throw new Error(lastErr||'gemini_fast_failed');
+}
+
 async function geminiText(apiKey,parts,system,jsonMode=false){
   const keys=String(apiKey||'').split(/[\n,]+/).map(s=>s.trim()).filter(Boolean);
   if(!keys.length) throw new Error('missing_api_key');
@@ -207,7 +230,7 @@ async function generateCharacterPromptsJs(payload){
   if(!lines.length) return {ok:false,error:'missing_character_ideas'};
   const sys=`You are a professional image prompt designer. Create one standalone character image prompt per input line. Output language: ${outLang}. Use the requested visual style: ${style}. Do not merge characters together. No markdown table.`;
   const prompt=`Create exactly ${lines.length} image prompts. Each input line is one separate character. For each character, write:\nPrompt 01: ...\nPrompt 02: ...\n\nRequirements for every prompt:\n- full character design, face, hairstyle, outfit, pose, expression, body type, accessories\n- strong visual identity, consistent single-character portrait/full-body concept art\n- background/environment matching the character\n- style suffix: ${suffix}\n- output in ${outLang}\n\nCharacter lines:\n${lines.map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
-  const text=await geminiText(apiKey,[{text:prompt}],sys,false);
+  const text=await geminiTextFast(apiKey,[{text:prompt}],sys,false,60000);
   ensureDirs(); const out=path.join(WORK_DIR,`character_prompts_${Date.now()}.txt`);
   fs.writeFileSync(out,text,'utf8');
   return {ok:true,generated:{file:out,count:lines.length}};
