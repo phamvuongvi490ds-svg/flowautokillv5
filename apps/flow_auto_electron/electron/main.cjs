@@ -231,9 +231,8 @@ async function generateCharacterPromptsJs(payload){
   const sys=`You are a professional image prompt designer. Create one standalone character image prompt per input line. Output language: ${outLang}. Use the requested visual style: ${style}. Do not merge characters together. No markdown table.`;
   const prompt=`Create exactly ${lines.length} image prompts. Each input line is one separate character. For each character, write:\nPrompt 01: ...\nPrompt 02: ...\n\nRequirements for every prompt:\n- full character design, face, hairstyle, outfit, pose, expression, body type, accessories\n- strong visual identity, consistent single-character portrait/full-body concept art\n- background/environment matching the character\n- style suffix: ${suffix}\n- output in ${outLang}\n\nCharacter lines:\n${lines.map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
   const text=await geminiTextFast(apiKey,[{text:prompt}],sys,false,60000);
-  ensureDirs(); const out=path.join(WORK_DIR,`character_prompts_${Date.now()}.txt`);
-  fs.writeFileSync(out,text,'utf8');
-  return {ok:true,generated:{file:out,count:lines.length}};
+  const generated=writeGenerated(`character_prompts_${Date.now()}.txt`, [text]);
+  return {ok:true,generated:{file:generated.file,count:lines.length}};
 }
 
 async function generateScriptJs(payload){
