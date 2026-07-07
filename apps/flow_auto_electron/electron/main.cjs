@@ -221,11 +221,39 @@ async function generatePromptsJs(payload){
 }
 function durationScenes(d){ const s=String(d||'60 seconds').toLowerCase(); let sec=0; let m=s.match(/(\d+)\s*(m|minute|phút)/); if(m)sec+=Number(m[1])*60; m=s.match(/(\d+)\s*(s|second|giây)/); if(m)sec+=Number(m[1]); if(!sec){m=s.match(/^(\d+)$/); if(m)sec=Number(m[1])*60;} return Math.max(1,Math.ceil((sec||60)/8)); }
 
-function singleCharacterPromptText(raw, fallback, idx, suffix){
+function characterSuffixByLang(style, outLang){
+  if(outLang==='Vietnamese'){
+    if(style==='CINEMATIC') return 'phong cách LIVE ACTION người thật, ảnh chụp điện ảnh siêu thực, da người tự nhiên, khuôn mặt thật, cơ thể thật, quần áo thật, ánh sáng điện ảnh, không anime, không hoạt hình, không 3D, không tranh vẽ';
+    const m={
+      ANIME:'phong cách anime chất lượng cao', PAINTING:'phong cách tranh vẽ nghệ thuật', RENDER_3D:'phong cách render 3D chi tiết', COMIC_BOOK:'phong cách truyện tranh', PIXEL_ART:'phong cách pixel art', WATERCOLOR:'phong cách màu nước', CYBERPUNK:'phong cách cyberpunk tương lai', STEAMPUNK:'phong cách steampunk cổ điển', NONE:'phong cách hình ảnh tự nhiên'
+    };
+    return m[style]||'phong cách hình ảnh điện ảnh';
+  }
+  if(style==='CINEMATIC') return 'LIVE ACTION real human person, photorealistic portrait/full-body photography, natural human skin texture, real face, realistic clothing, realistic lighting, cinematic live-action camera, not anime, not cartoon, not 3D render, not illustration';
+  return STYLE_SUFFIX[style]||'';
+}
+function singleCharacterPromptText(raw, fallback, idx, suffix, outLang='English'){
   let body=String(raw||'').replace(/^Prompt\s*\d+\s*:\s*/i,'').trim();
-  body=body.split(/(?:\n|\s)(?:Prompt|Option|Alternative|Version|Biến thể|Phương án)\s*0?2\s*[:.-]/i)[0].trim();
-  body=body.replace(/\s+/g,' ').trim();
+  body=body.split(/(?:\n|\s)(?:Prompt|Option|Alternative|Version|Biến thể|Phương án|Lựa chọn|Phiên bản)\s*0?2\s*[:.-]/i)[0].trim();
+  body=body.replace(/```[a-z]*|```/gi,'').replace(/\s+/g,' ').trim();
   if(!body) body=String(fallback||'').trim();
+  if(outLang==='Vietnamese'){
+    body=body
+      .replace(/\bSingle character only\b/gi,'chỉ một nhân vật')
+      .replace(/\bsolo portrait\/full-body image\b/gi,'ảnh chân dung hoặc toàn thân một người')
+      .replace(/\bno alternate prompts\b/gi,'không tạo biến thể prompt')
+      .replace(/\bno second character\b/gi,'không có nhân vật thứ hai')
+      .replace(/\bfull character design\b/gi,'thiết kế nhân vật đầy đủ')
+      .replace(/\breal human\b/gi,'người thật')
+      .replace(/\bphotorealistic\b/gi,'siêu thực như ảnh chụp')
+      .replace(/\blive action\b/gi,'người thật đóng phim')
+      .replace(/\bbackground\b/gi,'bối cảnh')
+      .replace(/\boutfit\b/gi,'trang phục')
+      .replace(/\bpose\b/gi,'tư thế')
+      .replace(/\bexpression\b/gi,'biểu cảm')
+      .replace(/\baccessories\b/gi,'phụ kiện');
+    return `Prompt ${String(idx+1).padStart(2,'0')}: ${body}. Chỉ tạo một nhân vật duy nhất trong ảnh, đúng một prompt cho nhân vật này, không tạo biến thể, không thêm nhân vật thứ hai, ảnh chân dung hoặc toàn thân một người, ${suffix}`;
+  }
   return `Prompt ${String(idx+1).padStart(2,'0')}: ${body}. Single character only, exactly one image prompt for this character, no alternate prompts, no second character, solo portrait/full-body image, ${suffix}`;
 }
 
@@ -233,12 +261,11 @@ async function generateCharacterPromptsJs(payload){
   const apiKey=payload.apiKey||'';
   const style=payload.style||'CINEMATIC';
   const outLang=langName(payload.promptLang);
-  let suffix=STYLE_SUFFIX[style]||'';
-  if(style==='CINEMATIC') suffix='LIVE ACTION real human person, photorealistic portrait/full-body photography, natural human skin texture, real face, realistic clothing, realistic lighting, cinematic live-action camera, not anime, not cartoon, not 3D render, not illustration';
+  const suffix=characterSuffixByLang(style,outLang);
   const lines=String(payload.ideas||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
   if(!lines.length) return {ok:false,error:'missing_character_ideas'};
 
-  const sys=`You are a professional image prompt designer. Output valid JSON only. Output language: ${outLang}. Visual style: ${style}. Every item must be one standalone single-character image prompt. Never create group scenes. Never combine characters.`;
+  const sys=`You are a professional image prompt designer. Output valid JSON only. Output language: ${outLang}. Visual style: ${style}. Every item must be one standalone single-character image prompt. Never create group scenes. Never combine characters. If output language is Vietnamese, every word in the prompt must be Vietnamese except unavoidable proper names.`;
   const prompt=`Create exactly ${lines.length} separate image prompts from the input list.
 
 CRITICAL RULES:
@@ -251,7 +278,7 @@ CRITICAL RULES:
 - Do NOT merge multiple lines. Do NOT generate alternatives, versions, Prompt 02/03 inside one item, or multiple prompt variants for the same character.
 - Each prompt must include: face, hairstyle, outfit, pose, expression, body type, accessories, background/environment.
 - Style suffix for every prompt: ${suffix}
-- Write every prompt in ${outLang}.
+- Write every prompt in ${outLang}. If ${outLang} is Vietnamese, do not use English style terms; translate all descriptions and constraints to Vietnamese.
 
 INPUT CHARACTER LINES:
 ${lines.map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
@@ -276,10 +303,10 @@ ${lines.map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
   }
 
   // Final guard: force one output item per input line even if Gemini under/over returns.
-  prompts=prompts.slice(0,lines.length).map((x,i)=>singleCharacterPromptText(x, lines[i], i, suffix));
+  prompts=prompts.slice(0,lines.length).map((x,i)=>singleCharacterPromptText(x, lines[i], i, suffix, outLang));
   while(prompts.length<lines.length){
     const i=prompts.length;
-    prompts.push(singleCharacterPromptText('', `${lines[i]}. detailed face, hairstyle, outfit, pose, expression, body type, accessories, matching background`, i, suffix));
+    prompts.push(singleCharacterPromptText('', outLang==='Vietnamese' ? `${lines[i]}. khuôn mặt chi tiết, kiểu tóc, trang phục, tư thế, biểu cảm, vóc dáng, phụ kiện, bối cảnh phù hợp` : `${lines[i]}. detailed face, hairstyle, outfit, pose, expression, body type, accessories, matching background`, i, suffix, outLang));
   }
 
   const generated=writeGenerated(`character_prompts_${Date.now()}.txt`, prompts);
