@@ -1791,6 +1791,7 @@ def run(args):
             prompt = prompts[idx]
             prompt_no = idx + 1
             ok = False
+            submitted = False
 
             for attempt in range(1, args.max_retries + 2):
                 try:
@@ -1840,6 +1841,8 @@ def run(args):
                     time.sleep(args.before_create_sec)
                     btn = find_create_button(page)
                     btn.click(timeout=5000)
+                    submitted = True
+                    log_line(f"[flow] prompt #{prompt_no} submitted")
 
                     time.sleep(2)
                     fail_reason = classify_flow_error(page)
@@ -1848,6 +1851,10 @@ def run(args):
                             log_line("[flow] daily limit detected, fallback model=default and retry")
                             args.flow_model = "default"
                         raise RuntimeError(f"flow_error:{fail_reason}")
+
+                    if not args.auto_download:
+                        ok = True
+                        break
 
                     if args.auto_download:
                         if int(args.download_delay_prompts or 0) > 0:
@@ -1892,6 +1899,10 @@ def run(args):
                 except (PWTimeout, Exception) as e:
                     needs_clear_before_insert = True
                     log_line(f"[flow] prompt #{prompt_no} attempt {attempt} error: {e}")
+                    if submitted:
+                        log_line(f"[flow] prompt #{prompt_no} was already submitted; skip retry to avoid duplicate prompt")
+                        ok = True
+                        break
                     if attempt <= args.max_retries:
                         time.sleep(2)
 
