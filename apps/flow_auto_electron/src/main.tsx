@@ -159,7 +159,7 @@ function App(){
     const el=document.getElementById(id) as HTMLInputElement | HTMLSelectElement | null;
     return el?.value || fallback;
   }
-  function runPayload(file?:string){
+  function runPayload(file?:string, overrides:any={}){
     const liveMode=domValue('flow-mode', mode);
     const liveSubMode=domValue('flow-sub-mode', subMode);
     const liveModel=domValue('flow-model', model);
@@ -171,16 +171,16 @@ function App(){
     const liveThreads=domValue('flow-threads', flowThreads);
     const payload={
       promptFile:file||promptFile||generatedFile,
-      mode:liveMode, taskMode:liveMode,
-      model:liveModel, flowModel:liveModel,
-      ratio:liveRatio, aspectRatio:liveRatio, flowAspectRatio:liveRatio,
-      count:liveCount, flowCount:liveCount,
-      omniDuration: liveModel==='omni_flash' ? liveOmniDuration : '',
-      spacing:liveSpacing,
+      mode:overrides.mode||liveMode, taskMode:overrides.mode||liveMode,
+      model:overrides.model||liveModel, flowModel:overrides.model||liveModel,
+      ratio:overrides.ratio||liveRatio, aspectRatio:overrides.ratio||liveRatio, flowAspectRatio:overrides.ratio||liveRatio,
+      count:overrides.count||liveCount, flowCount:overrides.count||liveCount,
+      omniDuration: (overrides.model||liveModel)==='omni_flash' ? (overrides.omniDuration||liveOmniDuration) : '',
+      spacing:overrides.spacing||liveSpacing,
       refsDir,
       runMode:liveRunMode,
       flowThreads:liveThreads,
-      autoDownload:true,
+      autoDownload: overrides.autoDownload ?? true,
       pairedMode:true,
       subMode:liveSubMode, videoSubMode:liveSubMode,
       referenceMode:'ingredients'
@@ -188,7 +188,7 @@ function App(){
     append(`⚙️ Setting gửi vào worker: mode=${payload.mode}, model=${payload.model}, ratio=${payload.ratio}, count=${payload.count}${payload.omniDuration?', duration='+payload.omniDuration:''}, sub=${payload.subMode}`);
     return payload;
   }
-  async function start(file?:string){ const p=runPayload(file); append(`🚀 Start (ID: ${Date.now()}): mode=${p.mode}, model=${p.model}`); append(await api().start(p))}
+  async function start(file?:string, overrides:any={}){ const p=runPayload(file,overrides); append(`🚀 Start (ID: ${Date.now()}): mode=${p.mode}, model=${p.model}`); append(await api().start(p))}
   async function quick(){append('Đang quick start...'); append(await api().start({...runPayload(), startFrom:1}))}
   return <div className="app">{bootLoading&&<div className="boot-loading"><div className="loader-card"><div className="spinner"></div><b>Đang tải ứng dụng... {bootPct}%</b><div className="boot-bar"><div style={{width:`${bootPct}%`}}></div></div><span>FLOW AUTO VEO 3 đang khởi động, vui lòng chờ.</span></div></div>}{langNotice&&<div className="modal-backdrop"><div className="small-modal"><b>{T('Đã đổi ngôn ngữ','Language changed')}</b><p>{T('Vui lòng khởi động lại app để áp dụng đầy đủ cài đặt ngôn ngữ.','Please restart the app to fully apply the language setting.')}</p><Button variant="primary" onClick={()=>setLangNotice(false)}>OK</Button></div></div>}
     <aside className="side"><div className="brand"><Bot/><div><b>FLOW AUTO VEO 3</b><span>Modern UI</span></div></div><div className="lang-switch"><button type="button" className={lang==='VI'?'active':''} onClick={(e)=>{e.preventDefault();e.stopPropagation();switchLang('VI')}}>VI</button><button type="button" className={lang==='EN'?'active':''} onClick={(e)=>{e.preventDefault();e.stopPropagation();switchLang('EN')}}>EN</button></div>{nav.map(([id,label,Icon]:any)=><button key={id} onClick={()=>setPage(id)} className={page===id?'active':''}><Icon size={18}/>{label}</button>)}<div className="price">{T('1200K / vĩnh viễn','1200K / lifetime')}</div></aside>
@@ -216,7 +216,7 @@ function App(){
         </Card>
         <Card title="Thiết lập Flow ảnh" icon={<Film/>}>
           <div className="form4"><Field label="Mode"><select value={mode} onChange={e=>setMode(e.target.value)}><option value="createimage">createimage</option><option value="createvideo">createvideo</option></select></Field><Field label="Model"><select value={model} onChange={e=>setModel(e.target.value)}>{models.map(x=><option key={x} value={x}>{x}</option>)}</select></Field><Field label="Tỉ lệ"><select value={ratio} onChange={e=>setRatio(e.target.value)}>{ratios.map(x=><option key={x} value={x}>{x}</option>)}</select></Field><Field label="Số output"><select value={count} onChange={e=>setCount(e.target.value)}>{['1','2','3','4'].map(x=><option key={x} value={x}>{x}x</option>)}</select></Field><Field label="Giãn cách prompt"><input value={spacing} onChange={e=>setSpacing(e.target.value)} placeholder="10" /></Field></div>
-          <div className="actions"><Button variant="primary" onClick={()=>start(generatedFile)}>▶ Chạy prompt nhân vật</Button><Button variant="danger" onClick={stop}>⏹ Stop</Button></div>
+          <div className="actions"><Button variant="primary" onClick={()=>start(generatedFile,{mode,model,ratio,count,spacing,autoDownload:false})}>▶ Chạy prompt nhân vật</Button><Button variant="danger" onClick={stop}>⏹ Stop</Button></div>
         </Card>
       </div>}
 
