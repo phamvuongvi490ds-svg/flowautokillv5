@@ -178,7 +178,7 @@ function App(){
       omniDuration: (overrides.model||liveModel)==='omni_flash' ? (overrides.omniDuration||liveOmniDuration) : '',
       spacing:overrides.spacing||liveSpacing,
       refsDir,
-      runMode:liveRunMode,
+      runMode:overrides.runMode||liveRunMode,
       flowThreads:liveThreads,
       autoDownload: overrides.autoDownload ?? true,
       pairedMode:true,
@@ -215,8 +215,8 @@ function App(){
           <p className="hint">Mỗi dòng sẽ xuất ra 1 prompt ảnh cho 1 nhân vật riêng. Dùng chung phong cách với AI Prompt Studio. File prompt: {generatedFile || 'chưa tạo'}</p>
         </Card>
         <Card title="Thiết lập Flow ảnh" icon={<Film/>}>
-          <div className="form4"><Field label="Mode"><select value={mode} onChange={e=>setMode(e.target.value)}><option value="createimage">createimage</option><option value="createvideo">createvideo</option></select></Field><Field label="Model"><select value={model} onChange={e=>setModel(e.target.value)}>{models.map(x=><option key={x} value={x}>{x}</option>)}</select></Field><Field label="Tỉ lệ"><select value={ratio} onChange={e=>setRatio(e.target.value)}>{ratios.map(x=><option key={x} value={x}>{x}</option>)}</select></Field><Field label="Số output"><select value={count} onChange={e=>setCount(e.target.value)}>{['1','2','3','4'].map(x=><option key={x} value={x}>{x}x</option>)}</select></Field><Field label="Giãn cách prompt"><input value={spacing} onChange={e=>setSpacing(e.target.value)} placeholder="10" /></Field></div>
-          <div className="actions"><Button variant="primary" onClick={()=>start(generatedFile,{mode,model,ratio,count,spacing,autoDownload:false})}>▶ Chạy prompt nhân vật</Button><Button variant="danger" onClick={stop}>⏹ Stop</Button></div>
+          <div className="form4"><Field label="Mode"><select value={mode} onChange={e=>setMode(e.target.value)}><option value="createimage">createimage</option><option value="createvideo">createvideo</option></select></Field><Field label="Model"><select value={model} onChange={e=>setModel(e.target.value)}>{models.map(x=><option key={x} value={x}>{x}</option>)}</select></Field><Field label="Tỉ lệ"><select value={ratio} onChange={e=>setRatio(e.target.value)}>{ratios.map(x=><option key={x} value={x}>{x}</option>)}</select></Field><Field label="Số output"><select value={count} onChange={e=>setCount(e.target.value)}>{['1','2','3','4'].map(x=><option key={x} value={x}>{x}x</option>)}</select></Field><Field label="Giãn cách prompt"><input value={spacing} onChange={e=>setSpacing(e.target.value)} placeholder="10" /></Field><Field label="Chế độ chạy"><select value={runMode} onChange={e=>setRunMode(e.target.value)}><option value="single">Chạy từng prompt một</option><option value="continuous_submit_only">Chạy liên tục</option></select></Field></div>
+          <div className="actions"><Button variant="primary" onClick={()=>start(generatedFile,{mode,model,ratio,count,spacing,runMode,autoDownload:false})}>▶ Chạy prompt nhân vật</Button><Button variant="danger" onClick={stop}>⏹ Stop</Button></div>
         </Card>
       </div>}
 

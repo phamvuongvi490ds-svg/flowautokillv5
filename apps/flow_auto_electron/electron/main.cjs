@@ -221,6 +221,14 @@ async function generatePromptsJs(payload){
 }
 function durationScenes(d){ const s=String(d||'60 seconds').toLowerCase(); let sec=0; let m=s.match(/(\d+)\s*(m|minute|phút)/); if(m)sec+=Number(m[1])*60; m=s.match(/(\d+)\s*(s|second|giây)/); if(m)sec+=Number(m[1]); if(!sec){m=s.match(/^(\d+)$/); if(m)sec=Number(m[1])*60;} return Math.max(1,Math.ceil((sec||60)/8)); }
 
+function singleCharacterPromptText(raw, fallback, idx, suffix){
+  let body=String(raw||'').replace(/^Prompt\s*\d+\s*:\s*/i,'').trim();
+  body=body.split(/(?:\n|\s)(?:Prompt|Option|Alternative|Version|Biến thể|Phương án)\s*0?2\s*[:.-]/i)[0].trim();
+  body=body.replace(/\s+/g,' ').trim();
+  if(!body) body=String(fallback||'').trim();
+  return `Prompt ${String(idx+1).padStart(2,'0')}: ${body}. Single character only, exactly one image prompt for this character, no alternate prompts, no second character, solo portrait/full-body image, ${suffix}`;
+}
+
 async function generateCharacterPromptsJs(payload){
   const apiKey=payload.apiKey||'';
   const style=payload.style||'CINEMATIC';
@@ -237,10 +245,10 @@ CRITICAL RULES:
 - Return ONLY valid JSON: {"prompts":["Prompt 01: ...", "Prompt 02: ..."]}
 - The JSON array length MUST be exactly ${lines.length}.
 - Each input line becomes exactly ONE output prompt.
-- Each output prompt must contain exactly ONE character only.
+- Each output prompt must contain exactly ONE character only and exactly ONE prompt text only.
 - Do NOT include other characters from the list inside a prompt.
 - Do NOT create a group image.
-- Do NOT merge multiple lines.
+- Do NOT merge multiple lines. Do NOT generate alternatives, versions, Prompt 02/03 inside one item, or multiple prompt variants for the same character.
 - Each prompt must include: face, hairstyle, outfit, pose, expression, body type, accessories, background/environment.
 - Style suffix for every prompt: ${suffix}
 - Write every prompt in ${outLang}.
@@ -268,13 +276,10 @@ ${lines.map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
   }
 
   // Final guard: force one output item per input line even if Gemini under/over returns.
-  prompts=prompts.slice(0,lines.length).map((x,i)=>{
-    const body=String(x||'').replace(/^Prompt\s*\d+\s*:\s*/i,'').trim();
-    return `Prompt ${String(i+1).padStart(2,'0')}: ${body || lines[i]}. Single character only, solo portrait/full-body image, ${suffix}`;
-  });
+  prompts=prompts.slice(0,lines.length).map((x,i)=>singleCharacterPromptText(x, lines[i], i, suffix));
   while(prompts.length<lines.length){
     const i=prompts.length;
-    prompts.push(`Prompt ${String(i+1).padStart(2,'0')}: ${lines[i]}. Single character only, solo portrait/full-body image, detailed face, hairstyle, outfit, pose, expression, body type, accessories, matching background, ${suffix}`);
+    prompts.push(singleCharacterPromptText('', `${lines[i]}. detailed face, hairstyle, outfit, pose, expression, body type, accessories, matching background`, i, suffix));
   }
 
   const generated=writeGenerated(`character_prompts_${Date.now()}.txt`, prompts);
