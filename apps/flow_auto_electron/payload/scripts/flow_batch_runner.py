@@ -1986,6 +1986,7 @@ def main():
     ap.add_argument("--prompts", type=Path, required=True)
     default_state = Path.home() / ".openclaw" / "workspace" / ".flow_state.json"
     ap.add_argument("--state", type=Path, default=default_state)
+    ap.add_argument("--fresh-run", action="store_true", help="Ignore previous worker state and force fresh settings")
     ap.add_argument("--cdp", default="http://127.0.0.1:18800")
     ap.add_argument("--batch-size", type=int, default=10)
     ap.add_argument("--max-retries", type=int, default=2)
