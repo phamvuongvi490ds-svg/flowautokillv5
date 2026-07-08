@@ -260,109 +260,68 @@ def apply_task_mode(page, task_mode: str):
     task_mode = (task_mode or "createvideo").strip().lower()
     want = "image" if task_mode == "createimage" else "video"
     want_icon = "image" if want == "image" else "videocam"
-
+    want_labels = ["image", "ảnh", "hình ảnh", "tạo ảnh", "create image"] if want == "image" else ["video", "tạo video", "create video"]
     try:
-        ok = page.evaluate(
-            """
-            async ({want, wantIcon}) => {
-              const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-              const xpath = (xp) => document.evaluate(xp, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-              const visible = (el) => {
-                if (!el) return false;
-                const st = getComputedStyle(el);
-                if (!st || st.display === 'none' || st.visibility === 'hidden') return false;
-                const r = el.getBoundingClientRect();
-                return r.width > 12 && r.height > 12;
-              };
-              const clickLikeExtension = (el) => {
-                if (!el || el.getAttribute('data-state') === 'active') return false;
-                const r = el.getBoundingClientRect();
-                const x = r.left + r.width / 2, y = r.top + r.height / 2;
-                el.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true,cancelable:true,clientX:x,clientY:y,pointerId:1,pointerType:'mouse',isPrimary:true,button:0,buttons:1}));
-                el.dispatchEvent(new MouseEvent('mousedown', {bubbles:true,cancelable:true,clientX:x,clientY:y,button:0,buttons:1}));
-                el.dispatchEvent(new PointerEvent('pointerup', {bubbles:true,cancelable:true,clientX:x,clientY:y,pointerId:1,pointerType:'mouse',isPrimary:true,button:0,buttons:0}));
-                el.dispatchEvent(new MouseEvent('mouseup', {bubbles:true,cancelable:true,clientX:x,clientY:y,button:0,buttons:0}));
-                el.dispatchEvent(new MouseEvent('click', {bubbles:true,cancelable:true,clientX:x,clientY:y,button:0}));
-                return true;
-              };
-              // Extension er(): Step 1 open main control panel first.
-              let openMenu = document.querySelector('[role="menu"][data-state="open"]');
-              if (!openMenu) {
-                const trigger = xpath("//button[@aria-haspopup='menu' and .//div[@data-type='button-overlay'] and text()[normalize-space() != '']]")
-                  || Array.from(document.querySelectorAll("button[aria-haspopup='menu']")).filter(visible).find(b => b.querySelector('div[data-type="button-overlay"]'));
-                if (trigger) { clickLikeExtension(trigger); await sleep(700); }
-                openMenu = document.querySelector('[role="menu"][data-state="open"]');
-              }
-              if (!openMenu) return false;
-
-              // Extension er(): Step 2 select output type by exact tab/icon inside the settings menu.
-              const xp = `//button[@role='tab' and contains(@class,'flow_tab_slider_trigger') and .//i[normalize-space(text())='${wantIcon}']]`;
-              const direct = xpath(xp);
-              if (direct) { clickLikeExtension(direct); await sleep(500); return true; }
-              const labels = want === 'image' ? ['image','photo','ảnh','hình ảnh','tạo ảnh','create image'] : ['video','tạo video','create video'];
-              const bad = ['upload','tải lên','add image','thêm ảnh','reference','ảnh ref'];
-              const nodes = Array.from(document.querySelectorAll("button[role='tab'],[role='tab'],button,[role='button']")).filter(visible);
-              let best = null, bestScore = -999;
-              for (const b of nodes) {
-                const icon = (b.querySelector('i')?.textContent || '').trim().toLowerCase();
-                const txt = ((b.innerText||'')+' '+(b.getAttribute('aria-label')||'')+' '+(b.getAttribute('title')||'')).toLowerCase();
-                let score = 0;
-                if (b.getAttribute('role') === 'tab') score += 1000;
-                if (icon === wantIcon) score += 800;
-                if (labels.some(x => txt.includes(x))) score += 500;
-                if (bad.some(x => txt.includes(x))) score -= 1800;
-                if (score > bestScore) { bestScore = score; best = b; }
-              }
-              if (!best || bestScore < 400) return false;
-              clickLikeExtension(best); await sleep(450); return true;
-            }
-            """,
-            {"want": want, "wantIcon": want_icon},
-        )
-        if ok:
+        res = page.evaluate("""
+        async ({want, wantIcon, wantLabels}) => {
+          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          const norm=s=>String(s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().replace(/\\s+/g,' ').trim();
+          const visible=el=>{ if(!el)return false; const st=getComputedStyle(el); if(st.display==='none'||st.visibility==='hidden')return false; const r=el.getBoundingClientRect(); return r.width>12&&r.height>12; };
+          const click=el=>{ const r=el.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2; el.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,clientX:x,clientY:y,pointerId:1,pointerType:'mouse',isPrimary:true,button:0,buttons:1})); el.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,clientX:x,clientY:y,button:0,buttons:1})); el.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,clientX:x,clientY:y,pointerId:1,pointerType:'mouse',isPrimary:true,button:0,buttons:0})); el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,clientX:x,clientY:y,button:0})); el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:x,clientY:y,button:0})); };
+          let panel=document.querySelector('[role="menu"][data-state="open"]');
+          if(!panel){ const ts=Array.from(document.querySelectorAll('button[aria-haspopup="menu"]')).filter(visible); const t=ts.find(b=>/veo|banana|imagen|omni|fast|lite|quality|video|image|ảnh|hình/i.test(b.innerText||b.textContent||''))||ts[0]; if(t){click(t); await sleep(700);} panel=document.querySelector('[role="menu"][data-state="open"]')||document; }
+          const labels=wantLabels.map(norm);
+          const bad=want==='image' ? ['video','tao video','create video','upload','tai len','reference'] : ['image','anh','hinh anh','tao anh','create image','upload','tai len','reference'];
+          const nodes=Array.from(panel.querySelectorAll('button[role="tab"],[role="tab"],button')).filter(visible);
+          let scored=[];
+          for(const b of nodes){ const txt=norm((b.innerText||'')+' '+(b.getAttribute('aria-label')||'')+' '+(b.getAttribute('title')||'')); const icon=norm(b.querySelector('i')?.textContent||''); let score=0; if(b.getAttribute('role')==='tab')score+=1000; if(icon===wantIcon)score+=900; if(labels.some(x=>txt===x||txt.includes(x)))score+=700; if(bad.some(x=>txt.includes(x)))score-=2500; if(score>0) scored.push({b,score,txt,icon,active:b.getAttribute('data-state')==='active'||b.getAttribute('aria-selected')==='true'}); }
+          scored.sort((a,b)=>b.score-a.score); const best=scored[0];
+          if(!best||best.score<700) return {ok:false,reason:'mode_target_missing',want,candidates:scored.slice(0,8).map(x=>({score:x.score,txt:x.txt,icon:x.icon,active:x.active}))};
+          if(!best.active){ click(best.b); await sleep(650); }
+          const active=Array.from(panel.querySelectorAll('button[role="tab"],[role="tab"],button')).filter(visible).filter(b=>b.getAttribute('data-state')==='active'||b.getAttribute('aria-selected')==='true').map(b=>({txt:norm((b.innerText||'')+' '+(b.getAttribute('aria-label')||'')),icon:norm(b.querySelector('i')?.textContent||'')}));
+          const exact=active.some(a=>a.icon===wantIcon||labels.some(x=>a.txt===x||a.txt.includes(x)));
+          return {ok:exact,want,clicked:{txt:best.txt,icon:best.icon,score:best.score},active};
+        }
+        """, {"want": want, "wantIcon": want_icon, "wantLabels": want_labels})
+        log_line(f"[flow] task mode select result: {res}")
+        if res and res.get("ok"):
             time.sleep(0.45)
             return True
-    except Exception:
-        pass
+    except Exception as e:
+        log_line(f"[flow] task mode select exception: {e}")
     return False
-
 
 def apply_video_sub_mode(page, sub_mode: str):
     mode = (sub_mode or "frames").strip().lower()
     want_icon = "chrome_extension" if mode == "ingredients" else "crop_free"
-
+    want_labels = ["video thành phần", "thành phần", "ingredients", "ingredient"] if mode == "ingredients" else ["khung hình", "frames", "frame"]
     try:
-        ok = page.evaluate(
-            """
-            (wantIcon) => {
-              const visible = (el) => {
-                if (!el) return false;
-                const st = getComputedStyle(el);
-                if (!st || st.display === 'none' || st.visibility === 'hidden') return false;
-                const r = el.getBoundingClientRect();
-                return r.width > 8 && r.height > 8;
-              };
-              const tabs = Array.from(document.querySelectorAll("button[role='tab'],button,[role='button']")).filter(visible);
-              for (const b of tabs) {
-                const icon = (b.querySelector('i')?.textContent || '').trim();
-                if (icon === wantIcon) {
-                  b.click();
-                  return true;
-                }
-              }
-              return false;
-            }
-            """,
-            want_icon,
-        )
-        if ok:
-            time.sleep(0.2)
+        res = page.evaluate("""
+        async ({wantIcon,wantLabels}) => {
+          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          const norm=s=>String(s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().replace(/\\s+/g,' ').trim();
+          const visible=el=>{ if(!el)return false; const st=getComputedStyle(el); if(st.display==='none'||st.visibility==='hidden')return false; const r=el.getBoundingClientRect(); return r.width>10&&r.height>10; };
+          const click=el=>{ const r=el.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2; el.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,clientX:x,clientY:y,button:0})); el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,clientX:x,clientY:y,button:0})); el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:x,clientY:y,button:0})); };
+          const panel=document.querySelector('[role="menu"][data-state="open"]')||document;
+          const labels=wantLabels.map(norm);
+          const nodes=Array.from(panel.querySelectorAll('button[role="tab"],[role="tab"],button')).filter(visible);
+          let scored=[];
+          for(const b of nodes){ const txt=norm((b.innerText||'')+' '+(b.getAttribute('aria-label')||'')+' '+(b.getAttribute('title')||'')); const icon=norm(b.querySelector('i')?.textContent||''); let score=0; if(b.getAttribute('role')==='tab')score+=800; if(icon===wantIcon)score+=900; if(labels.some(x=>txt===x||txt.includes(x)))score+=700; if(score>0)scored.push({b,score,txt,icon,active:b.getAttribute('data-state')==='active'||b.getAttribute('aria-selected')==='true'}); }
+          scored.sort((a,b)=>b.score-a.score); const best=scored[0];
+          if(!best||best.score<700) return {ok:false,reason:'submode_target_missing',candidates:scored.slice(0,8).map(x=>({score:x.score,txt:x.txt,icon:x.icon,active:x.active}))};
+          if(!best.active){ click(best.b); await sleep(450); }
+          const active=Array.from(panel.querySelectorAll('button[role="tab"],[role="tab"],button')).filter(visible).filter(b=>b.getAttribute('data-state')==='active'||b.getAttribute('aria-selected')==='true').map(b=>({txt:norm((b.innerText||'')+' '+(b.getAttribute('aria-label')||'')),icon:norm(b.querySelector('i')?.textContent||'')}));
+          const exact=active.some(a=>a.icon===wantIcon||labels.some(x=>a.txt===x||a.txt.includes(x)));
+          return {ok:exact,clicked:{txt:best.txt,icon:best.icon,score:best.score},active};
+        }
+        """, {"wantIcon": want_icon, "wantLabels": want_labels})
+        log_line(f"[flow] video sub-mode select result: {res}")
+        if res and res.get("ok"):
+            time.sleep(0.25)
             return True
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_line(f"[flow] video sub-mode exception: {e}")
     return False
-
 
 def apply_output_count(page, count: str):
     c = str(count or "1").strip()
@@ -645,10 +604,12 @@ def apply_flow_settings(page, args):
     fallback_ok = False
     try:
         log_line(f"[flow] one-time fallback force settings: task={task_mode}, model={model_key}")
-        apply_task_mode(page, task_mode)
+        if not apply_task_mode(page, task_mode):
+            raise RuntimeError("task_mode_not_exact")
         time.sleep(0.45)
         if task_mode == "createvideo":
-            apply_video_sub_mode(page, args.video_sub_mode)
+            if not apply_video_sub_mode(page, args.video_sub_mode):
+                raise RuntimeError("video_sub_mode_not_exact")
             time.sleep(0.25)
         apply_model(page, model_key)
         time.sleep(0.35)
