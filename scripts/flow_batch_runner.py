@@ -2005,10 +2005,10 @@ def main():
     ap.set_defaults(paired_mode=True)
 
     args = ap.parse_args()
-    if args.submit_only and args.auto_download:
-        log_line('[flow] auto-download is ON, ignoring submit-only so download can run')
+    # Auto download switch has priority over run mode. If ON, never run submit-only.
+    if args.auto_download:
         args.submit_only = False
-    if args.submit_only:
+    elif args.submit_only:
         args.auto_download = False
     log_line(f'[flow] auto_download={args.auto_download}, submit_only={args.submit_only}, download_delay_prompts={args.download_delay_prompts}')
     run(args)
