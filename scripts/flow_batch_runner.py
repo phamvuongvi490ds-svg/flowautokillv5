@@ -1692,13 +1692,15 @@ def auto_download_with_retry(page, resolution="720p", timeout_sec=480, before_id
     if res == "720":
         res = "720p"
     while time.time() < deadline:
-        # Flow UI download is the reliable trigger. After it fires, extension_download_tile_via_ui
-        # validates/renames UUID downloads by inspecting media bytes.
+        # Prefer direct media bytes while browser is busy; UI download can sometimes save an HTML/redirect placeholder.
+        ok, step = direct_download_media_from_tile(page, before_ids=before_ids, output_prefix=output_prefix)
+        last = step
+        if ok:
+            return True, step
         ok, step = extension_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix)
         last = step
         if ok:
             return True, step
-        # Không dùng direct request/media URL. Chỉ giả lập thao tác bấm UI như người dùng.
         time.sleep(4.0)
     return False, last
 
@@ -1752,8 +1754,8 @@ def run(args):
     prompts = load_prompts(args.prompts)
     total = len(prompts)
 
-    state = load_state(args.state)
-    done = int(state.get("done", 0))
+    state = {} if getattr(args, "fresh_run", False) else load_state(args.state)
+    done = 0 if getattr(args, "fresh_run", False) else int(state.get("done", 0))
     settings_applied = False
     if args.start_from is not None:
         done = max(0, args.start_from - 1)
@@ -1765,7 +1767,10 @@ def run(args):
         browser = p.chromium.connect_over_cdp(args.cdp)
         page = find_flow_page(browser)
         if not page:
-            raise RuntimeError("Không tìm thấy tab Flow đang mở")
+            ctx = browser.contexts[0]
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            page.goto("https://labs.google/fx/vi/tools/flow", wait_until="domcontentloaded", timeout=30000)
+            time.sleep(1.0)
 
         page = ensure_project_page(page)
         page.bring_to_front()
