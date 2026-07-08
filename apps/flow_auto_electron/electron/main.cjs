@@ -237,6 +237,7 @@ function singleCharacterPromptText(raw, fallback, idx, suffix, outLang='English'
   body=body.split(/(?:\n|\s)(?:Prompt|Option|Alternative|Version|Biến thể|Phương án|Lựa chọn|Phiên bản)\s*0?2\s*[:.-]/i)[0].trim();
   body=body.replace(/```[a-z]*|```/gi,'').replace(/\s+/g,' ').trim();
   if(!body) body=String(fallback||'').trim();
+  // Do not expose character names directly; force visual-description wording in final prompt.
   if(outLang==='Vietnamese'){
     body=body
       .replace(/\bSingle character only\b/gi,'chỉ một nhân vật')
@@ -252,9 +253,9 @@ function singleCharacterPromptText(raw, fallback, idx, suffix, outLang='English'
       .replace(/\bpose\b/gi,'tư thế')
       .replace(/\bexpression\b/gi,'biểu cảm')
       .replace(/\baccessories\b/gi,'phụ kiện');
-    return `Prompt ${String(idx+1).padStart(2,'0')}: ${body}. Chỉ tạo một nhân vật duy nhất trong ảnh, đúng một prompt cho nhân vật này, không tạo biến thể, không thêm nhân vật thứ hai, ảnh chân dung hoặc toàn thân một người, ${suffix}`;
+    return `Prompt ${String(idx+1).padStart(2,'0')}: ${body}. Không ghi trực tiếp tên nhân vật; chỉ mô tả ngoại hình thật chính xác 100% gồm khuôn mặt, mắt, mũi, môi, xương hàm, kiểu tóc, màu tóc, vóc dáng, trang phục, chất liệu quần áo, màu sắc và phụ kiện. Chỉ tạo một nhân vật duy nhất trong ảnh, đúng một prompt cho nhân vật này, không tạo biến thể, không thêm nhân vật thứ hai, ảnh chân dung hoặc toàn thân một người, ${suffix}`;
   }
-  return `Prompt ${String(idx+1).padStart(2,'0')}: ${body}. Single character only, exactly one image prompt for this character, no alternate prompts, no second character, solo portrait/full-body image, ${suffix}`;
+  return `Prompt ${String(idx+1).padStart(2,'0')}: ${body}. Do not write the character name directly; describe the visual identity with 100% accuracy, including face shape, eyes, nose, lips, jawline, hairstyle, hair color, body shape, outfit, clothing material, colors, and accessories. Single character only, exactly one image prompt for this character, no alternate prompts, no second character, solo portrait/full-body image, ${suffix}`;
 }
 
 async function generateCharacterPromptsJs(payload){
@@ -265,8 +266,8 @@ async function generateCharacterPromptsJs(payload){
   const lines=String(payload.ideas||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
   if(!lines.length) return {ok:false,error:'missing_character_ideas'};
 
-  const sys=`You are a professional image prompt designer. Output valid JSON only. Output language: ${outLang}. Visual style: ${style}. Every item must be one standalone single-character image prompt. Never create group scenes. Never combine characters. If output language is Vietnamese, every word in the prompt must be Vietnamese except unavoidable proper names.`;
-  const prompt=`Create exactly ${lines.length} separate image prompts from the input list.
+  const sys=`You are a professional image prompt designer. Output valid JSON only. Output language: ${outLang}. Visual style: ${style}. Every item must be one standalone single-character image prompt. Never create group scenes. Never combine characters. Never mention the character name directly; infer and describe the character visually with maximum accuracy. If output language is Vietnamese, every word in the prompt must be Vietnamese except unavoidable proper names.`;
+  const prompt=`Create exactly ${lines.length} separate image prompts from the input list. If an input line is a known character/person name, do not output that name; infer the visual appearance and describe it precisely instead.
 
 CRITICAL RULES:
 - Return ONLY valid JSON: {"prompts":["Prompt 01: ...", "Prompt 02: ..."]}
@@ -276,7 +277,8 @@ CRITICAL RULES:
 - Do NOT include other characters from the list inside a prompt.
 - Do NOT create a group image.
 - Do NOT merge multiple lines. Do NOT generate alternatives, versions, Prompt 02/03 inside one item, or multiple prompt variants for the same character.
-- Each prompt must include: face, hairstyle, outfit, pose, expression, body type, accessories, background/environment.
+- Each prompt must include: face shape, eyes, nose, lips, jawline, hairstyle, hair color, outfit, pose, expression, body type, accessories, background/environment.
+- Do NOT mention or output the character name directly. Convert the name/input into a precise visual description only.
 - Style suffix for every prompt: ${suffix}
 - Write every prompt in ${outLang}. If ${outLang} is Vietnamese, do not use English style terms; translate all descriptions and constraints to Vietnamese.
 
