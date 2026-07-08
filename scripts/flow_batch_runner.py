@@ -1672,8 +1672,7 @@ def extension_download_tile_via_ui(page, resolution="720p", before_ids=None, out
             detected_ext = None
 
         uuidish = bool(re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]+)?", filename or ""))
-        if filename.endswith(valid_exts) and not uuidish:
-            return True, f"done:{filename}"
+        # Never trust filename/extension. Only accept if magic bytes prove it is image/video.
         if detected_ext and download_path and download_path.exists():
             out_dir = Path.home() / "Downloads"
             try:
@@ -1721,10 +1720,17 @@ def auto_download_with_retry(page, resolution="720p", timeout_sec=480, before_id
         last = step
         if ok:
             return True, step
-        # UI/context-menu download is unsafe while automation is running: Flow can save
-        # redirect/placeholder files instead of the real image/video. Only accept direct
-        # media bytes validated by magic bytes in _save_media_bytes().
-        last = f"direct_only:{last}"
+        # If direct media is unavailable, use Flow's own UI download after the page is idle.
+        # Validate actual bytes after download; bad preview/placeholder files are deleted by
+        # extension_download_tile_via_ui() and retried instead of being kept.
+        try:
+            page.wait_for_timeout(1200)
+        except Exception:
+            pass
+        ok, step = extension_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix)
+        last = step
+        if ok:
+            return True, step
         time.sleep(4.0)
     return False, last
 
