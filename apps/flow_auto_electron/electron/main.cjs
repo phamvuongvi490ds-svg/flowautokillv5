@@ -476,24 +476,25 @@ function writeThreadPromptFile(baseFile, idx, prompts){ const f=path.join(JOB_DI
 function splitRoundRobin(items,n){ const out=Array.from({length:n},()=>[]); items.forEach((x,i)=>out[i%n].push(x)); return out.filter(x=>x.length); }
 
 function runnerCommand(){
-  // Always prefer the bundled Python script so new fixes/settings are used immediately.
-  // Older packaged exe runners can keep stale automation logic between releases.
-  const script=path.join(SCRIPTS_DIR,'flow_batch_runner.py');
-  if(fs.existsSync(script)){
-    const py=ensurePythonEnv();
-    return {cmd:py, prefix:[script], compiled:false};
-  }
   const exeName=process.platform==='win32'?'flow_batch_runner.exe':'flow_batch_runner';
-  const candidates=[
+  const exeCandidates=[
     resourcePath(path.join('payload','bin','flow_batch_runner.dist',exeName)),
     resourcePath(path.join('payload','bin',exeName)),
     path.join(BASE_DIR,'bin','flow_batch_runner.dist',exeName),
     path.join(BASE_DIR,'bin',exeName),
   ];
-  const exe=candidates.find(x=>fs.existsSync(x));
-  if(exe) return {cmd:exe, prefix:[], compiled:true};
-  const py=ensurePythonEnv();
-  return {cmd:py, prefix:[script], compiled:false};
+  const exe=exeCandidates.find(x=>fs.existsSync(x));
+  // Protected packaged builds ship only the compiled runner. Use it there.
+  if(app.isPackaged && exe) return {cmd:exe, prefix:[], compiled:true, path:exe};
+
+  // Dev/unprotected builds can use the Python script for fastest fixes.
+  const script=path.join(SCRIPTS_DIR,'flow_batch_runner.py');
+  if(fs.existsSync(script)){
+    const py=ensurePythonEnv();
+    return {cmd:py, prefix:[script], compiled:false, path:script};
+  }
+  if(exe) return {cmd:exe, prefix:[], compiled:true, path:exe};
+  throw new Error(`runner_not_found: checked ${[script,...exeCandidates].join(' | ')}`);
 }
 
 function startRunner(payload){
@@ -516,7 +517,7 @@ function startRunner(payload){
     const stateFile=idx===0?RUN_STATE:path.join(JOB_DIR,`electron-runner-state-${idx+1}.json`);
     try { if(fs.existsSync(stateFile)) fs.unlinkSync(stateFile); } catch(e) {}
     const args=['--run-id',runId,'--prompts',pf,'--state',stateFile,'--fresh-run','--start-from',String(payload.startFrom||1),'--cdp',`http://127.0.0.1:${CDP_PORT+idx}`,'--task-mode',payload.mode||payload.taskMode||'createvideo','--video-sub-mode',payload.subMode||payload.videoSubMode||'frames','--reference-mode',payload.referenceMode||'ingredients','--flow-model',payload.model||payload.flowModel||'default','--flow-aspect-ratio',payload.ratio||payload.aspectRatio||payload.flowAspectRatio||'16:9','--flow-count',String(payload.count||payload.flowCount||1),'--omni-duration',String(payload.omniDuration||''),'--download-resolution','720','--between-prompts-sec',String(payload.spacing||10)];
-    args.push(payload.pairedMode===false?'--no-paired-mode':'--paired-mode'); const wantAutoDownload = payload.autoDownload !== false; if(wantAutoDownload) args.push('--auto-download'); if(payload.runMode==='continuous_submit_only' && !wantAutoDownload) args.push('--submit-only'); if(payload.runMode==='continuous_download_delay_3' && wantAutoDownload) args.push('--download-delay-prompts','3'); const refDir=threadRefs[idx]||payload.refsDir; if(refDir) args.push('--refs-dir',refDir); try{ fs.appendFileSync(logFile, `[runner] thread=${idx+1} mode=${payload.mode||payload.taskMode} model=${payload.model||payload.flowModel} ratio=${payload.ratio||payload.aspectRatio||payload.flowAspectRatio} count=${payload.count||payload.flowCount} autoDownload=${wantAutoDownload} runMode=${payload.runMode||''}\n`); }catch{}
+    args.push(payload.pairedMode===false?'--no-paired-mode':'--paired-mode'); const wantAutoDownload = payload.autoDownload !== false; if(wantAutoDownload) args.push('--auto-download'); if(payload.runMode==='continuous_submit_only' && !wantAutoDownload) args.push('--submit-only'); if(payload.runMode==='continuous_download_delay_3' && wantAutoDownload) args.push('--download-delay-prompts','3'); const refDir=threadRefs[idx]||payload.refsDir; if(refDir) args.push('--refs-dir',refDir); try{ fs.appendFileSync(logFile, `[runner] path=${runner.path||runner.cmd} compiled=${!!runner.compiled}\n[runner] thread=${idx+1} mode=${payload.mode||payload.taskMode} model=${payload.model||payload.flowModel} ratio=${payload.ratio||payload.aspectRatio||payload.flowAspectRatio} count=${payload.count||payload.flowCount} autoDownload=${wantAutoDownload} runMode=${payload.runMode||''}\n`); }catch{}
     const p=spawn(runner.cmd, [...runner.prefix, ...args], spawnOpts({detached:true, stdio:['ignore',out,out]})); p.unref(); pids.push(p.pid); fs.writeFileSync(path.join(JOB_DIR,`electron-runner-${idx+1}.pid`),String(p.pid));
   });
   fs.writeFileSync(PID_RUN,String(pids[0]||'')); return {ok:true,pid:pids[0],pids,threads:threadFiles.length,promptFile,runner:runner.compiled?'nuitka-runner-hidden-multitab':'python-stable-hidden-multitab'};
