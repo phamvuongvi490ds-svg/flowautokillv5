@@ -1728,28 +1728,8 @@ def license_guard_or_raise():
 
 
 def run(args):
-    # Luôn dọn dẹp PID cũ của chính mình hoặc thread khác trước khi bắt đầu flow mới
-    try:
-        from pathlib import Path
-        import os
-        import signal
-        job_dir = Path(args.state).parent
-        pids = []
-        for f in job_dir.glob("electron-runner*.pid"):
-            try:
-                pid = int(f.read_text().strip())
-                if pid and pid != os.getpid():
-                    pids.append(pid)
-            except: pass
-        for pid in pids:
-            try:
-                if os.name == 'nt':
-                    import subprocess
-                    subprocess.run(['taskkill', '/F', '/PID', str(pid)], capture_output=True)
-                else:
-                    os.kill(pid, signal.SIGTERM)
-            except: pass
-    except: pass
+    # Electron resets old workers before launch; runner must not kill sibling threads.
+
 
     prompts = load_prompts(args.prompts)
     total = len(prompts)

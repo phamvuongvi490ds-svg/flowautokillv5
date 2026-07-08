@@ -101,6 +101,7 @@ function App(){
   async function pickImages(){const r=await api().openFile({properties:['openFile','multiSelections'],filters:[{name:'Images',extensions:['jpg','jpeg','png','webp']}]}); if(r?.length){setCharacterImages(r); append(`Đã chọn ${r.length} ảnh nhân vật`)}}
   async function pickPrompt(){const r=await api().openFile({properties:['openFile'],filters:[{name:'Text',extensions:['txt','json']},{name:'All',extensions:['*']}]}); if(r?.[0]){setPromptFile(r[0]); append(`Prompt file: ${r[0]}`)}}
   async function pickRefs(){const r=await api().openFile({properties:['openDirectory']}); if(r?.[0]){setRefsDir(r[0]); append(`Đường dẫn thư mục ảnh: ${r[0]}`)}}
+  async function downloadGeneratedPrompt(){ if(!generatedFile){ append('Chưa có file prompt đã tạo.'); return; } append(await api().saveGeneratedPrompt(generatedFile)); }
   async function pickProfilePrompt(i:number){const r=await api().openFile({properties:['openFile'],filters:[{name:'Text',extensions:['txt','json']},{name:'All',extensions:['*']}]}); if(r?.[0]){setProfiles(p=>p.map((x,k)=>k===i?{...x,promptFile:r[0]}:x)); append(`Profile ${i+1} file prompt: ${r[0]}`)}}
   async function pickProfileRefs(i:number){const r=await api().openFile({properties:['openDirectory']}); if(r?.[0]){setProfiles(p=>p.map((x,k)=>k===i?{...x,refsDir:r[0]}:x)); append(`Profile ${i+1} thư mục ảnh: ${r[0]}`)}}
   async function pickVideoFolder(){const r=await api().openFile({properties:['openDirectory']}); if(r?.[0]){setVideoFolder(r[0]); const x=await api().videoList(r[0]); setVideoFiles(x?.files||[]); append(`Đã chọn thư mục video: ${r[0]}`)}}
@@ -211,7 +212,7 @@ function App(){
           </Field>
           <div className="actions">
             <Button onClick={saveApiConfig}>💾 Lưu cấu hình API</Button>
-            <Button variant="primary" onClick={generateCharacterPrompts}>✨ Tạo prompt nhân vật</Button>
+            <Button variant="primary" onClick={generateCharacterPrompts}>✨ Tạo prompt nhân vật</Button><Button onClick={downloadGeneratedPrompt}>⬇️ Tải prompt đã tạo</Button>
           </div>
           <p className="hint">Mỗi dòng sẽ xuất ra 1 prompt ảnh cho 1 nhân vật riêng. Dùng chung phong cách với AI Prompt Studio. File prompt: {generatedFile || 'chưa tạo'}</p>
         </Card>
@@ -240,7 +241,7 @@ function App(){
             <Button onClick={pickImages}><ImagePlus size={16}/> Upload ảnh nhân vật</Button>
             <Button onClick={pickSampleVideo}>🎞 Chọn video mẫu</Button>
             <Button onClick={analyzeSampleVideoForAi}>🧠 AI phân tích video mẫu</Button>
-            <Button variant="primary" onClick={generatePrompt}>✨ Tạo prompt</Button>
+            <Button variant="primary" onClick={generatePrompt}>✨ Tạo prompt</Button><Button onClick={downloadGeneratedPrompt}>⬇️ Tải prompt đã tạo</Button>
           </div>
           <p className="hint">Đã chọn {characterImages.length} ảnh nhân vật • Video mẫu: {sampleVideo||'chưa chọn'} • Prompt/kịch bản sẽ ưu tiên giữ nhân vật tương đồng tối đa theo ảnh tham chiếu và xuất theo ngôn ngữ đã chọn{generatedFile?` • File prompt: ${generatedFile}`:''}</p>
         </Card>
