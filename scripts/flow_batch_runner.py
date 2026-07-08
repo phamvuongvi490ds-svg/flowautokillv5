@@ -1700,10 +1700,10 @@ def auto_download_with_retry(page, resolution="720p", timeout_sec=480, before_id
         last = step
         if ok:
             return True, step
-        ok, step = extension_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix)
-        last = step
-        if ok:
-            return True, step
+        # UI/context-menu download is unsafe while automation is running: Flow can save
+        # redirect/placeholder files instead of the real image/video. Only accept direct
+        # media bytes validated by magic bytes in _save_media_bytes().
+        last = f"direct_only:{last}"
         time.sleep(4.0)
     return False, last
 
