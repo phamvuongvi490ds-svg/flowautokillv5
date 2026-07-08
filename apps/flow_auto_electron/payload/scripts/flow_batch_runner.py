@@ -1,4 +1,5 @@
 import argparse
+import base64
 import os
 import subprocess
 import sys
@@ -1465,9 +1466,9 @@ def _save_media_bytes(data: bytes, output_prefix="flow-auto"):
 
 def direct_download_media_from_tile(page, before_ids=None, output_prefix="flow-auto"):
     try:
-        media_url = page.evaluate(
+        media = page.evaluate(
             """
-            ({beforeIds}) => {
+            async ({beforeIds}) => {
               const before = new Set(beforeIds || []);
               const visible = (el) => {
                 if (!el) return false;
@@ -1475,28 +1476,48 @@ def direct_download_media_from_tile(page, before_ids=None, output_prefix="flow-a
                 const r = el.getBoundingClientRect();
                 return st.display !== 'none' && st.visibility !== 'hidden' && r.width > 10 && r.height > 10;
               };
+              const toB64 = async (url) => {
+                const res = await fetch(url, {credentials:'include'});
+                const buf = await res.arrayBuffer();
+                let bin = '';
+                const bytes = new Uint8Array(buf);
+                for (let i=0; i<bytes.length; i+=0x8000) bin += String.fromCharCode(...bytes.subarray(i, i+0x8000));
+                return btoa(bin);
+              };
               const tiles = [];
               document.querySelectorAll('[data-tile-id]').forEach(tile => {
                 const id = tile.getAttribute('data-tile-id');
                 if (before.size && before.has(id)) return;
-                const media = tile.querySelector('video[src*="media.getMediaUrlRedirect"],img[src*="media.getMediaUrlRedirect"]');
+                const media = tile.querySelector('video[src],img[src],canvas');
                 if (media && visible(tile)) tiles.push({tile, media, top: tile.getBoundingClientRect().top});
               });
               if (!tiles.length) return null;
-              tiles.sort((a,b) => b.top - a.top); // oldest/lower first for delayed mode
+              tiles.sort((a,b) => b.top - a.top);
               const m = tiles[0].media;
-              return m.currentSrc || m.src || m.getAttribute('src') || null;
+              if (m.tagName === 'CANVAS') return {kind:'base64', data:m.toDataURL('image/png').split(',')[1] || ''};
+              const url = m.currentSrc || m.src || m.getAttribute('src') || '';
+              if (!url) return null;
+              if (url.startsWith('blob:') || url.startsWith('data:')) {
+                if (url.startsWith('data:')) return {kind:'base64', data:url.split(',')[1] || ''};
+                return {kind:'base64', data:await toB64(url)};
+              }
+              return {kind:'url', url};
             }
             """,
             {"beforeIds": list(before_ids or [])},
         )
+        if not media:
+            return False, "direct_no_media_url"
+        if media.get("kind") == "base64":
+            data = base64.b64decode(media.get("data") or "")
+            return _save_media_bytes(data, output_prefix=output_prefix)
+        media_url = media.get("url") or ""
         if not media_url:
             return False, "direct_no_media_url"
         resp = page.context.request.get(media_url, timeout=60000)
         if not resp.ok:
             return False, f"direct_http_{resp.status}"
-        data = resp.body()
-        return _save_media_bytes(data, output_prefix=output_prefix)
+        return _save_media_bytes(resp.body(), output_prefix=output_prefix)
     except Exception as e:
         return False, f"direct_exception:{e}"
 
