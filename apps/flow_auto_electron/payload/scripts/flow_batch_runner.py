@@ -661,11 +661,14 @@ def apply_flow_settings(page, args):
                 time.sleep(0.2)
             except Exception:
                 pass
+        # Verify again with JS result on next loop is unreliable; only accept fallback if no exception.
         fallback_ok = True
     except Exception as e:
         log_line(f"[flow] settings one-time fallback failed: {e}")
     close_open_menus(page)
-    return fallback_ok
+    if not fallback_ok:
+        return False
+    return True
 
 
 def get_box_text(box):
@@ -1760,10 +1763,13 @@ def run(args):
             log_line('[flow] applying GUI settings once after New Project')
             settings_applied = bool(apply_flow_settings(page, args))
             log_line(f'[flow] settings applied once: {settings_applied}')
+            if not settings_applied:
+                raise RuntimeError('settings_not_applied_exactly')
             time.sleep(0.7)
         except Exception as e:
             settings_applied = False
             log_line(f'[flow] apply settings after New Project failed: {e}')
+            raise
 
         needs_clear_before_insert = True
 
@@ -1788,6 +1794,8 @@ def run(args):
                         log_line(f'[flow] apply settings once before typing: task={args.task_mode}, sub={args.video_sub_mode}, model={args.flow_model}, ratio={args.flow_aspect_ratio}, count={args.flow_count}')
                         settings_applied = bool(apply_flow_settings(page, args))
                         log_line(f'[flow] settings applied once: {settings_applied}')
+                        if not settings_applied:
+                            raise RuntimeError('settings_not_applied_exactly')
                         time.sleep(0.5)
                     else:
                         log_line('[flow] skip settings: already applied once in this run')

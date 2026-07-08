@@ -162,25 +162,25 @@ function App(){
     return el?.value || fallback;
   }
   function runPayload(file?:string, overrides:any={}){
-    const liveMode=domValue('flow-mode', mode);
-    const liveSubMode=domValue('flow-sub-mode', subMode);
-    const liveModel=domValue('flow-model', model);
-    const liveRatio=domValue('flow-ratio', ratio);
-    const liveCount=domValue('flow-count', count);
-    const liveOmniDuration=domValue('flow-omni-duration', omniDuration);
-    const liveSpacing=domValue('flow-spacing', spacing);
-    const liveRunMode=domValue('flow-run-mode', runMode);
-    const liveThreads=domValue('flow-threads', flowThreads);
+    const liveMode=overrides.mode ?? mode;
+    const liveSubMode=overrides.subMode ?? subMode;
+    const liveModel=overrides.model ?? model;
+    const liveRatio=overrides.ratio ?? ratio;
+    const liveCount=overrides.count ?? count;
+    const liveOmniDuration=overrides.omniDuration ?? omniDuration;
+    const liveSpacing=overrides.spacing ?? spacing;
+    const liveRunMode=overrides.runMode ?? runMode;
+    const liveThreads=overrides.flowThreads ?? flowThreads;
     const payload={
       promptFile:file||promptFile||generatedFile,
-      mode:overrides.mode||liveMode, taskMode:overrides.mode||liveMode,
-      model:overrides.model||liveModel, flowModel:overrides.model||liveModel,
-      ratio:overrides.ratio||liveRatio, aspectRatio:overrides.ratio||liveRatio, flowAspectRatio:overrides.ratio||liveRatio,
-      count:overrides.count||liveCount, flowCount:overrides.count||liveCount,
-      omniDuration: (overrides.model||liveModel)==='omni_flash' ? (overrides.omniDuration||liveOmniDuration) : '',
-      spacing:overrides.spacing||liveSpacing,
-      refsDir,
-      runMode:overrides.runMode||liveRunMode,
+      mode:liveMode, taskMode:liveMode,
+      model:liveModel, flowModel:liveModel,
+      ratio:liveRatio, aspectRatio:liveRatio, flowAspectRatio:liveRatio,
+      count:liveCount, flowCount:liveCount,
+      omniDuration: liveModel==='omni_flash' ? liveOmniDuration : '',
+      spacing:liveSpacing,
+      refsDir:overrides.refsDir ?? refsDir,
+      runMode:liveRunMode,
       flowThreads:liveThreads,
       autoDownload: overrides.autoDownload ?? autoDownload,
       pairedMode:true,
