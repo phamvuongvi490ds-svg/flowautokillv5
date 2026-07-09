@@ -462,25 +462,6 @@ async function ensureCdpOn(port=CDP_PORT, profile=CDP_PROFILE){
   for(let i=0;i<40;i++){ try{ const r=await fetch(`http://127.0.0.1:${port}/json/version`); if(r.ok) return {ok:true, launched:true, port}; }catch{} await wait(500); }
   return {ok:false,error:'cdp_not_ready',port};
 }
-async function waitFlowReadyOn(port){
-  const base=`http://127.0.0.1:${port}`;
-  for(let i=0;i<50;i++){
-    try{
-      const r=await fetch(`${base}/json`);
-      if(r.ok){
-        const tabs=await r.json();
-        const flow=(tabs||[]).find(t=>/labs\.google\/fx(?:\/[a-z]{2})?\/tools\/flow/.test(t.url||''));
-        if(flow){ await wait(900); return {ok:true,port,url:flow.url}; }
-        const page=(tabs||[]).find(t=>t.type==='page' && t.id);
-        if(page){
-          try{ await fetch(`${base}/json/new?${encodeURIComponent('https://labs.google/fx/vi/tools/flow')}`); }catch{}
-        }
-      }
-    }catch{}
-    await wait(500);
-  }
-  return {ok:false,error:'flow_page_not_ready',port};
-}
 async function ensureCdp(){ return ensureCdpOn(CDP_PORT, CDP_PROFILE); }
 async function ensureCdpThreads(n, profiles=[]){ const out=[]; for(let i=0;i<n;i++){ const port=CDP_PORT+i; const profile=profiles&&profiles[i]?flowProfileDir(profiles[i],i):(i===0?CDP_PROFILE:path.join(BASE_DIR,`chrome-cdp-profile-${i+1}`)); const r=await ensureCdpOn(port,profile); out.push({...r,profileDir:profile,accountEmail:profiles?.[i]?.accountEmail||''}); if(!r.ok) return {ok:false,error:r.error,port}; } return {ok:true,threads:n,cdp:out}; }
 function writePromptFile(name, text){ ensureDirs(); const file=path.join(JOB_DIR,name); const blocks=(text||'').split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean); fs.writeFileSync(file, blocks.join('\n\n')+'\n','utf8'); return file; }
@@ -516,7 +497,7 @@ function runnerCommand(){
   throw new Error(`runner_not_found: checked ${[script,...exeCandidates].join(' | ')}`);
 }
 
-async function startRunner(payload){
+function startRunner(payload){
   ensureDirs(); try{fs.rmSync(PAUSE_FILE,{force:true})}catch{}
   const profiles=Array.isArray(payload.profiles)?payload.profiles.filter(x=>x&&(x.promptFile||String(x.script||x.prompts||'').trim())).slice(0,100):[];
   const promptFile=payload.promptFile || writePromptFile('electron-manual-prompts.txt', payload.prompts||'');
@@ -536,7 +517,7 @@ async function startRunner(payload){
     const stateFile=idx===0?RUN_STATE:path.join(JOB_DIR,`electron-runner-state-${idx+1}.json`);
     try { if(fs.existsSync(stateFile)) fs.unlinkSync(stateFile); } catch(e) {}
     const args=['--run-id',runId,'--prompts',pf,'--state',stateFile,'--fresh-run','--start-from',String(payload.startFrom||1),'--cdp',`http://127.0.0.1:${CDP_PORT+idx}`,'--task-mode',payload.mode||payload.taskMode||'createvideo','--video-sub-mode',payload.subMode||payload.videoSubMode||'frames','--reference-mode',payload.referenceMode||'ingredients','--flow-model',payload.model||payload.flowModel||'default','--flow-aspect-ratio',payload.ratio||payload.aspectRatio||payload.flowAspectRatio||'16:9','--flow-count',String(payload.count||payload.flowCount||1),'--omni-duration',String(payload.omniDuration||''),'--download-resolution','720','--between-prompts-sec',String(payload.spacing||10)];
-    args.push(payload.pairedMode===false?'--no-paired-mode':'--paired-mode'); const wantAutoDownload = payload.autoDownload !== false; if(wantAutoDownload) args.push('--auto-download'); if(!wantAutoDownload && payload.runMode==='continuous_submit_only') args.push('--submit-only'); if(wantAutoDownload && payload.runMode==='continuous_download_delay_3') args.push('--download-delay-prompts','3'); const refDir=threadRefs[idx]||payload.refsDir; if(refDir) args.push('--refs-dir',refDir); if(payload.downloadDir) args.push('--output-dir',payload.downloadDir); try{ fs.appendFileSync(logFile, `[runner] path=${runner.path||runner.cmd} compiled=${!!runner.compiled}\n[runner] thread=${idx+1} mode=${payload.mode||payload.taskMode} model=${payload.model||payload.flowModel} ratio=${payload.ratio||payload.aspectRatio||payload.flowAspectRatio} count=${payload.count||payload.flowCount} autoDownload=${wantAutoDownload} runMode=${payload.runMode||''}\n`); }catch{}
+    args.push(payload.pairedMode===false?'--no-paired-mode':'--paired-mode'); const wantAutoDownload = payload.autoDownload !== false; if(wantAutoDownload) args.push('--auto-download'); if(!wantAutoDownload && payload.runMode==='continuous_submit_only') args.push('--submit-only'); if(wantAutoDownload && payload.runMode==='continuous_download_delay_3') args.push('--download-delay-prompts','3'); const refDir=threadRefs[idx]||payload.refsDir; if(refDir) args.push('--refs-dir',refDir); try{ fs.appendFileSync(logFile, `[runner] path=${runner.path||runner.cmd} compiled=${!!runner.compiled}\n[runner] thread=${idx+1} mode=${payload.mode||payload.taskMode} model=${payload.model||payload.flowModel} ratio=${payload.ratio||payload.aspectRatio||payload.flowAspectRatio} count=${payload.count||payload.flowCount} autoDownload=${wantAutoDownload} runMode=${payload.runMode||''}\n`); }catch{}
     const p=spawn(runner.cmd, [...runner.prefix, ...args], spawnOpts({detached:true, stdio:['ignore',out,out]})); p.unref(); pids.push(p.pid); fs.writeFileSync(path.join(JOB_DIR,`electron-runner-${idx+1}.pid`),String(p.pid));
   });
   fs.writeFileSync(PID_RUN,String(pids[0]||'')); return {ok:true,pid:pids[0],pids,threads:threadFiles.length,promptFile,runner:runner.compiled?'nuitka-runner-hidden-multitab':'python-stable-hidden-multitab'};
@@ -574,7 +555,7 @@ ipcMain.handle('prompt:saveGenerated', async(_e,file)=>{
     return {ok:true,file:r.filePath};
   }catch(e){ return {ok:false,error:String(e&&e.message||e)}; }
 });
-ipcMain.handle('flow:start', async(_e,payload)=>{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; const reset=resetRunnerWorkers(); const n=Math.max(1,Math.min(100,Array.isArray((payload||{}).profiles)&&payload.profiles.length?payload.profiles.length:Number((payload||{}).flowThreads||1)||1)); let c=await ensureCdpThreads(n,(payload||{}).profiles||[]); if(!c.ok) return c; const r=await startRunner(payload||{}); return {...r, reset}; });
+ipcMain.handle('flow:start', async(_e,payload)=>{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; const reset=resetRunnerWorkers(); const n=Math.max(1,Math.min(100,Array.isArray((payload||{}).profiles)&&payload.profiles.length?payload.profiles.length:Number((payload||{}).flowThreads||1)||1)); let c=await ensureCdpThreads(n,(payload||{}).profiles||[]); if(!c.ok) return c; const r=startRunner(payload||{}); return {...r, reset}; });
 ipcMain.handle('flow:pause', async()=>{ if(!anyRunnerRunning()) return {ok:false,error:'process_not_running'}; ensureDirs(); fs.writeFileSync(PAUSE_FILE,String(Date.now())); return {ok:true, paused:true}; });
 ipcMain.handle('flow:resume', async()=>{ if(!anyRunnerRunning() && !fs.existsSync(PAUSE_FILE)) return {ok:false,error:'process_not_running'}; try{fs.rmSync(PAUSE_FILE,{force:true})}catch{} return {ok:true, paused:false}; });
 ipcMain.handle('flow:stop', async()=>{ const reset=resetRunnerWorkers(); return {ok:true, running:false, reset}; });
@@ -663,17 +644,6 @@ ipcMain.handle('video:exportTimeline', async(_e,payload={})=>{
 });
 
 
-
-function postSec(x){ const a=String(x||0).split(':').map(Number); return a.length===3?a[0]*3600+a[1]*60+a[2]:a.length===2?a[0]*60+a[1]:Number(x)||0; }
-function postAssTime(sec){ sec=Math.max(0,Number(sec)||0); const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), x=(sec%60).toFixed(2).padStart(5,'0'); return `${h}:${String(m).padStart(2,'0')}:${x}`; }
-function postEsc(t){ return String(t||'').replace(/\n/g,'\\N').replace(/[{}]/g,''); }
-function postParseLines(text, kind){ return String(text||'').split(/\n+/).map(line=>{ const m=kind==='cut'?line.match(/(.+?)\s*,\s*([0-9:.]+)\s*,\s*([0-9:.]+)/):line.match(/([0-9:.]+)\s*[,-]\s*([0-9:.]+)\s*[,-]\s*(.+)/); if(!m)return null; return kind==='cut'?{file:m[1].trim(),start:postSec(m[2]),end:postSec(m[3])}:{start:postSec(m[1]),end:postSec(m[2]),text:m[3].trim()}; }).filter(Boolean); }
-function postWriteAss(subs,out){ const body=(subs||[]).map(s=>`Dialogue: 0,${postAssTime(s.start)},${postAssTime(s.end)},Default,,0,0,0,,${postEsc(s.text)}`).join('\n'); fs.writeFileSync(out,`[Script Info]\nScriptType: v4.00+\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,42,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,2,1,2,20,20,36,1\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n${body}\n`,'utf8'); return out; }
-async function postAiPlan(payload){ const files=(payload.files||[]).filter(Boolean); const apiKey=payload.apiKey||''; if(!apiKey)return {ok:false,error:'missing_api_key'}; const lang=payload.subLang||'vi'; const sys='Bạn là AI dựng phim. Trả JSON hợp lệ dạng {scenes:[{file,order,keep,start,end,reason}], subtitles:[{start,end,text}]}. Cắt/ghép cảnh theo nhịp hợp lý. Dịch subtitle theo ngôn ngữ vi,en,zh,ko,ja.'; const prompt=`LANG=${lang}\nSCRIPT:\n${payload.script||''}\nFILES:\n${files.map((f,i)=>`${i+1}. ${path.basename(f)}`).join('\n')}`; const out=await geminiText(apiKey,[{text:prompt}],sys,true); return {ok:true,...JSON.parse(out.replace(/^```json\s*|```$/g,''))}; }
-function postExport(payload){ const folder=payload.folder||path.dirname((payload.files||[])[0]||''); const outDir=path.join(folder,'flow_auto_post'); fs.mkdirSync(outDir,{recursive:true}); const files=(payload.files||[]).filter(Boolean); const cuts=postParseLines(payload.manualCuts,'cut'); const scenes=(payload.scenes||[]).filter(x=>x.keep!==false); const source=cuts.length?cuts:(scenes.length?scenes.map(s=>({file:s.file,start:s.start,end:s.end})):files.map(f=>({file:f}))); if(!source.length)return {ok:false,error:'missing_video_source'}; let inputs=[], filters=[], labels=[]; source.forEach((c,i)=>{ inputs.push('-i',c.file); const has=c.start!=null&&c.end!=null&&c.end>c.start; filters.push(`[${i}:v]${has?`trim=start=${c.start}:end=${c.end},`:''}setpts=PTS-STARTPTS,scale=1920:-2,format=yuv420p[v${i}]`); filters.push(`[${i}:a]${has?`atrim=start=${c.start}:end=${c.end},`:''}asetpts=PTS-STARTPTS[a${i}]`); labels.push(`[v${i}][a${i}]`); }); let filter=`${filters.join(';')};${labels.join('')}concat=n=${source.length}:v=1:a=1[v][a]`; let map=['-map','[v]','-map','[a]']; let extra=[]; let ass=''; if(payload.manualSubs){ ass=postWriteAss(postParseLines(payload.manualSubs,'sub'),path.join(outDir,`manual_sub_${Date.now()}.ass`)); } if(ass){ const safe=String(ass).replace(/\\/g,'/').replace(/:/g,'\\:').replace(/'/g,"\\'"); filter+=`;[v]subtitles='${safe}'[vs]`; map=['-map','[vs]','-map','[a]']; } if(payload.musicFile){ inputs.push('-i',payload.musicFile); const idx=source.length; filter+=`;[a][${idx}:a]amix=inputs=2:duration=first:dropout_transition=2[am]`; map=['-map',ass?'[vs]':'[v]','-map','[am]']; extra.push('-shortest'); } const out=path.join(outDir,`post_export_${Date.now()}.mp4`); const r=ffmpegRun(['-y',...inputs,'-filter_complex',filter,...map,'-c:v','libx264','-preset','veryfast','-crf','20','-c:a','aac','-b:a','192k',...extra,'-movflags','+faststart',out]); if(r.status!==0){ const log=path.join(outDir,'ffmpeg-post-error.log'); fs.writeFileSync(log,ffErr(r)); return {ok:false,error:'ffmpeg_post_failed: '+ffErr(r),log}; } return {ok:true,out}; }
-
-ipcMain.handle('video:postPlan', async(_e,payload={})=>{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; try{return await postAiPlan(payload||{})}catch(e){return {ok:false,error:String(e.message||e)}} });
-ipcMain.handle('video:postExport', async(_e,payload={})=>{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; try{return postExport(payload||{})}catch(e){return {ok:false,error:String(e.message||e)}} });
 ipcMain.handle('video:analyzeSample', async(_e,payload={})=>{
   const lic=await onlineLicenseGuard(); if(!lic.ok) return lic;
   const file=payload.file||''; const apiKey=payload.apiKey||''; if(!file)return {ok:false,error:'missing_video'}; if(!apiKey)return {ok:false,error:'missing_api_key'};
