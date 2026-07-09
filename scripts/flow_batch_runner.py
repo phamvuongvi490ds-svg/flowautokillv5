@@ -212,34 +212,55 @@ def _try_click_new_project(page):
 
 
 def find_input_box(page):
-    # Chờ editor sẵn sàng sau New project
-    deadline = time.time() + 30
+    # Chờ editor prompt thật sẵn sàng sau New Project. Ưu tiên ô gần nút Create/Tạo nhất.
+    deadline = time.time() + 45
     retried_new_project = False
-    selectors = [
-        'div[role="textbox"][contenteditable="true"]',
-        'div[contenteditable="true"]',
-        'textarea',
-        'input[type="text"]',
-    ]
-
     while time.time() < deadline:
-        for sel in selectors:
-            try:
-                boxes = page.locator(sel)
-                count = boxes.count()
-                for i in range(count - 1, -1, -1):
-                    b = boxes.nth(i)
-                    if b.is_visible():
-                        return b
-            except Exception:
-                pass
-
+        try:
+            handle = page.evaluate_handle(
+                """
+                () => {
+                  const visible = (el) => {
+                    if (!el) return false;
+                    const st = getComputedStyle(el);
+                    const r = el.getBoundingClientRect();
+                    return st.display !== 'none' && st.visibility !== 'hidden' && r.width > 120 && r.height > 24;
+                  };
+                  const norm = s => String(s||'').toLowerCase();
+                  const boxes = Array.from(document.querySelectorAll('div[role="textbox"][contenteditable="true"], div[contenteditable="true"], textarea'))
+                    .filter(visible)
+                    .filter(el => !norm(el.closest('[aria-hidden="true"]')?.getAttribute('aria-hidden')).includes('true'));
+                  if (!boxes.length) return null;
+                  const buttons = Array.from(document.querySelectorAll('button,[role="button"]')).filter(visible);
+                  const creates = buttons.filter(b => /create|tạo|generate|submit/i.test((b.innerText||'')+' '+(b.getAttribute('aria-label')||'')));
+                  let best = null, bestScore = -1e9;
+                  for (const box of boxes) {
+                    const br = box.getBoundingClientRect();
+                    let score = br.width + br.height;
+                    const txt = norm((box.innerText||'')+' '+(box.getAttribute('aria-label')||'')+' '+(box.getAttribute('placeholder')||''));
+                    if (/prompt|describe|mô tả|nhập|enter/.test(txt)) score += 500;
+                    for (const c of creates) {
+                      const cr = c.getBoundingClientRect();
+                      const dy = Math.abs((cr.top+cr.height/2)-(br.top+br.height/2));
+                      const dx = cr.left - br.right;
+                      if (dx > -80 && dx < 800 && dy < 180) score += 1200 - dy - Math.max(0,dx)/4;
+                    }
+                    if (br.top > window.innerHeight*0.35) score += 250;
+                    if (score > bestScore) { bestScore = score; best = box; }
+                  }
+                  return best;
+                }
+                """
+            )
+            el = handle.as_element()
+            if el:
+                return el
+        except Exception:
+            pass
         if not retried_new_project:
             _try_click_new_project(page)
             retried_new_project = True
-
         time.sleep(0.5)
-
     raise RuntimeError("Không tìm thấy ô nhập prompt")
 
 
@@ -772,66 +793,89 @@ def human_type_text(page, text: str, base_delay_ms: float = 12.0):
         if ch in ".!?" and random.random() < 0.35:
             time.sleep(random.uniform(0.12, 0.65))
 
-def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retries: int = 3):
+def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retries: int = 4):
     prompt = (prompt or "").strip()
-    if not prompt: return True
+    if not prompt:
+        return True
+    expect = prompt[: max(12, min(80, len(prompt)))]
+
+    def read_box_text(box):
+        try:
+            return page.evaluate("""el => ('value' in el ? el.value : (el.innerText || el.textContent || ''))""", box) or ""
+        except Exception:
+            try:
+                return box.inner_text() or box.input_value() or ""
+            except Exception:
+                return ""
 
     for attempt in range(1, retries + 1):
         try:
-            # Ưu tiên find_input_box đã có sẵn logic New Project
             box = find_input_box(page)
-            
-            # Click vào tọa độ trung tâm để đảm bảo focus sâu vào editor
+            try:
+                box.scroll_into_view_if_needed(timeout=3000)
+            except Exception:
+                pass
             rect = box.bounding_box()
             if rect:
-                page.mouse.click(rect['x'] + rect['width']/2, rect['y'] + rect['height']/2)
+                page.mouse.click(rect['x'] + min(rect['width'] * 0.25, rect['width'] - 8), rect['y'] + rect['height']/2)
             else:
                 box.click(force=True)
-            
-            time.sleep(0.3)
-            page.keyboard.press("Control+A")
-            page.keyboard.press("Backspace")
-            time.sleep(0.2)
-            
-            # Use Playwright's native fill() which handles events correctly for most editors
-            box.fill(prompt)
-            time.sleep(0.5)
-            
-            # Verify
-            txt = box.inner_text() or box.input_value() or ""
-            if len(txt.strip()) >= min(5, len(prompt)):
-                return True
-            
-            # Fallback 2: insert_text
-            page.keyboard.insert_text(prompt)
-            time.sleep(0.5)
-            if (box.inner_text() or box.input_value() or "").strip():
-                return True
-                
-            # Fallback 3: Strong JS injection with multiple events
-            page.evaluate("""
-                (args) => {
-                    const el = args.el;
-                    const val = args.txt;
-                    el.focus();
-                    if ('value' in el) {
-                        el.value = val;
-                    } else {
-                        el.innerText = val;
-                        el.textContent = val;
-                    }
-                    const evts = ['input', 'change', 'beforeinput', 'keydown', 'keyup'];
-                    evts.forEach(n => el.dispatchEvent(new Event(n, { bubbles: true, composed: true })));
-                }
-            """, {"el": box, "txt": prompt})
-            time.sleep(0.5)
-            if (box.inner_text() or box.input_value() or "").strip():
-                return True
+            time.sleep(0.35)
 
+            # Clear robustly.
+            try:
+                page.keyboard.press("Control+A")
+                page.keyboard.press("Backspace")
+            except Exception:
+                pass
+            page.evaluate("""
+                el => {
+                  el.focus();
+                  if ('value' in el) el.value = '';
+                  else { el.innerHTML=''; el.innerText=''; el.textContent=''; }
+                  ['beforeinput','input','change','keyup'].forEach(n=>el.dispatchEvent(new Event(n,{bubbles:true,composed:true})));
+                }
+            """, box)
+            time.sleep(0.2)
+
+            methods = []
+            methods.append('fill')
+            methods.append('clipboard')
+            methods.append('js')
+            methods.append('insert')
+            for m in methods:
+                try:
+                    if m == 'fill':
+                        box.fill(prompt, timeout=8000)
+                    elif m == 'clipboard':
+                        page.evaluate("txt => navigator.clipboard && navigator.clipboard.writeText(txt).catch(()=>{})", prompt)
+                        time.sleep(0.2)
+                        page.keyboard.press("Control+V")
+                    elif m == 'js':
+                        page.evaluate("""
+                            ([el,val]) => {
+                              el.focus();
+                              if ('value' in el) el.value = val;
+                              else { el.innerHTML=''; el.innerText=val; el.textContent=val; }
+                              const evts=['beforeinput','input','change','keydown','keyup'];
+                              evts.forEach(n=>el.dispatchEvent(new Event(n,{bubbles:true,composed:true})));
+                            }
+                        """, [box, prompt])
+                    else:
+                        page.keyboard.insert_text(prompt)
+                    time.sleep(0.75)
+                    txt = read_box_text(box).strip()
+                    if len(txt) >= min(20, len(prompt)) and (expect[:12].strip() in txt or txt[:12].strip() in prompt):
+                        log_line(f"[flow] prompt typed ok by {m}, chars={len(txt)}")
+                        return True
+                    log_line(f"[flow] prompt type method {m} verify failed chars={len(txt)} attempt={attempt}")
+                except Exception as e:
+                    log_line(f"[flow] prompt type method {m} error attempt={attempt}: {e}")
         except Exception as e:
             log_line(f"[flow] attempt {attempt} input error: {e}")
         time.sleep(1.0)
     return False
+
 def _open_plus_menu(page, prompt_box=None):
     # Ưu tiên click đúng dấu cộng nằm cạnh ô prompt (tránh click nhầm dấu cộng khu khác)
     try:
