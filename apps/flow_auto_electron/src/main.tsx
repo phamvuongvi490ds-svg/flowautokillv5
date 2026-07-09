@@ -131,7 +131,7 @@ function App(){
     if(!text){ append('❌ Vui lòng nhập danh sách nhân vật, mỗi dòng một nhân vật.'); return; }
     append('🧑‍🎨 Đang tạo prompt ảnh nhân vật...');
     let r:any;
-    try{ r=await timeoutPromise(api().generateCharacters({apiKey:apiKeys,style,ideas:text,promptLang}), 80000, 'character_prompt_timeout_80s'); }
+    try{ r=await timeoutPromise(api().generateCharacters({apiKey:apiKeys,style,ideas:text,promptLang}), 310000, 'character_prompt_timeout_310s'); }
     catch(e:any){ r={ok:false,error:e?.message||String(e)}; }
     if(r?.generated?.file) setGeneratedFile(r.generated.file);
     append(r);
