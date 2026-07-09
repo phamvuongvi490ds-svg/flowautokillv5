@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawn, spawnSync } = require('child_process');
+const crypto = require('crypto');
 
 const isDev = !app.isPackaged;
 // Share runtime/license with stable standalone app so existing activated keys are visible.
@@ -22,6 +23,7 @@ const CDP_PORT = 18800;
 const DEFAULT_API_BASE = 'https://server-auto-tool.vercel.app/api/license';
 const CDP_PROFILE = path.join(BASE_DIR, 'chrome-cdp-profile');
 const LICENSE_CONFIG = path.join(BASE_DIR, 'keys', 'license-online.json');
+let stopInProgress = false;
 
 function ensureDirs(){ [BASE_DIR,FLOW_DIR,JOB_DIR,DEBUG_DIR,SCRIPTS_DIR,RUNTIME_CACHE_DIR].forEach(p=>fs.mkdirSync(p,{recursive:true})); }
 function forceChromeLanguagePrefs(){
@@ -393,6 +395,14 @@ function runState(){ let progress=null; try{ const st=JSON.parse(fs.readFileSync
 function parseJsonMaybe(txt){ try{return JSON.parse(txt||'{}')}catch{return null} }
 function withTimeout(promise, ms, label='timeout'){ return Promise.race([promise, new Promise((_,rej)=>setTimeout(()=>rej(new Error(label)), ms))]); }
 async function onlineLicenseGuard(){ const r=await verifyLicenseJs(); if(r.ok) return {ok:true,license:r}; return {ok:false,error:r.reason||r.error||'license_invalid_or_revoked'}; }
+function killPidAsync(pid){
+  if(!pid)return;
+  try{
+    if(process.platform==='win32') spawn('taskkill',['/PID',String(pid),'/T','/F'],{windowsHide:true,stdio:'ignore'}).unref();
+    else { try{ process.kill(-pid,'SIGTERM'); }catch{} try{ process.kill(pid,'SIGTERM'); }catch{} }
+  }catch{}
+}
+function sleepSync(ms){ const start=Date.now(); while(Date.now()-start<ms){} }
 function killPid(pid){
   if(!pid)return;
   try{
@@ -443,23 +453,37 @@ function collectRunnerPids(){
   }catch{}
   return [...new Set(pids)].filter(Boolean);
 }
-function resetRunnerWorkers(){
+async function resetRunnerWorkersAsync({killChrome=false}={}){
   ensureDirs();
+  if(stopInProgress) return {ok:true, already:true};
+  stopInProgress = true;
   const killed=[];
   const files=[];
-  try{ files.push(...fs.readdirSync(JOB_DIR).filter(x=>/^electron-runner(?:-state)?(?:-\d+)?\.(?:pid|json)$/.test(x)).map(x=>path.join(JOB_DIR,x))); }catch{}
+  try{ files.push(...fs.readdirSync(JOB_DIR).filter(x=>/^electron-runner(?:-state)?(?:-\d+)?(?:-[a-z0-9-]+)?\.(?:pid|json)$/.test(x)).map(x=>path.join(JOB_DIR,x))); }catch{}
   try{ files.push(PID_RUN, RUN_STATE, PAUSE_FILE); }catch{}
-  for(let round=0; round<5; round++){
-    const pids=collectRunnerPids();
-    if(!pids.length) break;
-    for(const pid of pids){ killPid(pid); killed.push(pid); }
-    const start=Date.now(); while(Date.now()-start<700){}
+  try{
+    for(let round=0; round<4; round++){
+      const pids=collectRunnerPids();
+      if(!pids.length) break;
+      for(const pid of pids){ killPidAsync(pid); killed.push(pid); }
+      await wait(450);
+    }
+    let chrome={killed:[],remaining:[]};
+    if(killChrome) chrome=killAutomationChrome();
+    for(const f of [...new Set(files)]){ try{ fs.rmSync(f,{force:true}); }catch{} }
+    try{ fs.rmSync(PAUSE_FILE,{force:true}); }catch{}
+    const remaining=collectRunnerPids().filter(isRunningPid);
+    return {ok:remaining.length===0 && (!killChrome || chrome.remaining.length===0),killed:[...new Set(killed)],remaining,chrome};
+  } finally {
+    stopInProgress = false;
   }
-  const remaining=collectRunnerPids().filter(isRunningPid);
-  for(const f of [...new Set(files)]){ try{ fs.rmSync(f,{force:true}); }catch{} }
+}
+function resetRunnerWorkers(){
+  // Compatibility wrapper for app quit; bounded blocking, not used by Stop button.
+  const killed=[];
+  try{ collectRunnerPids().forEach(pid=>{ killPid(pid); killed.push(pid); }); }catch{}
   try{ fs.rmSync(PAUSE_FILE,{force:true}); }catch{}
-  const chrome=killAutomationChrome();
-  return {ok:remaining.length===0 && chrome.remaining.length===0,killed:[...new Set(killed)],remaining,chrome};
+  return {ok:true,killed:[...new Set(killed)]};
 }
 
 function safeProfileSlug(name, idx=0){
@@ -541,16 +565,16 @@ function startRunner(payload){
     threadFiles=flowThreads>1 && blocks.length>1 ? splitRoundRobin(blocks, flowThreads).map((part,i)=>writeThreadPromptFile(promptFile,i,part)) : [promptFile];
     threadRefs=threadFiles.map(()=>payload.refsDir||'');
   }
-  const runner=runnerCommand(); const pids=[]; const runId=String(Date.now());
+  const runner=runnerCommand(); const pids=[]; const workerId=crypto.randomUUID(); const runId=`${Date.now()}-${workerId}`;
   threadFiles.forEach((pf,idx)=>{
-    const logFile=path.join(DEBUG_DIR,`electron-runner-${idx+1}.log`); const out=fs.openSync(logFile,'a');
-    const stateFile=idx===0?RUN_STATE:path.join(JOB_DIR,`electron-runner-state-${idx+1}.json`);
+    const logFile=path.join(DEBUG_DIR,`electron-runner-${idx+1}-${workerId}.log`); const out=fs.openSync(logFile,'a');
+    const stateFile=path.join(JOB_DIR,`electron-runner-state-${idx+1}-${workerId}.json`);
     try { if(fs.existsSync(stateFile)) fs.unlinkSync(stateFile); } catch(e) {}
     const args=['--run-id',runId,'--prompts',pf,'--state',stateFile,'--fresh-run','--start-from',String(payload.startFrom||1),'--cdp',`http://127.0.0.1:${CDP_PORT+idx}`,'--task-mode',payload.mode||payload.taskMode||'createvideo','--video-sub-mode',payload.subMode||payload.videoSubMode||'frames','--reference-mode',payload.referenceMode||'ingredients','--flow-model',payload.model||payload.flowModel||'default','--flow-aspect-ratio',payload.ratio||payload.aspectRatio||payload.flowAspectRatio||'16:9','--flow-count',String(payload.count||payload.flowCount||1),'--omni-duration',String(payload.omniDuration||''),'--download-resolution','720','--between-prompts-sec',String(payload.spacing||10)];
     args.push(payload.pairedMode===false?'--no-paired-mode':'--paired-mode'); const wantAutoDownload = payload.autoDownload !== false; if(wantAutoDownload) args.push('--auto-download'); if(!wantAutoDownload && payload.runMode==='continuous_submit_only') args.push('--submit-only'); if(wantAutoDownload && payload.runMode==='continuous_download_delay_3') args.push('--download-delay-prompts','3'); const refDir=threadRefs[idx]||payload.refsDir; if(refDir) args.push('--refs-dir',refDir); try{ fs.appendFileSync(logFile, `[runner] path=${runner.path||runner.cmd} compiled=${!!runner.compiled}\n[runner] thread=${idx+1} mode=${payload.mode||payload.taskMode} model=${payload.model||payload.flowModel} ratio=${payload.ratio||payload.aspectRatio||payload.flowAspectRatio} count=${payload.count||payload.flowCount} autoDownload=${wantAutoDownload} runMode=${payload.runMode||''}\n`); }catch{}
-    const p=spawn(runner.cmd, [...runner.prefix, ...args], spawnOpts({detached:true, stdio:['ignore',out,out]})); p.unref(); pids.push(p.pid); fs.writeFileSync(path.join(JOB_DIR,`electron-runner-${idx+1}.pid`),String(p.pid));
+    const p=spawn(runner.cmd, [...runner.prefix, ...args], spawnOpts({detached:true, stdio:['ignore',out,out]})); p.unref(); pids.push(p.pid); fs.writeFileSync(path.join(JOB_DIR,`electron-runner-${idx+1}-${workerId}.pid`),String(p.pid));
   });
-  fs.writeFileSync(PID_RUN,String(pids[0]||'')); return {ok:true,pid:pids[0],pids,threads:threadFiles.length,promptFile,runner:runner.compiled?'nuitka-runner-hidden-multitab':'python-stable-hidden-multitab'};
+  fs.writeFileSync(PID_RUN,String(pids[0]||'')); return {ok:true,workerId,pid:pids[0],pids,threads:threadFiles.length,promptFile,runner:runner.compiled?'nuitka-runner-hidden-multitab':'python-stable-hidden-multitab'};
 }
 
 function createSplash(){
@@ -588,7 +612,7 @@ ipcMain.handle('prompt:saveGenerated', async(_e,file)=>{
 ipcMain.handle('flow:start', async(_e,payload)=>{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; const n=Math.max(1,Math.min(100,Array.isArray((payload||{}).profiles)&&payload.profiles.length?payload.profiles.length:Number((payload||{}).flowThreads||1)||1)); let c=await ensureCdpThreads(n,(payload||{}).profiles||[]); if(!c.ok) return c; const r=startRunner(payload||{}); return {...r, reset:{ok:true,skipped:'start_does_not_kill_existing_workers'}}; });
 ipcMain.handle('flow:pause', async()=>{ if(!anyRunnerRunning()) return {ok:false,error:'process_not_running'}; ensureDirs(); fs.writeFileSync(PAUSE_FILE,String(Date.now())); return {ok:true, paused:true}; });
 ipcMain.handle('flow:resume', async()=>{ if(!anyRunnerRunning() && !fs.existsSync(PAUSE_FILE)) return {ok:false,error:'process_not_running'}; try{fs.rmSync(PAUSE_FILE,{force:true})}catch{} return {ok:true, paused:false}; });
-ipcMain.handle('flow:stop', async()=>{ const reset=resetRunnerWorkers(); return {ok:true, running:false, reset}; });
+ipcMain.handle('flow:stop', async()=>{ resetRunnerWorkersAsync({killChrome:true}).catch(()=>{}); return {ok:true, running:false, stopping:true}; });
 ipcMain.handle('license:machineId', async()=>({ok:true,machineId:machineId()}));
 ipcMain.handle('license:cached', async()=>cachedLicense() || {ok:false, reason:'missing_local_license'});
 ipcMain.handle('license:activate', async(_e,payload)=>activateLicenseJs(payload?.licenseKey, DEFAULT_API_BASE));
