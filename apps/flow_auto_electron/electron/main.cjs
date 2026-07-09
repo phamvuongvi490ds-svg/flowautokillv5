@@ -404,6 +404,30 @@ function killPid(pid){
     }
   }catch{}
 }
+
+function collectAutomationChromePids(){
+  const pids=[];
+  try{
+    if(process.platform==='win32'){
+      const ps=spawnSync('powershell.exe',['-NoProfile','-Command',`Get-CimInstance Win32_Process | Where-Object { ($_.Name -match 'chrome|msedge') -and (($_.CommandLine -match '--remote-debugging-port=93') -or ($_.CommandLine -match 'chrome-cdp-profile') -or ($_.CommandLine -match 'chrome-flow-accounts')) } | Select-Object -ExpandProperty ProcessId`],{encoding:'utf8',windowsHide:true,timeout:7000});
+      String(ps.stdout||'').split(/\s+/).forEach(x=>{ const pid=Number(x); if(pid&&pid!==process.pid)pids.push(pid); });
+    }else{
+      const r=spawnSync('pgrep',['-f','--remote-debugging-port=93|chrome-cdp-profile|chrome-flow-accounts'],{encoding:'utf8',timeout:4000});
+      String(r.stdout||'').split(/\s+/).forEach(x=>{ const pid=Number(x); if(pid&&pid!==process.pid)pids.push(pid); });
+    }
+  }catch{}
+  return [...new Set(pids)].filter(Boolean);
+}
+function killAutomationChrome(){
+  const killed=[];
+  for(let round=0; round<3; round++){
+    const pids=collectAutomationChromePids();
+    if(!pids.length) break;
+    for(const pid of pids){ killPid(pid); killed.push(pid); }
+    const start=Date.now(); while(Date.now()-start<700){}
+  }
+  return {killed:[...new Set(killed)],remaining:collectAutomationChromePids().filter(isRunningPid)};
+}
 function collectRunnerPids(){
   const pids=[];
   try{ const p=readPid(); if(p)pids.push(p); }catch{}
@@ -434,7 +458,8 @@ function resetRunnerWorkers(){
   const remaining=collectRunnerPids().filter(isRunningPid);
   for(const f of [...new Set(files)]){ try{ fs.rmSync(f,{force:true}); }catch{} }
   try{ fs.rmSync(PAUSE_FILE,{force:true}); }catch{}
-  return {ok:remaining.length===0,killed:[...new Set(killed)],remaining};
+  const chrome=killAutomationChrome();
+  return {ok:remaining.length===0 && chrome.remaining.length===0,killed:[...new Set(killed)],remaining,chrome};
 }
 
 function safeProfileSlug(name, idx=0){
@@ -560,7 +585,7 @@ ipcMain.handle('prompt:saveGenerated', async(_e,file)=>{
     return {ok:true,file:r.filePath};
   }catch(e){ return {ok:false,error:String(e&&e.message||e)}; }
 });
-ipcMain.handle('flow:start', async(_e,payload)=>{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; const reset=resetRunnerWorkers(); const n=Math.max(1,Math.min(100,Array.isArray((payload||{}).profiles)&&payload.profiles.length?payload.profiles.length:Number((payload||{}).flowThreads||1)||1)); let c=await ensureCdpThreads(n,(payload||{}).profiles||[]); if(!c.ok) return c; const r=startRunner(payload||{}); return {...r, reset}; });
+ipcMain.handle('flow:start', async(_e,payload)=>{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; const n=Math.max(1,Math.min(100,Array.isArray((payload||{}).profiles)&&payload.profiles.length?payload.profiles.length:Number((payload||{}).flowThreads||1)||1)); let c=await ensureCdpThreads(n,(payload||{}).profiles||[]); if(!c.ok) return c; const r=startRunner(payload||{}); return {...r, reset:{ok:true,skipped:'start_does_not_kill_existing_workers'}}; });
 ipcMain.handle('flow:pause', async()=>{ if(!anyRunnerRunning()) return {ok:false,error:'process_not_running'}; ensureDirs(); fs.writeFileSync(PAUSE_FILE,String(Date.now())); return {ok:true, paused:true}; });
 ipcMain.handle('flow:resume', async()=>{ if(!anyRunnerRunning() && !fs.existsSync(PAUSE_FILE)) return {ok:false,error:'process_not_running'}; try{fs.rmSync(PAUSE_FILE,{force:true})}catch{} return {ok:true, paused:false}; });
 ipcMain.handle('flow:stop', async()=>{ const reset=resetRunnerWorkers(); return {ok:true, running:false, reset}; });
