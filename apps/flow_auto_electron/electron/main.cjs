@@ -404,32 +404,37 @@ function killPid(pid){
     }
   }catch{}
 }
+function collectRunnerPids(){
+  const pids=[];
+  try{ const p=readPid(); if(p)pids.push(p); }catch{}
+  try{ for(const f of fs.readdirSync(JOB_DIR).filter(x=>/^electron-runner-\d+\.pid$/.test(x))){ const v=Number(fs.readFileSync(path.join(JOB_DIR,f),'utf8').trim()); if(v)pids.push(v); } }catch{}
+  try{
+    if(process.platform==='win32'){
+      const ps=spawnSync('powershell.exe',['-NoProfile','-Command',`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'flow_batch_runner(\\.py|\\.exe)' -or $_.CommandLine -match 'electron-runner' } | Select-Object -ExpandProperty ProcessId`],{encoding:'utf8',windowsHide:true,timeout:6000});
+      String(ps.stdout||'').split(/\s+/).forEach(x=>{ const pid=Number(x); if(pid&&pid!==process.pid)pids.push(pid); });
+    }else{
+      const r=spawnSync('pgrep',['-f','flow_batch_runner.py|flow_batch_runner.exe|electron-runner'],{encoding:'utf8',timeout:3000});
+      String(r.stdout||'').split(/\s+/).forEach(x=>{ const pid=Number(x); if(pid&&pid!==process.pid)pids.push(pid); });
+    }
+  }catch{}
+  return [...new Set(pids)].filter(Boolean);
+}
 function resetRunnerWorkers(){
   ensureDirs();
   const killed=[];
   const files=[];
   try{ files.push(...fs.readdirSync(JOB_DIR).filter(x=>/^electron-runner(?:-state)?(?:-\d+)?\.(?:pid|json)$/.test(x)).map(x=>path.join(JOB_DIR,x))); }catch{}
   try{ files.push(PID_RUN, RUN_STATE, PAUSE_FILE); }catch{}
-  const unique=[...new Set(files)];
-  for(const f of unique){
-    if(/\.pid$/.test(f)){
-      try{ const pid=Number(fs.readFileSync(f,'utf8').trim()); if(pid){ killPid(pid); killed.push(pid); } }catch{}
-    }
+  for(let round=0; round<5; round++){
+    const pids=collectRunnerPids();
+    if(!pids.length) break;
+    for(const pid of pids){ killPid(pid); killed.push(pid); }
+    const start=Date.now(); while(Date.now()-start<700){}
   }
-  // Extra hard kill: stop every background runner process even if pid files are stale/missing.
-  try{
-    if(process.platform==='win32'){
-      const q='CommandLine like "%flow_batch_runner.py%" or CommandLine like "%flow_batch_runner.exe%" or CommandLine like "%electron-runner%"';
-      spawnSync('wmic',['process','where',q,'get','ProcessId'],{encoding:'utf8',windowsHide:true}).stdout.split(/\s+/).forEach(x=>{ const pid=Number(x); if(pid&&pid!==process.pid){ killPid(pid); killed.push(pid); }});
-    }else{
-      const r=spawnSync('pgrep',['-f','flow_batch_runner.py|flow_batch_runner.exe|electron-runner'],{encoding:'utf8'});
-      String(r.stdout||'').split(/\s+/).forEach(x=>{ const pid=Number(x); if(pid&&pid!==process.pid){ killPid(pid); killed.push(pid); }});
-    }
-  }catch{}
-  const started=Date.now(); while(Date.now()-started<1200){}
-  for(const f of unique){ try{ fs.rmSync(f,{force:true}); }catch{} }
+  const remaining=collectRunnerPids().filter(isRunningPid);
+  for(const f of [...new Set(files)]){ try{ fs.rmSync(f,{force:true}); }catch{} }
   try{ fs.rmSync(PAUSE_FILE,{force:true}); }catch{}
-  return {ok:true,killed:[...new Set(killed)]};
+  return {ok:remaining.length===0,killed:[...new Set(killed)],remaining};
 }
 
 function safeProfileSlug(name, idx=0){
