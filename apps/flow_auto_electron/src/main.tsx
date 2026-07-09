@@ -13,7 +13,7 @@ const api = () => window.flowAPI || {
   openFile: async()=>[], status: async()=>({ok:true,running:false}), licenseCached: async()=>({ok:true}), machineId: async()=>({machineId:''}),
   ensureCdp: async()=>({ok:false,error:'flowAPI_not_ready'}), openProfileLogin: async()=>({ok:false,error:'flowAPI_not_ready'}), start: async()=>({ok:false,error:'flowAPI_not_ready'}), pause: async()=>({ok:false,error:'flowAPI_not_ready'}), resume: async()=>({ok:false,error:'flowAPI_not_ready'}), stop: async()=>({ok:false,error:'flowAPI_not_ready'}),
   licenseCheck: async()=>({ok:false,error:'flowAPI_not_ready'}), activateLicense: async()=>({ok:false,error:'flowAPI_not_ready'}), generatePrompt: async()=>({ok:false,error:'flowAPI_not_ready'}), generateScript: async()=>({ok:false,error:'flowAPI_not_ready'}), generateCharacters: async()=>({ok:false,error:'flowAPI_not_ready'}),
-  videoList: async()=>({ok:true,files:[]}), videoMerge: async()=>({ok:false,error:'flowAPI_not_ready'}), videoExtractAudio: async()=>({ok:false,error:'flowAPI_not_ready'}), videoAnalyzeSample: async()=>({ok:false,error:'flowAPI_not_ready'})
+  videoList: async()=>({ok:true,files:[]}), videoMerge: async()=>({ok:false,error:'flowAPI_not_ready'}), videoExtractAudio: async()=>({ok:false,error:'flowAPI_not_ready'}), videoAnalyzeSample: async()=>({ok:false,error:'flowAPI_not_ready'}), videoPostPlan: async()=>({ok:false,error:'flowAPI_not_ready'}), videoPostExport: async()=>({ok:false,error:'flowAPI_not_ready'})
 };
 
 function Card({title, icon, children}:{title:string; icon?:React.ReactNode; children:React.ReactNode}){return <div className="card"><div className="card-title">{icon}{title}</div>{children}</div>}
@@ -64,6 +64,10 @@ function App(){
   const [postScript,setPostScript]=useState('');
   const [sampleVideo,setSampleVideo]=useState('');
   const [timeline,setTimeline]=useState<any[]>([]);
+  const [subLang,setSubLang]=useState('vi');
+  const [manualCuts,setManualCuts]=useState('');
+  const [manualSubs,setManualSubs]=useState('');
+  const [musicFile,setMusicFile]=useState('');
   function timeoutPromise<T>(p:Promise<T>, ms:number, label:string):Promise<T>{ return Promise.race([p, new Promise<T>((_,rej)=>setTimeout(()=>rej(new Error(label)),ms))]); }
   const firstKey=()=>apiKeys.split(/[\n,]+/).map(s=>s.trim()).filter(Boolean)[0]||'';
   const friendly=(x:any)=>{
@@ -107,6 +111,7 @@ function App(){
   async function pickProfilePrompt(i:number){const r=await api().openFile({properties:['openFile'],filters:[{name:'Text',extensions:['txt','json']},{name:'All',extensions:['*']}]}); if(r?.[0]){setProfiles(p=>p.map((x,k)=>k===i?{...x,promptFile:r[0]}:x)); append(`Profile ${i+1} file prompt: ${r[0]}`)}}
   async function pickProfileRefs(i:number){const r=await api().openFile({properties:['openDirectory']}); if(r?.[0]){setProfiles(p=>p.map((x,k)=>k===i?{...x,refsDir:r[0]}:x)); append(`Profile ${i+1} thư mục ảnh: ${r[0]}`)}}
   async function pickVideoFolder(){const r=await api().openFile({properties:['openDirectory']}); if(r?.[0]){setVideoFolder(r[0]); const x=await api().videoList(r[0]); setVideoFiles(x?.files||[]); append(`Đã chọn thư mục video: ${r[0]}`)}}
+  async function pickMusic(){const r=await api().openFile({properties:['openFile'],filters:[{name:'Audio',extensions:['mp3','wav','m4a','aac']},{name:'All',extensions:['*']} ]}); if(r?.[0]){setMusicFile(r[0]); append(`Nhạc nền: ${r[0]}`)}}
   async function pickAudio(){const r=await api().openFile({properties:['openFile'],filters:[{name:'Audio',extensions:['mp3','wav','m4a','aac']},{name:'All',extensions:['*']} ]}); if(r?.[0]){setAudioFile(r[0]); append(`Audio: ${r[0]}`)}}
   async function pickSampleVideo(){const r=await api().openFile({properties:['openFile'],filters:[{name:'Video',extensions:['mp4','mov','mkv','webm','avi','m4v']},{name:'All',extensions:['*']} ]}); if(r?.[0]){setSampleVideo(r[0]); append(`Video mẫu: ${r[0]}`)}}
   async function analyzeSampleVideo(){append('AI đang phân tích video mẫu và tạo kịch bản tương tự...'); const duration=`${durationValue} ${durationUnit}`; const r=await api().videoAnalyzeSample({file:sampleVideo,apiKey:firstKey(),duration}); if(r?.script)setPostScript(r.script); append(r)}
@@ -115,6 +120,8 @@ function App(){
   async function extractAudio(){append('Đang tách âm thanh...'); append(await api().videoExtractAudio({file:videoFiles[0]}))}
   async function analyzeVideos(){append(postMode==='ai'?'AI đang phân tích video theo kịch bản...':'Đang tạo timeline thủ công...'); const r=await api().videoAnalyze({folder:videoFolder,files:videoFiles,script:postScript,useAi:postMode==='ai',apiKey:firstKey()}); if(r?.scenes)setTimeline(r.scenes); append(r)}
   async function exportTimeline(){append('Đang xuất video theo timeline...'); append(await api().videoExportTimeline({folder:videoFolder,scenes:timeline.length?timeline:videoFiles.map((f,i)=>({file:f,keep:true,order:i+1}))}))}
+  async function aiPostPlan(){append('AI đang tạo timeline + subtitle...'); const r=await api().videoPostPlan({folder:videoFolder,files:videoFiles,script:postScript,subLang,apiKey:firstKey()}); if(r?.scenes)setTimeline(r.scenes); if(r?.subtitles)setManualSubs(r.subtitles.map((x:any)=>`${x.start}, ${x.end}, ${x.text}`).join('\n')); append(r)}
+  async function exportPost(){append('Đang xuất hậu kì video...'); append(await api().videoPostExport({folder:videoFolder,files:videoFiles,scenes:timeline.length?timeline:videoFiles.map((f,i)=>({file:f,keep:true,order:i+1})),manualCuts,manualSubs,musicFile,subLang}))}
   const baseTimeline=()=>timeline.length?timeline:videoFiles.map((f,i)=>({id:`manual_${i+1}`,file:f,name:f.split(/[\\/]/).pop(),keep:true,order:i+1,reason:'Thủ công'}));
   function moveScene(i:number,dir:number){setTimeline(()=>{const a=[...baseTimeline()]; const j=i+dir; if(j<0||j>=a.length)return a; [a[i],a[j]]=[a[j],a[i]]; return a.map((x,k)=>({...x,order:k+1}));})}
   function toggleScene(i:number){setTimeline(()=>baseTimeline().map((x,k)=>k===i?{...x,keep:!x.keep}:x))}
@@ -274,13 +281,13 @@ function App(){
             <p className="hint">Thư mục: {videoFolder||'chưa chọn'}<br/>Số video: {videoFiles.length}</p>
             <div className="form4"><Field label="Chế độ"><select value={postMode} onChange={e=>setPostMode(e.target.value as any)}><option value="ai">AI tự phân tích & ghép theo kịch bản</option><option value="manual">Ghép thủ công</option></select></Field><Field label="Audio chèn"><input readOnly value={audioFile||'chưa chọn'}/></Field></div>
             <Field label="Kịch bản / mô tả thứ tự cảnh"><textarea value={postScript} onChange={e=>setPostScript(e.target.value)} placeholder="Dán kịch bản video để AI phân tích video và sắp xếp đúng cảnh"/></Field>
-            <div className="actions"><Button variant="primary" onClick={analyzeVideos}>🤖 Phân tích / tạo timeline</Button><Button onClick={pickAudio}><Music size={16}/> Chọn âm thanh chèn</Button><Button onClick={extractAudio}>🎧 Tách âm video đầu tiên</Button></div>
+            <div className="form4"><Field label="Ngôn ngữ sub"><select value={subLang} onChange={e=>setSubLang(e.target.value)}><option value="vi">Tiếng Việt</option><option value="en">English</option><option value="zh">中文</option><option value="ko">한국어</option><option value="ja">日本語</option></select></Field><Field label="Nhạc nền"><input readOnly value={musicFile||'chưa chọn'}/></Field></div><div className="actions"><Button variant="primary" onClick={aiPostPlan}>🤖 AI cắt ghép + tạo sub</Button><Button onClick={analyzeVideos}>🧠 Tạo timeline cũ</Button><Button onClick={pickMusic}><Music size={16}/> Chọn nhạc nền</Button><Button onClick={pickAudio}><Music size={16}/> Chọn âm thanh chèn</Button><Button onClick={extractAudio}>🎧 Tách âm video đầu tiên</Button></div>
           </Card>
           <Card title="Danh sách video" icon={<Scissors/>}><div className="video-list">{videoFiles.map((f,i)=><div key={f} className="video-item video-preview-row"><video src={`file://${f}`} muted controls preload="metadata"/><div><b>{String(i+1).padStart(2,'0')}</b><span>{f.split(/[\\/]/).pop()}</span></div></div>)}</div></Card>
         </div>
         <Card title="Preview timeline / kéo thả sắp xếp cảnh" icon={<Scissors/>}>
           <div className="timeline-editor">{baseTimeline().map((sc:any,i:number)=><div key={sc.id||sc.file||i} className={sc.keep===false?'scene-card muted':'scene-card'}><div className="scene-thumb"><video src={`file://${sc.file}`} muted controls preload="metadata"/></div><div className="scene-info"><b>Scene {i+1} • {sc.name||String(sc.file||'').split(/[\\/]/).pop()}</b><span>{sc.reason||sc.note||'Sẵn sàng ghép'}</span></div><div className="scene-actions"><button onClick={()=>moveScene(i,-1)}>↑</button><button onClick={()=>moveScene(i,1)}>↓</button><button onClick={()=>toggleScene(i)}>{sc.keep===false?'Khôi phục':'Xóa cảnh'}</button></div></div>)}</div>
-          <div className="actions"><Button variant="primary" onClick={exportTimeline}>📤 Xuất video</Button><Button onClick={mergeVideos}>🎞 Ghép toàn bộ video gốc</Button></div>
+          <div className="form4"><Field label="Cut thủ công: file,start,end mỗi dòng"><textarea value={manualCuts} onChange={e=>setManualCuts(e.target.value)} placeholder={'video1.mp4, 0, 5\nvideo2.mp4, 1.5, 8'}/></Field><Field label="Sub thủ công: start,end,text mỗi dòng"><textarea value={manualSubs} onChange={e=>setManualSubs(e.target.value)} placeholder={'0, 3, Nội dung subtitle\n3, 6, Dòng tiếp theo'}/></Field></div><div className="actions"><Button variant="primary" onClick={exportPost}>📤 Xuất hậu kì video</Button><Button onClick={exportTimeline}>📤 Xuất timeline cũ</Button><Button onClick={mergeVideos}>🎞 Ghép toàn bộ video gốc</Button></div>
           <p className="hint">AI có thể đánh dấu cảnh không phù hợp để bỏ qua. Chế độ thủ công cho phép sắp xếp bằng nút ↑ ↓ và xóa/khôi phục cảnh trước khi xuất.</p>
         </Card>
       </div>}
