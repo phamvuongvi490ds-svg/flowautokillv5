@@ -1877,6 +1877,14 @@ def run(args):
                     if not typed_ok:
                         raise RuntimeError("prompt_not_typed_after_image_upload")
 
+                    current_prompt_text = page.evaluate("""
+                    () => Array.from(document.querySelectorAll('div[role="textbox"][contenteditable="true"], div[contenteditable="true"], textarea'))
+                      .map(el => ('value' in el ? el.value : (el.innerText || el.textContent || '')))
+                      .sort((a,b)=>String(b).length-String(a).length)[0] || ''
+                    """)
+                    if len(str(current_prompt_text).strip()) < min(20, len(prompt_to_type)):
+                        raise RuntimeError("prompt_missing_before_submit")
+
                     # Snapshot media tiles trước submit để monitor output mới giống extension
                     pre_submit_tiles = snapshot_media_tiles(page)
 

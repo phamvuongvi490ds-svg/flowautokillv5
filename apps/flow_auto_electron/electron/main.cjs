@@ -516,7 +516,7 @@ function runnerCommand(){
   throw new Error(`runner_not_found: checked ${[script,...exeCandidates].join(' | ')}`);
 }
 
-function startRunner(payload){
+async function startRunner(payload){
   ensureDirs(); try{fs.rmSync(PAUSE_FILE,{force:true})}catch{}
   const profiles=Array.isArray(payload.profiles)?payload.profiles.filter(x=>x&&(x.promptFile||String(x.script||x.prompts||'').trim())).slice(0,100):[];
   const promptFile=payload.promptFile || writePromptFile('electron-manual-prompts.txt', payload.prompts||'');
@@ -539,6 +539,17 @@ function startRunner(payload){
     args.push(payload.pairedMode===false?'--no-paired-mode':'--paired-mode'); const wantAutoDownload = payload.autoDownload !== false; if(wantAutoDownload) args.push('--auto-download'); if(!wantAutoDownload && payload.runMode==='continuous_submit_only') args.push('--submit-only'); if(wantAutoDownload && payload.runMode==='continuous_download_delay_3') args.push('--download-delay-prompts','3'); const refDir=threadRefs[idx]||payload.refsDir; if(refDir) args.push('--refs-dir',refDir); if(payload.downloadDir) args.push('--output-dir',payload.downloadDir); try{ fs.appendFileSync(logFile, `[runner] path=${runner.path||runner.cmd} compiled=${!!runner.compiled}\n[runner] thread=${idx+1} mode=${payload.mode||payload.taskMode} model=${payload.model||payload.flowModel} ratio=${payload.ratio||payload.aspectRatio||payload.flowAspectRatio} count=${payload.count||payload.flowCount} autoDownload=${wantAutoDownload} runMode=${payload.runMode||''}\n`); }catch{}
     const p=spawn(runner.cmd, [...runner.prefix, ...args], spawnOpts({detached:true, stdio:['ignore',out,out]})); p.unref(); pids.push(p.pid); fs.writeFileSync(path.join(JOB_DIR,`electron-runner-${idx+1}.pid`),String(p.pid));
   });
+  await wait(2500);
+  const deadLogs=[];
+  for(let i=0;i<pids.length;i++){
+    let alive=true; try{ process.kill(pids[i],0); }catch{ alive=false; }
+    if(!alive){
+      let log='';
+      try{ log=fs.readFileSync(path.join(DEBUG_DIR,`electron-runner-${i+1}.log`),'utf8').split(/\r?\n/).slice(-40).join('\n'); }catch{}
+      deadLogs.push({pid:pids[i],log});
+    }
+  }
+  if(deadLogs.length) return {ok:false,error:'runner_exited_immediately',dead:deadLogs,promptFile,runnerPath:runner.path||runner.cmd};
   fs.writeFileSync(PID_RUN,String(pids[0]||'')); return {ok:true,pid:pids[0],pids,threads:threadFiles.length,promptFile,runner:runner.compiled?'nuitka-runner-hidden-multitab':'python-stable-hidden-multitab'};
 }
 
@@ -574,7 +585,7 @@ ipcMain.handle('prompt:saveGenerated', async(_e,file)=>{
     return {ok:true,file:r.filePath};
   }catch(e){ return {ok:false,error:String(e&&e.message||e)}; }
 });
-ipcMain.handle('flow:start', async(_e,payload)=>{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; const reset=resetRunnerWorkers(); const n=Math.max(1,Math.min(100,Array.isArray((payload||{}).profiles)&&payload.profiles.length?payload.profiles.length:Number((payload||{}).flowThreads||1)||1)); let c=await ensureCdpThreads(n,(payload||{}).profiles||[]); if(!c.ok) return c; const r=startRunner(payload||{}); return {...r, reset}; });
+ipcMain.handle('flow:start', async(_e,payload)=>{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; const reset=resetRunnerWorkers(); const n=Math.max(1,Math.min(100,Array.isArray((payload||{}).profiles)&&payload.profiles.length?payload.profiles.length:Number((payload||{}).flowThreads||1)||1)); let c=await ensureCdpThreads(n,(payload||{}).profiles||[]); if(!c.ok) return c; const r=await startRunner(payload||{}); return {...r, reset}; });
 ipcMain.handle('flow:pause', async()=>{ if(!anyRunnerRunning()) return {ok:false,error:'process_not_running'}; ensureDirs(); fs.writeFileSync(PAUSE_FILE,String(Date.now())); return {ok:true, paused:true}; });
 ipcMain.handle('flow:resume', async()=>{ if(!anyRunnerRunning() && !fs.existsSync(PAUSE_FILE)) return {ok:false,error:'process_not_running'}; try{fs.rmSync(PAUSE_FILE,{force:true})}catch{} return {ok:true, paused:false}; });
 ipcMain.handle('flow:stop', async()=>{ const reset=resetRunnerWorkers(); return {ok:true, running:false, reset}; });
