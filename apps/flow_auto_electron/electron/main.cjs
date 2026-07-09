@@ -462,8 +462,27 @@ async function ensureCdpOn(port=CDP_PORT, profile=CDP_PROFILE){
   for(let i=0;i<40;i++){ try{ const r=await fetch(`http://127.0.0.1:${port}/json/version`); if(r.ok) return {ok:true, launched:true, port}; }catch{} await wait(500); }
   return {ok:false,error:'cdp_not_ready',port};
 }
-async function ensureCdp(){ return ensureCdpOn(CDP_PORT, CDP_PROFILE); }
-async function ensureCdpThreads(n, profiles=[]){ const out=[]; for(let i=0;i<n;i++){ const port=CDP_PORT+i; const profile=profiles&&profiles[i]?flowProfileDir(profiles[i],i):(i===0?CDP_PROFILE:path.join(BASE_DIR,`chrome-cdp-profile-${i+1}`)); const r=await ensureCdpOn(port,profile); out.push({...r,profileDir:profile,accountEmail:profiles?.[i]?.accountEmail||''}); if(!r.ok) return {ok:false,error:r.error,port}; } return {ok:true,threads:n,cdp:out}; }
+async function waitFlowReadyOn(port){
+  const base=`http://127.0.0.1:${port}`;
+  for(let i=0;i<50;i++){
+    try{
+      const r=await fetch(`${base}/json`);
+      if(r.ok){
+        const tabs=await r.json();
+        const flow=(tabs||[]).find(t=>/labs\.google\/fx(?:\/[a-z]{2})?\/tools\/flow/.test(t.url||''));
+        if(flow){ await wait(900); return {ok:true,port,url:flow.url}; }
+        const page=(tabs||[]).find(t=>t.type==='page' && t.id);
+        if(page){
+          try{ await fetch(`${base}/json/new?${encodeURIComponent('https://labs.google/fx/vi/tools/flow')}`); }catch{}
+        }
+      }
+    }catch{}
+    await wait(500);
+  }
+  return {ok:false,error:'flow_page_not_ready',port};
+}
+async function ensureCdp(){ const r=await ensureCdpOn(CDP_PORT, CDP_PROFILE); if(!r.ok) return r; await waitFlowReadyOn(CDP_PORT); return r; }
+async function ensureCdpThreads(n, profiles=[]){ const out=[]; for(let i=0;i<n;i++){ const port=CDP_PORT+i; const profile=profiles&&profiles[i]?flowProfileDir(profiles[i],i):(i===0?CDP_PROFILE:path.join(BASE_DIR,`chrome-cdp-profile-${i+1}`)); const r=await ensureCdpOn(port,profile); if(!r.ok) return {ok:false,error:r.error,port}; const ready=await waitFlowReadyOn(port); out.push({...r,ready,profileDir:profile,accountEmail:profiles?.[i]?.accountEmail||''}); } return {ok:true,threads:n,cdp:out}; }
 function writePromptFile(name, text){ ensureDirs(); const file=path.join(JOB_DIR,name); const blocks=(text||'').split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean); fs.writeFileSync(file, blocks.join('\n\n')+'\n','utf8'); return file; }
 function saveGeneratedPrompts(jsonPath, fallbackText, outName){
   let prompts=[]; try{ const obj=JSON.parse(fs.readFileSync(jsonPath,'utf8')); if(obj.results) prompts=obj.results.filter(r=>r.ok&&r.prompt).map(r=>String(r.prompt).replace(/\s+/g,' ').trim()); if(obj.script?.scenes) prompts=obj.script.scenes.sort((a,b)=>(a.sceneNumber||0)-(b.sceneNumber||0)).map(s=>String(s.prompt||'').replace(/\s+/g,' ').trim()).filter(Boolean); }catch{}
