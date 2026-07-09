@@ -549,25 +549,6 @@ app.on('activate',()=>{ if(BrowserWindow.getAllWindows().length===0) createWindo
 ipcMain.handle('dialog:openFile', async (_e, opts={})=>{ const r=await dialog.showOpenDialog({properties:opts.properties||['openFile'], filters:opts.filters||[]}); return r.canceled?[]:r.filePaths; });
 ipcMain.handle('shell:openPath', (_e,p)=>shell.openPath(p));
 ipcMain.handle('flow:status', async()=>runState());
-ipcMain.handle('flow:diagnose', async()=>{
-  ensureDirs();
-  const pids=typeof collectRunnerPids==='function'?collectRunnerPids():[];
-  const pidStatus=pids.map(pid=>({pid,running:isRunningPid(pid)}));
-  const logs=[];
-  try{
-    for(const f of fs.readdirSync(DEBUG_DIR).filter(x=>/^electron-runner-.*\.log$/.test(x)).sort().slice(-8)){
-      const file=path.join(DEBUG_DIR,f);
-      logs.push({file,tail:fs.readFileSync(file,'utf8').split(/\r?\n/).slice(-80).join('\n')});
-    }
-  }catch{}
-  let cdp=null;
-  try{
-    const r=await fetch(`http://127.0.0.1:${CDP_PORT}/json`);
-    cdp={ok:r.ok,tabs:r.ok?(await r.json()).map(t=>({type:t.type,url:t.url,title:t.title})):[]};
-  }catch(e){ cdp={ok:false,error:String(e.message||e)}; }
-  return {ok:true,state:runState(),pids:pidStatus,jobDir:JOB_DIR,debugDir:DEBUG_DIR,cdp,logs};
-});
-
 ipcMain.handle('flow:ensureCdp', async()=>ensureCdp());
 ipcMain.handle('flow:openProfileLogin', async(_e,profile,idx=0)=>{ const port=CDP_PORT+Number(idx||0); const dir=flowProfileDir(profile||{},Number(idx||0)); return ensureCdpOn(port,dir); });
 ipcMain.handle('prompt:saveGenerated', async(_e,file)=>{
