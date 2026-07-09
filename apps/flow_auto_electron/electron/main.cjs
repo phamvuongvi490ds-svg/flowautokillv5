@@ -387,7 +387,7 @@ function isRunningPid(pid){ if(!pid) return false; try{ process.kill(pid,0); ret
 
 function anyRunnerRunning(){
   const pids=[]; const p=readPid(); if(p)pids.push(p);
-  try{ for(const f of fs.readdirSync(JOB_DIR).filter(x=>/^electron-runner-\d+\.pid$/.test(x))){ const v=Number(fs.readFileSync(path.join(JOB_DIR,f),'utf8').trim()); if(v)pids.push(v); } }catch{}
+  try{ for(const f of fs.readdirSync(JOB_DIR).filter(x=>/^electron-runner-\d+(?:-[a-f0-9-]+)?\.pid$/.test(x))){ const v=Number(fs.readFileSync(path.join(JOB_DIR,f),'utf8').trim()); if(v)pids.push(v); } }catch{}
   return [...new Set(pids)].some(isRunningPid);
 }
 
@@ -441,7 +441,7 @@ function killAutomationChrome(){
 function collectRunnerPids(){
   const pids=[];
   try{ const p=readPid(); if(p)pids.push(p); }catch{}
-  try{ for(const f of fs.readdirSync(JOB_DIR).filter(x=>/^electron-runner-\d+\.pid$/.test(x))){ const v=Number(fs.readFileSync(path.join(JOB_DIR,f),'utf8').trim()); if(v)pids.push(v); } }catch{}
+  try{ for(const f of fs.readdirSync(JOB_DIR).filter(x=>/^electron-runner-\d+(?:-[a-f0-9-]+)?\.pid$/.test(x))){ const v=Number(fs.readFileSync(path.join(JOB_DIR,f),'utf8').trim()); if(v)pids.push(v); } }catch{}
   try{
     if(process.platform==='win32'){
       const ps=spawnSync('powershell.exe',['-NoProfile','-Command',`Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'flow_batch_runner(\\.py|\\.exe)' -or $_.CommandLine -match 'electron-runner' } | Select-Object -ExpandProperty ProcessId`],{encoding:'utf8',windowsHide:true,timeout:6000});
@@ -609,10 +609,10 @@ ipcMain.handle('prompt:saveGenerated', async(_e,file)=>{
     return {ok:true,file:r.filePath};
   }catch(e){ return {ok:false,error:String(e&&e.message||e)}; }
 });
-ipcMain.handle('flow:start', async(_e,payload)=>{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; const n=Math.max(1,Math.min(100,Array.isArray((payload||{}).profiles)&&payload.profiles.length?payload.profiles.length:Number((payload||{}).flowThreads||1)||1)); let c=await ensureCdpThreads(n,(payload||{}).profiles||[]); if(!c.ok) return c; const r=startRunner(payload||{}); return {...r, reset:{ok:true,skipped:'start_does_not_kill_existing_workers'}}; });
+ipcMain.handle('flow:start', async(_e,payload)=>{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; const reset=await resetRunnerWorkersAsync({killChrome:false}); const n=Math.max(1,Math.min(100,Array.isArray((payload||{}).profiles)&&payload.profiles.length?payload.profiles.length:Number((payload||{}).flowThreads||1)||1)); let c=await ensureCdpThreads(n,(payload||{}).profiles||[]); if(!c.ok) return c; const r=startRunner(payload||{}); return {...r, reset}; });
 ipcMain.handle('flow:pause', async()=>{ if(!anyRunnerRunning()) return {ok:false,error:'process_not_running'}; ensureDirs(); fs.writeFileSync(PAUSE_FILE,String(Date.now())); return {ok:true, paused:true}; });
 ipcMain.handle('flow:resume', async()=>{ if(!anyRunnerRunning() && !fs.existsSync(PAUSE_FILE)) return {ok:false,error:'process_not_running'}; try{fs.rmSync(PAUSE_FILE,{force:true})}catch{} return {ok:true, paused:false}; });
-ipcMain.handle('flow:stop', async()=>{ resetRunnerWorkersAsync({killChrome:true}).catch(()=>{}); return {ok:true, running:false, stopping:true}; });
+ipcMain.handle('flow:stop', async()=>{ resetRunnerWorkersAsync({killChrome:false}).catch(()=>{}); return {ok:true, running:false, stopping:true}; });
 ipcMain.handle('license:machineId', async()=>({ok:true,machineId:machineId()}));
 ipcMain.handle('license:cached', async()=>cachedLicense() || {ok:false, reason:'missing_local_license'});
 ipcMain.handle('license:activate', async(_e,payload)=>activateLicenseJs(payload?.licenseKey, DEFAULT_API_BASE));
