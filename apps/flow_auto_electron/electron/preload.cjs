@@ -3,6 +3,7 @@ contextBridge.exposeInMainWorld('flowAPI', {
   openFile: (opts) => ipcRenderer.invoke('dialog:openFile', opts),
   openPath: (p) => ipcRenderer.invoke('shell:openPath', p),
   status: () => ipcRenderer.invoke('flow:status'),
+  diagnose: () => ipcRenderer.invoke('flow:diagnose'),
   ensureCdp: () => ipcRenderer.invoke('flow:ensureCdp'),
   openProfileLogin: (profile, idx) => ipcRenderer.invoke('flow:openProfileLogin', profile, idx),
   start: (payload) => ipcRenderer.invoke('flow:start', payload),
