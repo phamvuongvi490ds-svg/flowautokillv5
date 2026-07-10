@@ -1747,8 +1747,18 @@ def run(args):
         page.bring_to_front()
         time.sleep(1.0)
         capture_startup_screenshot(page)
+        # Critical: do not apply mode/model until the project composer is actually ready.
+        # Otherwise one Start only opens Flow, next Start clicks New Project, next Start types prompt.
         try:
-            log_line('[flow] applying GUI settings once after New Project')
+            find_input_box(page)
+            log_line('[flow] project composer ready after New Project')
+        except Exception as e:
+            log_line(f'[flow] composer not ready after New Project: {e}; retry ensure_project_page')
+            page = ensure_project_page(page)
+            find_input_box(page)
+            log_line('[flow] project composer ready after retry')
+        try:
+            log_line('[flow] applying GUI settings once after composer ready')
             settings_applied = bool(apply_flow_settings(page, args))
             log_line(f'[flow] settings applied once: {settings_applied}')
             if not settings_applied:
