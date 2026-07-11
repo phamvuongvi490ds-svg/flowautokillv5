@@ -67,6 +67,8 @@ function App(){
   const [subLang,setSubLang]=useState('vi');
   const [manualCuts,setManualCuts]=useState('');
   const [manualSubs,setManualSubs]=useState('');
+  const [manualClips,setManualClips]=useState<any[]>([]);
+  const [subRows,setSubRows]=useState<any[]>([{start:'0',end:'3',text:''}]);
   const [musicFile,setMusicFile]=useState('');
   function timeoutPromise<T>(p:Promise<T>, ms:number, label:string):Promise<T>{ return Promise.race([p, new Promise<T>((_,rej)=>setTimeout(()=>rej(new Error(label)),ms))]); }
   const firstKey=()=>apiKeys.split(/[\n,]+/).map(s=>s.trim()).filter(Boolean)[0]||'';
@@ -123,6 +125,18 @@ function App(){
   async function aiPostPlan(){append('AI đang tạo timeline + subtitle...'); const r=await api().videoPostPlan({folder:videoFolder,files:videoFiles,script:postScript,subLang,apiKey:firstKey()}); if(r?.scenes)setTimeline(r.scenes); if(r?.subtitles)setManualSubs(r.subtitles.map((x:any)=>`${x.start}, ${x.end}, ${x.text}`).join('\n')); append(r)}
   async function exportPost(){append('Đang xuất hậu kì video...'); append(await api().videoPostExport({folder:videoFolder,files:videoFiles,scenes:timeline.length?timeline:videoFiles.map((f,i)=>({file:f,keep:true,order:i+1})),manualCuts,manualSubs,musicFile,subLang}))}
   const baseTimeline=()=>timeline.length?timeline:videoFiles.map((f,i)=>({id:`manual_${i+1}`,file:f,name:f.split(/[\\/]/).pop(),keep:true,order:i+1,reason:'Thủ công'}));
+
+  function initManualClips(){ const rows=videoFiles.map((f,i)=>({id:`clip_${Date.now()}_${i}`,file:f,start:'0',end:'',name:f.split(/[\\/]/).pop()})); setManualClips(rows); setManualCuts(rows.map(x=>`${x.file}, ${x.start||0}, ${x.end||''}`).join('\n')); }
+  function syncManualCuts(rows:any[]){ setManualClips(rows); setManualCuts(rows.filter(x=>x.file).map(x=>`${x.file}, ${x.start||0}, ${x.end||''}`).join('\n')); }
+  function updateClip(i:number,patch:any){ const rows=[...manualClips]; rows[i]={...rows[i],...patch}; syncManualCuts(rows); }
+  function addClip(){ const f=videoFiles[0]||''; syncManualCuts([...manualClips,{id:`clip_${Date.now()}`,file:f,start:'0',end:'',name:f.split(/[\\/]/).pop()||'clip'}]); }
+  function removeClip(i:number){ syncManualCuts(manualClips.filter((_,idx)=>idx!==i)); }
+  function moveClip(i:number,d:number){ const rows=[...manualClips]; const j=i+d; if(j<0||j>=rows.length)return; [rows[i],rows[j]]=[rows[j],rows[i]]; syncManualCuts(rows); }
+  function syncSubRows(rows:any[]){ setSubRows(rows); setManualSubs(rows.filter(x=>String(x.text||'').trim()).map(x=>`${x.start||0}, ${x.end||''}, ${x.text||''}`).join('\n')); }
+  function updateSub(i:number,patch:any){ const rows=[...subRows]; rows[i]={...rows[i],...patch}; syncSubRows(rows); }
+  function addSub(){ syncSubRows([...subRows,{start:'0',end:'3',text:''}]); }
+  function removeSub(i:number){ syncSubRows(subRows.filter((_,idx)=>idx!==i)); }
+
   function moveScene(i:number,dir:number){setTimeline(()=>{const a=[...baseTimeline()]; const j=i+dir; if(j<0||j>=a.length)return a; [a[i],a[j]]=[a[j],a[i]]; return a.map((x,k)=>({...x,order:k+1}));})}
   function toggleScene(i:number){setTimeline(()=>baseTimeline().map((x,k)=>k===i?{...x,keep:!x.keep}:x))}
 
@@ -287,7 +301,7 @@ function App(){
         </div>
         <Card title="Preview timeline / kéo thả sắp xếp cảnh" icon={<Scissors/>}>
           <div className="timeline-editor">{baseTimeline().map((sc:any,i:number)=><div key={sc.id||sc.file||i} className={sc.keep===false?'scene-card muted':'scene-card'}><div className="scene-thumb"><video src={`file://${sc.file}`} muted controls preload="metadata"/></div><div className="scene-info"><b>Scene {i+1} • {sc.name||String(sc.file||'').split(/[\\/]/).pop()}</b><span>{sc.reason||sc.note||'Sẵn sàng ghép'}</span></div><div className="scene-actions"><button onClick={()=>moveScene(i,-1)}>↑</button><button onClick={()=>moveScene(i,1)}>↓</button><button onClick={()=>toggleScene(i)}>{sc.keep===false?'Khôi phục':'Xóa cảnh'}</button></div></div>)}</div>
-          <div className="form4"><Field label="Cut thủ công: file,start,end mỗi dòng"><textarea value={manualCuts} onChange={e=>setManualCuts(e.target.value)} placeholder={'video1.mp4, 0, 5\nvideo2.mp4, 1.5, 8'}/></Field><Field label="Sub thủ công: start,end,text mỗi dòng"><textarea value={manualSubs} onChange={e=>setManualSubs(e.target.value)} placeholder={'0, 3, Nội dung subtitle\n3, 6, Dòng tiếp theo'}/></Field></div><div className="actions"><Button variant="primary" onClick={exportPost}>📤 Xuất hậu kì video</Button><Button onClick={exportTimeline}>📤 Xuất timeline cũ</Button><Button onClick={mergeVideos}>🎞 Ghép toàn bộ video gốc</Button></div>
+          <div className="capcut-panel"><div className="capcut-head"><b>✂️ Cut / ghép thủ công</b><div><Button onClick={initManualClips}>Tạo timeline từ video</Button><Button onClick={addClip}>+ Thêm clip</Button></div></div><div className="clip-timeline">{manualClips.map((c:any,i:number)=><div className="clip-block" key={c.id||i}><div className="clip-index">{String(i+1).padStart(2,'0')}</div><select value={c.file} onChange={e=>updateClip(i,{file:e.target.value,name:e.target.value.split(/[\\/]/).pop()})}>{videoFiles.map(f=><option key={f} value={f}>{f.split(/[\\/]/).pop()}</option>)}</select><input value={c.start} onChange={e=>updateClip(i,{start:e.target.value})} placeholder="Start giây"/><input value={c.end} onChange={e=>updateClip(i,{end:e.target.value})} placeholder="End giây"/><button onClick={()=>moveClip(i,-1)}>↑</button><button onClick={()=>moveClip(i,1)}>↓</button><button onClick={()=>removeClip(i)}>Xóa</button></div>)}</div></div><div className="capcut-panel"><div className="capcut-head"><b>💬 Subtitle thủ công</b><Button onClick={addSub}>+ Thêm sub</Button></div><div className="sub-editor">{subRows.map((r:any,i:number)=><div className="sub-row" key={i}><input value={r.start} onChange={e=>updateSub(i,{start:e.target.value})} placeholder="Start"/><input value={r.end} onChange={e=>updateSub(i,{end:e.target.value})} placeholder="End"/><input value={r.text} onChange={e=>updateSub(i,{text:e.target.value})} placeholder="Nội dung subtitle"/><button onClick={()=>removeSub(i)}>Xóa</button></div>)}</div></div><div className="actions"><Button variant="primary" onClick={exportPost}>📤 Xuất hậu kì video</Button><Button onClick={exportTimeline}>📤 Xuất timeline cũ</Button><Button onClick={mergeVideos}>🎞 Ghép toàn bộ video gốc</Button></div>
           <p className="hint">AI có thể đánh dấu cảnh không phù hợp để bỏ qua. Chế độ thủ công cho phép sắp xếp bằng nút ↑ ↓ và xóa/khôi phục cảnh trước khi xuất.</p>
         </Card>
       </div>}
