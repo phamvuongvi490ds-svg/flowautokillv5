@@ -54,7 +54,6 @@ jobs:
 
 
   build-macos-protected:
-    if: false
     runs-on: macos-latest
     defaults: { run: { working-directory: apps/flow_auto_electron } }
     steps:
@@ -77,6 +76,9 @@ jobs:
           cp -R build-nuitka/flow_batch_runner.dist payload_protected/bin/flow_batch_runner.dist
           cp -R build-nuitka/flow_batch_runner.dist payload_protected/bin/flow_batch_runner-arm64.dist
           cp -R build-nuitka/flow_batch_runner.dist payload_protected/bin/flow_batch_runner-x64.dist
+          chmod +x payload_protected/bin/flow_batch_runner.dist/flow_batch_runner || true
+          chmod +x payload_protected/bin/flow_batch_runner-arm64.dist/flow_batch_runner || true
+          chmod +x payload_protected/bin/flow_batch_runner-x64.dist/flow_batch_runner || true
           cp -f payload/requirements.txt payload_protected/requirements.txt
       - name: Verify protected macOS payload
         run: |
