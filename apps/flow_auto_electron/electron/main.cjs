@@ -174,7 +174,7 @@ async function geminiText(apiKey,parts,system,jsonMode=false){
 }
 
 function mimeFromFile(f){ const e=String(f||'').toLowerCase().split('.').pop(); if(e==='png')return 'image/png'; if(e==='webp')return 'image/webp'; return 'image/jpeg'; }
-function imageParts(files){ const out=[]; for(const f of (files||[]).slice(0,8)){ try{ out.push({inlineData:{mimeType:mimeFromFile(f),data:fs.readFileSync(f).toString('base64')}}); }catch{} } return out; }
+function imageParts(files){ const out=[]; for(const f of (files||[]).slice(0,30)){ try{ out.push({inlineData:{mimeType:mimeFromFile(f),data:fs.readFileSync(f).toString('base64')}}); }catch{} } return out; }
 function characterSystem(style,media,outLang='English'){
   const label = style;
   const suffix = STYLE_SUFFIX[style] || '';
@@ -199,6 +199,22 @@ async function buildCharacterLock(apiKey, characterImages){
   const sys='You are a strict subject consistency analyst. Analyze the reference images and create a SUBJECT LOCK in English. Identify the species/subject first (e.g., Golden Retriever dog, robotic arm, young woman). Include only the most important stable identity traits: species, color, breed/type, facial features, body markings, and clothing/accessories. Keep it compact, maximum 45 words. Do not invent unseen traits.';
   return await geminiText(apiKey,[...imgs,{text:'Create a compact reusable SUBJECT LOCK, maximum 45 words, for AI video prompts. Identify if it is an animal or human and describe it accurately to keep it identical across scenes.'}],sys,false);
 }
+
+async function buildCharacterRoster(apiKey, characterImages, scriptText=''){
+  const files=(characterImages||[]).slice(0,30);
+  const imgs=imageParts(files);
+  if(!imgs.length) return '';
+  const sys='You are a character reference mapping director. Analyze every uploaded reference image as a separate character unless clearly the same person/subject. Match each reference to possible names/roles in the script. Return concise JSON only.';
+  const text=`SCRIPT TO MATCH CHARACTERS:
+${scriptText||'(no script)'}
+
+REFERENCE FILES IN ORDER:
+${files.map((f,i)=>`REF_${String(i+1).padStart(2,'0')}: ${path.basename(f)}`).join('\n')}
+
+Return JSON: {"characters":[{"id":"REF_01","likelyName":"name or role from script if identifiable","visualLock":"precise face/hair/body/clothing identity traits","usageRule":"when this character appears in scene prompts, include this REF id and visual lock"}]}. Include every uploaded reference. Do not merge different characters.`;
+  try{ const out=await geminiText(apiKey,[...imgs,{text}],sys,true); return String(out||'').replace(/^```json\s*|```$/g,'').trim(); }
+  catch(e){ return JSON.stringify({characters:files.map((f,i)=>({id:`REF_${String(i+1).padStart(2,'0')}`,likelyName:path.basename(f).replace(/\.[^.]+$/,''),visualLock:`Reference image ${i+1}: ${path.basename(f)}`,usageRule:'Use this exact reference ID when this character appears.'}))}); }
+}
 function lockPrompt(prompt, characterLock, outLang='English'){
   if(!characterLock) return prompt;
   const guard = outLang==='Vietnamese' ? `Giữ cùng một nhân vật xuyên suốt: ${characterLock}. Giữ nguyên khuôn mặt, tóc, độ tuổi, vóc dáng và trang phục chính. ` : outLang==='Chinese' ? `始终保持同一个角色：${characterLock}。保持相同的脸、头发、年龄、体型和主要服装。 ` : outLang==='Korean' ? `전체 장면에서 동일한 캐릭터 유지: ${characterLock}. 얼굴, 머리, 나이, 체형, 주요 의상을 그대로 유지. ` : outLang==='Spanish' ? `Mantener el mismo personaje en todo momento: ${characterLock}. Conservar rostro, cabello, edad, tipo de cuerpo y atuendo principal. ` : `Same character throughout: ${characterLock}. Keep face, hair, age, body type, and main outfit consistent. `;
@@ -213,13 +229,13 @@ function langName(code){ return ({vi:'Vietnamese',en:'English',zh:'Chinese',ko:'
 function voiceLangName(code){ return String(code||'vi')==='en'?'English':'Vietnamese'; }
 async function generatePromptsJs(payload){
   const apiKey=payload.apiKey||''; const style=payload.style||'CINEMATIC'; const media=payload.mediaType||'IMAGE'; const outLang=langName(payload.promptLang); const voiceLang=voiceLangName(payload.voiceLang);
-  const sys=characterSystem(style,media,outLang); const imgs=imageParts(payload.characterImages); const characterLock=await buildCharacterLock(apiKey,payload.characterImages);
+  const sys=characterSystem(style,media,outLang); const imgs=imageParts(payload.characterImages); const characterLock=await buildCharacterLock(apiKey,payload.characterImages); const characterRoster=await buildCharacterRoster(apiKey,payload.characterImages,payload.ideas||'');
   const results=[];
   for(const idea of splitIdeas(payload.ideas)){
-    const prompt=await geminiText(apiKey,[...imgs,{text:`CHARACTER LOCK TO KEEP EXACTLY:\n${characterLock||'(no reference character)'}\n\nScene/content to generate prompt for: ${idea}\nRequirement: write the prompt in ${outLang} only. If the scene contains speech/dialogue, the character must speak ${voiceLang} with a natural ${voiceLang} voice/accent; include this instruction explicitly in the video prompt. Follow the content exactly. If a character lock exists, include the compact identity description, but keep the full prompt concise and under 90 words if possible.`}],sys,false);
+    const prompt=await geminiText(apiKey,[...imgs,{text:`CHARACTER LOCK TO KEEP EXACTLY:\n${characterLock||'(no reference character)'}\n\nScene/content to generate prompt for: ${idea}\nRequirement: write the prompt in ${outLang} only. Identify which uploaded reference character(s) appear in this scene by REF_ID and likelyName. For every character in the scene, include that REF_ID and its visualLock so Flow can use the correct reference image and keep the character consistent. If the full script has many uploaded characters, preserve all named characters from the script and never merge identities. If the scene contains speech/dialogue, the character must speak ${voiceLang} with a natural ${voiceLang} voice/accent; include this instruction explicitly in the video prompt. Follow the content exactly.`}],sys,false);
     results.push(lockPrompt(prompt,characterLock,outLang));
   }
-  return {ok:true,characterLock,generated:writeGenerated('electron-ai-generated-prompts.txt',results)};
+  return {ok:true,characterLock,characterRoster,generated:writeGenerated('electron-ai-generated-prompts.txt',results)};
 }
 function durationScenes(d){ const s=String(d||'60 seconds').toLowerCase(); let sec=0; let m=s.match(/(\d+)\s*(m|minute|phút)/); if(m)sec+=Number(m[1])*60; m=s.match(/(\d+)\s*(s|second|giây)/); if(m)sec+=Number(m[1]); if(!sec){m=s.match(/^(\d+)$/); if(m)sec=Number(m[1])*60;} return Math.max(1,Math.ceil((sec||60)/8)); }
 
