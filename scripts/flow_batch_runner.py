@@ -93,9 +93,8 @@ def set_upload_file_input(page, image_path: Path):
 
 
 def prompt_file_prefix(prompt: str, prompt_no: int):
-    words = re.findall(r"[A-Za-z0-9À-ỹ]+", str(prompt or ""))[:6]
-    base = "_".join(words) if words else f"prompt_{prompt_no}"
-    return f"{prompt_no:03d}_{base}"
+    # File tải về đặt tên đúng theo số thứ tự prompt: 1.jpg / 1.mp4, 2.jpg / 2.mp4...
+    return str(int(prompt_no))
 
 
 def load_prompts(path: Path):
