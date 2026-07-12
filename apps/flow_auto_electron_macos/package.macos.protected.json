@@ -31,7 +31,8 @@
     "icon": "public/assets/icon.icns",
     "category": "public.app-category.productivity",
     "artifactName": "FlowAutoProtected-macOS-universal.dmg",
-    "x64ArchFiles": "**/payload/bin/flow_batch_runner-x64.dist/**, **/node_modules/@ffmpeg-installer/darwin-x64/**"
+    "x64ArchFiles": "**/payload/bin/flow_batch_runner-x64.dist/**, **/node_modules/@ffmpeg-installer/darwin-x64/**",
+    "arm64ArchFiles": "**/payload/bin/flow_batch_runner-arm64.dist/**, **/node_modules/@ffmpeg-installer/darwin-arm64/**"
   },
   "asarUnpack": [
     "node_modules/@ffmpeg-installer/**"
