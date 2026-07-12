@@ -1,0 +1,39 @@
+{
+  "extends": null,
+  "directories": {
+    "output": "release-macos-protected"
+  },
+  "appId": "com.flowauto.veo3.macos.protected",
+  "productName": "FLOW AUTO VEO 3 macOS Protected",
+  "asar": true,
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "payload_protected",
+      "to": "payload"
+    },
+    {
+      "from": "public/assets",
+      "to": "assets"
+    }
+  ],
+  "mac": {
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["universal"]
+      }
+    ],
+    "icon": "public/assets/icon.icns",
+    "category": "public.app-category.productivity",
+    "artifactName": "FlowAutoProtected-macOS-universal.dmg",
+    "x64ArchFiles": "**/payload/bin/flow_batch_runner-x64.dist/**, **/node_modules/@ffmpeg-installer/**"
+  },
+  "asarUnpack": [
+    "node_modules/@ffmpeg-installer/**"
+  ]
+}
