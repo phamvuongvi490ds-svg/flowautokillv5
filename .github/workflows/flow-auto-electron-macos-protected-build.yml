@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'apps/flow_auto_electron/**'
+      - 'apps/flow_auto_electron_macos/**'
       - '.github/workflows/flow-auto-electron-macos-protected-build.yml'
 
 jobs:
   build-macos-protected:
     runs-on: macos-latest
-    defaults: { run: { working-directory: apps/flow_auto_electron } }
+    defaults: { run: { working-directory: apps/flow_auto_electron_macos } }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -49,4 +49,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: FlowAutoElectron-Protected-macOS-universal
-          path: apps/flow_auto_electron/out/FlowAutoProtected-macOS-universal.dmg
+          path: apps/flow_auto_electron_macos/out/FlowAutoProtected-macOS-universal.dmg
