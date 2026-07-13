@@ -284,7 +284,7 @@ async function generateCharacterPromptsJs(payload){
   const lines=String(payload.ideas||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
   if(!lines.length) return {ok:false,error:'missing_character_ideas'};
 
-  const sys=`You are a professional image prompt designer. Output valid JSON only. Output language: ${outLang}. Visual style: ${style}. Every item must be one standalone single-character image prompt. Never create group scenes. Never combine characters. Never mention the character name directly; infer and describe the character visually with maximum accuracy. If output language is Vietnamese, every word in the prompt must be Vietnamese except unavoidable proper names.`;
+  const sys=`You are a visual prompt creator. Output valid JSON only. Output language: ${outLang}. Visual style: ${style}. Every item must be one standalone single-subject image prompt. NEVER turn animals or creatures into humans. Keep the subject type EXACTLY as described (dog remains dog, cat remains cat). Never create group scenes. Never combine subjects. Never mention the subject name directly; infer and describe the subject visually with maximum accuracy. If output language is Vietnamese, every word in the prompt must be Vietnamese except unavoidable proper names.`;
   const prompt=`Create exactly ${lines.length} separate image prompts from the input list. If an input line is a known character/person name, do not output that name; infer the visual appearance and describe it precisely instead.
 
 CRITICAL RULES:
