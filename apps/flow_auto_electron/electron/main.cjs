@@ -97,7 +97,7 @@ async function verifyLicenseJs(){ const cfg=loadLicenseCfg(); const base=normali
 
 const STYLE_SUFFIX={CINEMATIC:'LIVE ACTION real human person, photorealistic live-action film, natural human skin texture, real face, realistic body, realistic clothing, cinematic lighting, 8k, shot on 35mm lens, shallow depth of field, not anime, not cartoon, not 3D render, not illustration',ANIME:'anime style, studio ghibli, makoto shinkai style, vibrant colors, detailed background, high quality 2d animation',PAINTING:'digital painting, oil painting texture, artistic style, concept art, artstation, masterpiece, intricate details',RENDER_3D:'3d render, unreal engine 5, octane render, global illumination, highly detailed, 8k resolution, ray tracing',COMIC_BOOK:'comic book style, graphic novel, bold outlines, halftone patterns, high contrast, dynamic lighting, marvel comics style',PIXEL_ART:'pixel art, 16-bit, retro gaming style, highly detailed pixel art, isometric perspective, vibrant colors',WATERCOLOR:'watercolor painting, soft edges, color bleeding, traditional art, ethereal, dreamy, delicate brushstrokes',CYBERPUNK:'cyberpunk style, neon lights, futuristic city, high tech, sci-fi, dark atmosphere, holographic elements',STEAMPUNK:'steampunk style, brass gears, steam powered, victorian era, intricate machinery, sepia tones, retro-futuristic',NONE:''};
 
-async function geminiTextFast(apiKey,parts,system,jsonMode=false,timeoutMs=60000){
+async function geminiTextFast(apiKey,parts,system,jsonMode=false,timeoutMs=60000,preferredModel=''){
   const keys=String(apiKey||'').split(/[\n,]+/).map(s=>s.trim()).filter(Boolean);
   if(!keys.length) throw new Error('missing_api_key');
   let lastErr='';
@@ -107,7 +107,8 @@ async function geminiTextFast(apiKey,parts,system,jsonMode=false,timeoutMs=60000
     try{
       const body={contents:[{role:'user',parts}],systemInstruction:{parts:[{text:system}]},generationConfig:{temperature:.55}};
       if(jsonMode) body.generationConfig.responseMimeType='application/json';
-      const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal});
+      const modelName=String(preferredModel||'gemini-2.0-flash-lite').trim()||'gemini-2.0-flash-lite';
+      const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal});
       const data=await r.json().catch(()=>({}));
       if(!r.ok){ lastErr=data.error?.message||`http_${r.status}`; continue; }
       const text=(data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('\n').trim();
@@ -119,7 +120,7 @@ async function geminiTextFast(apiKey,parts,system,jsonMode=false,timeoutMs=60000
   throw new Error(lastErr||'gemini_fast_failed');
 }
 
-async function geminiText(apiKey,parts,system,jsonMode=false){
+async function geminiText(apiKey,parts,system,jsonMode=false,preferredModel=''){
   const keys=String(apiKey||'').split(/[\n,]+/).map(s=>s.trim()).filter(Boolean);
   if(!keys.length) throw new Error('missing_api_key');
 
@@ -143,6 +144,7 @@ async function geminiText(apiKey,parts,system,jsonMode=false){
     // Fallback only if ListModels is unavailable; unavailable models are skipped silently.
     if(!models.length) models=['gemini-2.0-flash-lite','gemini-1.5-flash'];
 
+    if(preferredModel){ models=[preferredModel, ...models.filter(x=>x!==preferredModel)]; }
     for(const m of models){
       try{
         console.log(`[gemini] Trying supported model ${m}`);
@@ -197,7 +199,7 @@ async function buildCharacterLock(apiKey, characterImages){
   const imgs=imageParts(characterImages);
   if(!imgs.length) return '';
   const sys='You are a strict subject consistency analyst. Analyze the reference images and create a SUBJECT LOCK in English. Identify the species/subject first (e.g., Golden Retriever dog, robotic arm, young woman). Include only the most important stable identity traits: species, color, breed/type, facial features, body markings, and clothing/accessories. Keep it compact, maximum 45 words. Do not invent unseen traits.';
-  return await geminiText(apiKey,[...imgs,{text:'Create a compact reusable SUBJECT LOCK, maximum 45 words, for AI video prompts. Identify if it is an animal or human and describe it accurately to keep it identical across scenes.'}],sys,false);
+  return await geminiText(apiKey,[...imgs,{text:'Create a compact reusable SUBJECT LOCK, maximum 45 words, for AI video prompts. Identify if it is an animal or human and describe it accurately to keep it identical across scenes.'}],sys,false, arguments[2]||'');
 }
 
 async function buildCharacterRoster(apiKey, characterImages, scriptText=''){
@@ -305,10 +307,10 @@ ${lines.map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
 
   let text='';
   try{
-    text=await geminiTextFast(apiKey,[{text:prompt}],sys,true,60000);
+    text=await geminiTextFast(apiKey,[{text:prompt}],sys,true,60000,payload.apiModel);
   }catch(e){
     // Fallback to normal text mode if JSON mode is not supported/quota model behavior differs.
-    text=await geminiTextFast(apiKey,[{text:prompt}],sys,false,60000);
+    text=await geminiTextFast(apiKey,[{text:prompt}],sys,false,60000,payload.apiModel);
   }
 
   let prompts=[];
