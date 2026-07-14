@@ -107,7 +107,7 @@ async function geminiTextFast(apiKey,parts,system,jsonMode=false,timeoutMs=60000
     try{
       const body={contents:[{role:'user',parts}],systemInstruction:{parts:[{text:system}]},generationConfig:{temperature:.55}};
       if(jsonMode) body.generationConfig.responseMimeType='application/json';
-      const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal});
+      const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal});
       const data=await r.json().catch(()=>({}));
       if(!r.ok){ lastErr=data.error?.message||`http_${r.status}`; continue; }
       const text=(data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('\n').trim();
@@ -135,13 +135,13 @@ async function geminiText(apiKey,parts,system,jsonMode=false){
         .map(m=>String(m.name||'').replace(/^models\//,''))
         .filter(Boolean)
         .sort((a,b)=>{
-          const score=x=> (x.includes('flash')?100:0) + (x.includes('3.1')?60:0) + (x.includes('3.0')?50:0) + (x.includes('2.5')?40:0) + (x.includes('2.0')?30:0) + (x.includes('1.5')?10:0) - (x.includes('vision')?50:0) - (x==='gemini-2.0-flash'?1000:0);
+          const score=x=> (x.includes('flash')?100:0) + (x.includes('lite')?35:0) + (x.includes('3.1')?60:0) + (x.includes('3.0')?50:0) + (x.includes('2.5')?40:0) + (x.includes('2.0')?30:0) + (x.includes('1.5')?10:0) - (x.includes('vision')?50:0) - (x==='gemini-2.0-flash-lite'?1000:0) - (x==='gemini-2.0-flash'?200:0);
           return score(b)-score(a);
         });
     }catch(e){ lastErr=`list_models_failed:${e.message||e}`; }
 
     // Fallback only if ListModels is unavailable; unavailable models are skipped silently.
-    if(!models.length) models=['gemini-2.0-flash','gemini-1.5-flash'];
+    if(!models.length) models=['gemini-2.0-flash-lite','gemini-1.5-flash'];
 
     for(const m of models){
       try{
