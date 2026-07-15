@@ -1813,16 +1813,28 @@ def run(args):
                         clear_attached_references(page)
                         needs_clear_before_insert = False
 
-                    # Map image by name in prompt
                     prompt_to_type = prompt
+                    matched_refs = []
                     if refs_dir is not None:
-                        for ref_file in refs_dir.iterdir():
-                            if ref_file.suffix.lower() in [".jpg", ".jpeg", ".png", ".webp"]:
-                                if ref_file.stem.lower() in prompt.lower():
-                                    log_line(f"[flow] prompt #{prompt_no} match char: {ref_file.name}")
-                                    upload_reference_image(page, ref_file, prompt_box=box)
-                                    if args.reference_mode == "tag":
-                                        prompt_to_type = f"@{ref_file.stem} {prompt_to_type}"
+                        if args.reference_mode == "character":
+                            prompt_lower = prompt.lower()
+                            for ref_file in sorted(refs_dir.iterdir()):
+                                if ref_file.suffix.lower() in [".jpg", ".jpeg", ".png", ".webp"]:
+                                    stem = ref_file.stem.lower().replace("_", " ").replace("-", " ")
+                                    raw_stem = ref_file.stem.lower()
+                                    if stem in prompt_lower or raw_stem in prompt_lower:
+                                        matched_refs.append(ref_file)
+                        else:
+                            # Paired mode: 1.jpg -> prompt1, 2.jpg -> prompt2 ...
+                            ref_img = resolve_ref_image(refs_dir, prompt_no) if args.paired_mode else resolve_first_ref_image(refs_dir)
+                            if ref_img is not None:
+                                matched_refs.append(ref_img)
+
+                    for ref_file in matched_refs:
+                        log_line(f"[flow] prompt #{prompt_no} use ref image: {ref_file.name} mode={args.reference_mode}")
+                        upload_reference_image(page, ref_file, prompt_box=box)
+                        if args.reference_mode == "tag":
+                            prompt_to_type = f"@{ref_file.stem} {prompt_to_type}"
 "
 
                     time.sleep(random.uniform(args.pre_paste_min, args.pre_paste_max))
