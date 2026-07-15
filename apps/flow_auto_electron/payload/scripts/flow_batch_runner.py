@@ -204,18 +204,34 @@ def capture_startup_screenshot(page):
 
 
 def _try_click_new_project(page):
+    """Best-effort New Project click across Flow UI variants."""
     try:
-        new_btn = page.locator("button,[role='button'],a,[role='link']").filter(
-            has_text=re.compile(r"new\s*project|dự\s*án\s*mới|tạo\s*dự\s*án", re.I)
-        )
-        if new_btn.count() > 0:
+        patterns = [
+            r"new\s*project", r"new\s*chat", r"new\s*creation", r"create\s*new",
+            r"dự\s*án\s*mới", r"tạo\s*dự\s*án", r"tạo\s*mới", r"làm\s*mới",
+        ]
+        rx = re.compile("|".join(patterns), re.I)
+        locs = [
+            page.get_by_text(rx),
+            page.locator("button,[role='button'],a,[role='link'],div[role='button']").filter(has_text=rx),
+            page.locator("[aria-label*='New' i], [title*='New' i], [aria-label*='mới' i], [title*='mới' i]"),
+        ]
+        for loc in locs:
             try:
-                new_btn.first.click(timeout=3000)
+                if loc.count() > 0:
+                    el = loc.first
+                    try:
+                        el.click(timeout=4000)
+                    except Exception:
+                        el.click(timeout=4000, force=True)
+                    time.sleep(1.5)
+                    log_line("[flow] clicked New Project")
+                    return True
             except Exception:
-                new_btn.first.click(timeout=3000, force=True)
-            time.sleep(1.2)
-    except Exception:
-        pass
+                continue
+    except Exception as e:
+        log_line(f"[flow] New Project click skipped: {e}")
+    return False
 
 
 def find_input_box(page):
@@ -2016,7 +2032,7 @@ def main():
     ap.add_argument("--flow-count", default="1", help="Số lượng output x1/x2/x3/x4")
     ap.add_argument("--omni-duration", default="", choices=["", "4s", "6s", "8s", "10s"], help="Thời lượng chỉ áp dụng cho omni_flash")
     ap.add_argument("--video-sub-mode", default="frames", choices=["frames", "ingredients"], help="Video sub mode")
-    ap.add_argument("--reference-mode", default="ingredients", choices=["ingredients", "tag"], help="Reference mode")
+    ap.add_argument("--reference-mode", default="paired", choices=["paired", "character", "ingredients", "tag"], help="Reference mapping mode: paired=1.jpg->prompt1, character=filename matched in prompt")
     ap.add_argument("--paired-mode", dest="paired_mode", action="store_true", help="Map ảnh theo số prompt (1.jpg->prompt1)")
     ap.add_argument("--no-paired-mode", dest="paired_mode", action="store_false", help="Không map theo số prompt")
     ap.set_defaults(paired_mode=True)
