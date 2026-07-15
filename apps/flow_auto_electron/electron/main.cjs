@@ -198,8 +198,8 @@ function splitIdeas(t){return String(t||'').split(/\n+/).map(x=>x.trim()).filter
 async function buildCharacterLock(apiKey, characterImages){
   const imgs=imageParts(characterImages);
   if(!imgs.length) return '';
-  const sys='You are a strict subject consistency analyst. Analyze the reference images and create a SUBJECT LOCK in English. Identify the species/subject first (e.g., Golden Retriever dog, robotic arm, young woman). Include only the most important stable identity traits: species, color, breed/type, facial features, body markings, and clothing/accessories. Keep it compact, maximum 45 words. Do not invent unseen traits.';
-  return await geminiText(apiKey,[...imgs,{text:'Create a compact reusable SUBJECT LOCK, maximum 45 words, for AI video prompts. Identify if it is an animal or human and describe it accurately to keep it identical across scenes.'}],sys,false, arguments[2]||'');
+  const sys='You are a high-fidelity visual identity analyst. Analyze reference images and create an ABSOLUTE FACE_IDENTITY_LOCK in English. Prioritize exact face geometry, eye shape, nose structure, mouth/lip shape, jawline, cheekbones, hairline, skin tone, hairstyle, facial proportions, body proportions, clothing and accessories. For animals/objects, preserve exact markings, color, shape and proportions. Do not beautify, redesign, stylize, age-change or gender-change. Max 90 words.';
+  return await geminiText(apiKey,[...imgs,{text:'Create a reusable FACE_IDENTITY_LOCK / SUBJECT_IDENTITY_LOCK. Use the uploaded reference image as the absolute source of truth. Describe every stable facial/identity trait needed to reproduce the same face/subject as closely as possible in every scene.'}],sys,false, arguments[2]||'');
 }
 
 async function buildCharacterRoster(apiKey, characterImages, scriptText=''){
@@ -219,7 +219,7 @@ Return JSON: {"characters":[{"id":"REF_01","likelyName":"name or role from scrip
 }
 function lockPrompt(prompt, characterLock, outLang='English'){
   if(!characterLock) return prompt;
-  const guard = outLang==='Vietnamese' ? `Giữ cùng một nhân vật xuyên suốt: ${characterLock}. Giữ nguyên khuôn mặt, tóc, độ tuổi, vóc dáng và trang phục chính. ` : outLang==='Chinese' ? `始终保持同一个角色：${characterLock}。保持相同的脸、头发、年龄、体型和主要服装。 ` : outLang==='Korean' ? `전체 장면에서 동일한 캐릭터 유지: ${characterLock}. 얼굴, 머리, 나이, 체형, 주요 의상을 그대로 유지. ` : outLang==='Spanish' ? `Mantener el mismo personaje en todo momento: ${characterLock}. Conservar rostro, cabello, edad, tipo de cuerpo y atuendo principal. ` : `Same character throughout: ${characterLock}. Keep face, hair, age, body type, and main outfit consistent. `;
+  const guard = outLang==='Vietnamese' ? `CHARACTER_REFERENCE / FACE_IDENTITY_LOCK: Dùng ảnh tham chiếu đã upload làm nguồn nhận dạng tuyệt đối. Giữ chính xác hình học khuôn mặt, mắt, mũi, môi, xương hàm, màu da, kiểu tóc, đường chân tóc, tỉ lệ khuôn mặt, vóc dáng và trang phục. Không thiết kế lại, không làm đẹp khác đi, không đổi phong cách, tuổi hoặc giới tính. Giữ cùng một nhân vật xuyên suốt: ${characterLock}. Giữ nguyên khuôn mặt, tóc, độ tuổi, vóc dáng và trang phục chính. ` : outLang==='Chinese' ? `始终保持同一个角色：${characterLock}。保持相同的脸、头发、年龄、体型和主要服装。 ` : outLang==='Korean' ? `전체 장면에서 동일한 캐릭터 유지: ${characterLock}. 얼굴, 머리, 나이, 체형, 주요 의상을 그대로 유지. ` : outLang==='Spanish' ? `Mantener el mismo personaje en todo momento: ${characterLock}. Conservar rostro, cabello, edad, tipo de cuerpo y atuendo principal. ` : `CHARACTER_REFERENCE / FACE_IDENTITY_LOCK: Use the uploaded reference image as the exact identity source. Preserve exact face geometry, eyes, nose, lips, jawline, skin tone, hairstyle, hairline, facial proportions, body and outfit. Do not redesign, beautify, stylize, age-change or gender-change. Same character throughout: ${characterLock}. Keep face, hair, age, body type, and main outfit consistent. `;
   const p=String(prompt||'').trim();
   return p.includes('CHARACTER CONSISTENCY LOCK') ? p : guard + p;
 }
