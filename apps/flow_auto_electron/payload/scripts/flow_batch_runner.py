@@ -1835,7 +1835,6 @@ def run(args):
                         upload_reference_image(page, ref_file, prompt_box=box)
                         if args.reference_mode == "tag":
                             prompt_to_type = f"@{ref_file.stem} {prompt_to_type}"
-"
 
                     time.sleep(random.uniform(args.pre_paste_min, args.pre_paste_max))
 
