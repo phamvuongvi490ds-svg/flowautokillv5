@@ -249,6 +249,7 @@ MODEL_LABELS = {
     "veo3_quality": "Veo 3.1 - Quality",
     "nano_banana_pro": "Nano Banana Pro",
     "nano_banana2": "Nano Banana 2",
+    "nano_banana2_lite": "Nano Banana 2 Lite",
     "nano_banana": "Nano Banana 2",
     "imagen4": "Imagen 4",
     "omni_flash": "Omni Flash",
@@ -553,7 +554,7 @@ def apply_flow_settings(page, args):
                 veo3_lite:['Veo 3.1 - Lite','Veo 3.1 Lite','Veo 3 Lite','Lite'],
                 veo3_fast:['Veo 3.1 - Fast','Veo 3.1 Fast','Veo 3 Fast','Fast'],
                 veo3_quality:['Veo 3.1 - Quality','Veo 3.1 Quality','Veo 3 Quality','Quality'],
-                nano_banana_pro:['Nano Banana Pro'], nano_banana2:['Nano Banana 2'], nano_banana:['Nano Banana 2','Nano Banana'], imagen4:['Imagen 4'], omni_flash:['Omni Flash','Omni']
+                nano_banana_pro:['Nano Banana Pro'], nano_banana2:['Nano Banana 2'], nano_banana2_lite:['Nano Banana 2 Lite'], nano_banana:['Nano Banana 2','Nano Banana'], imagen4:['Imagen 4'], omni_flash:['Omni Flash','Omni']
               };
               const aliases = models[cfg.model] || (isImage ? models.nano_banana_pro : models.veo3_fast);
               const matchAlias = (text) => aliases.some(a => { const t=norm(text).trim(), m=norm(a).trim(); if (!t || !m) return false; if (cfg.model === 'omni_flash') return t === m || t.includes('omni flash') || t === 'omni'; return t === m || t.includes(m) || (m.length > 5 && m.includes(t)); });
