@@ -2018,6 +2018,7 @@ def main():
     ap.add_argument("--aspect-ratio", default="9:16", help="Tỉ lệ video: 16:9 | 9:16")
     ap.add_argument("--start-from", type=int, default=None, help="1-based prompt index")
     ap.add_argument("--refs-dir", type=Path, default=None, help="Thư mục ảnh tham chiếu (1.jpg/1.png map prompt #1)")
+    ap.add_argument("--character-images", default="", help="Danh sách ảnh nhân vật upload từ AI Prompt Studio, phân tách bằng dấu phẩy")
     ap.add_argument("--auto-download", action="store_true", help="Tự động tải video sau khi render xong")
     ap.add_argument("--submit-only", action="store_true", help="Chỉ submit prompt rồi chuyển prompt tiếp theo, không chờ render và không auto-download")
     ap.add_argument("--download-resolution", default="720", help="Độ phân giải tải về, mặc định 720")
