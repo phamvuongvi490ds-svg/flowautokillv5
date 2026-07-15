@@ -1,6 +1,14 @@
 import argparse
 import base64
 import os
+from pathlib import Path
+def build_char_map(char_images):
+    char_map = {}
+    for img_path in char_images:
+        name = Path(img_path).stem.lower().replace("_", " ")
+        char_map[name] = img_path
+    return char_map
+
 import subprocess
 import sys
 import json
@@ -1805,18 +1813,17 @@ def run(args):
                         clear_attached_references(page)
                         needs_clear_before_insert = False
 
-                    # Paired mode: 1.jpg -> prompt1, 2.jpg -> prompt2 ...
-                    if args.paired_mode:
-                        ref_img = resolve_ref_image(refs_dir, prompt_no)
-                    else:
-                        ref_img = resolve_first_ref_image(refs_dir)
-
+                    # Map image by name in prompt
                     prompt_to_type = prompt
-                    if ref_img is not None:
-                        log_line(f"[flow] prompt #{prompt_no} use ref image: {ref_img.name}")
-                        upload_reference_image(page, ref_img, prompt_box=box)
-                        if args.reference_mode == "tag":
-                            prompt_to_type = f"@{ref_img.stem} {prompt}"
+                    if refs_dir is not None:
+                        for ref_file in refs_dir.iterdir():
+                            if ref_file.suffix.lower() in [".jpg", ".jpeg", ".png", ".webp"]:
+                                if ref_file.stem.lower() in prompt.lower():
+                                    log_line(f"[flow] prompt #{prompt_no} match char: {ref_file.name}")
+                                    upload_reference_image(page, ref_file, prompt_box=box)
+                                    if args.reference_mode == "tag":
+                                        prompt_to_type = f"@{ref_file.stem} {prompt_to_type}"
+"
 
                     time.sleep(random.uniform(args.pre_paste_min, args.pre_paste_max))
 
