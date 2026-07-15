@@ -883,12 +883,14 @@ def _open_plus_menu(page, prompt_box=None):
 
               for (const b of btns) {
                 const txt = ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).toLowerCase();
-                const isPlus = txt.includes('+') || txt.includes('add') || txt.includes('thêm') || txt.includes('upload');
+                const svg = (b.querySelector('svg')?.outerHTML || '').toLowerCase();
+                const cls = String(b.className || '').toLowerCase();
+                const isPlus = txt.includes('+') || txt.includes('add') || txt.includes('thêm') || txt.includes('upload') || txt.includes('attach') || txt.includes('tệp') || txt.includes('file') || svg.includes('plus') || cls.includes('plus') || cls.includes('add') || cls.includes('upload');
                 if (!isPlus) continue;
 
                 const r = b.getBoundingClientRect();
                 // bắt buộc ở bên trái ô prompt và gần theo trục dọc
-                if (r.right > br.left + 40) continue;
+                if (r.right > br.left + 80 && r.left > br.right + 80) continue;
                 const dy = Math.abs((r.top + r.height / 2) - (br.top + br.height / 2));
                 const dx = Math.abs(br.left - r.right);
                 const score = dx + dy * 2;
@@ -1181,13 +1183,21 @@ def upload_reference_image(page, image_path: Path, prompt_box=None):
 
     fname = image_path.name
 
-    # Phase 1: open add_2 picker / upload menu
-    if not _open_plus_menu(page, prompt_box=prompt_box):
-        raise RuntimeError("extension_upload:cannot_open_add2")
+    # Phase 1: open add/upload picker beside prompt composer, then inject file.
+    plus_opened = _open_plus_menu(page, prompt_box=prompt_box)
+    if plus_opened:
+        log_line("[flow] plus menu opened for reference upload")
+        _click_upload_image_item(page)
+    else:
+        log_line("[flow] plus menu not found; trying direct file input fallback")
 
-    # Try explicit Upload image item if present, otherwise set file into available image input directly.
-    _click_upload_image_item(page)
     file_set = set_upload_file_input(page, image_path)
+    if not file_set and not plus_opened:
+        plus_opened = _open_plus_menu(page, prompt_box=None)
+        if plus_opened:
+            log_line("[flow] plus menu opened on fallback attempt")
+            _click_upload_image_item(page)
+            file_set = set_upload_file_input(page, image_path)
     if not file_set:
         raise RuntimeError(f"extension_upload:cannot_inject_file:{fname}")
 
@@ -1199,6 +1209,9 @@ def upload_reference_image(page, image_path: Path, prompt_box=None):
     for attempt in range(1, 6):
         try:
             if not _open_plus_menu(page, prompt_box=prompt_box):
+                if _choose_uploaded_image_from_menu(page, image_path):
+                    attached = True
+                    break
                 time.sleep(0.8)
                 continue
 
