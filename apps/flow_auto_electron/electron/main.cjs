@@ -10,6 +10,18 @@ const isDev = !app.isPackaged;
 const BASE_DIR = path.join(os.homedir(), '.flow-auto-standalone');
 const FLOW_DIR = path.join(BASE_DIR, 'flow-auto');
 const JOB_DIR = path.join(FLOW_DIR, 'job-state');
+const REFS_DIR = path.join(FLOW_DIR, 'refs');
+
+function makeCharacterRefsDir(images, runId) {
+    const dir = path.join(REFS_DIR, runId);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    images.forEach((img, i) => {
+        const ext = path.extname(img);
+        const dest = path.join(dir, `REF_${String(i + 1).padStart(2, '0')}${ext}`);
+        if (fs.existsSync(img)) fs.copyFileSync(img, dest);
+    });
+    return dir;
+}
 const DEBUG_DIR = path.join(FLOW_DIR, 'debug');
 const SCRIPTS_DIR = path.join(BASE_DIR, 'scripts');
 const PYENV_DIR = path.join(BASE_DIR, 'electron-python');
@@ -578,6 +590,9 @@ function startRunner(payload){
   const characterImages=payload.characterImages||[];
   const promptFile=payload.promptFile || writePromptFile('electron-manual-prompts.txt', payload.prompts||'');
   const flowThreads=Math.max(1,Math.min(100,Number(payload.flowThreads||1)||1));
+  const workerId=crypto.randomUUID(); const runId=`${Date.now()}-${workerId}`;
+  const characterRefsDir = characterImages.length ? makeCharacterRefsDir(characterImages, runId) : '';
+  if(characterRefsDir && !payload.refsDir) payload.refsDir = characterRefsDir;
   let threadFiles=[]; let threadRefs=[];
   if(profiles.length){
     threadFiles=profiles.map((pr,i)=> pr.promptFile || writeThreadPromptFile(`profile-${i+1}.txt`,i,String(pr.script||pr.prompts||'').split(/\n\s*\n/g).map(x=>x.trim()).filter(Boolean)));
