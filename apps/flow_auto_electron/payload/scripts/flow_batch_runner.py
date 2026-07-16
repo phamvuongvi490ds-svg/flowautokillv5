@@ -1845,25 +1845,14 @@ def run(args):
                     prompt_to_type = prompt
                     matched_refs = []
                     if refs_dir is not None:
-                        if args.reference_mode == "character":
-                            prompt_lower = prompt.lower()
-                            for ref_file in sorted(refs_dir.iterdir()):
-                                if ref_file.suffix.lower() in [".jpg", ".jpeg", ".png", ".webp"]:
-                                    stem = ref_file.stem.lower().replace("_", " ").replace("-", " ")
-                                    raw_stem = ref_file.stem.lower()
-                                    if stem in prompt_lower or raw_stem in prompt_lower:
-                                        matched_refs.append(ref_file)
-                        else:
-                            # Paired mode: 1.jpg -> prompt1, 2.jpg -> prompt2 ...
-                            ref_img = resolve_ref_image(refs_dir, prompt_no) if args.paired_mode else resolve_first_ref_image(refs_dir)
-                            if ref_img is not None:
-                                matched_refs.append(ref_img)
+                        # Default stable behavior: paired image mapping only (1.jpg -> prompt #1, 2.jpg -> prompt #2).
+                        ref_img = resolve_ref_image(refs_dir, prompt_no) if args.paired_mode else resolve_first_ref_image(refs_dir)
+                        if ref_img is not None:
+                            matched_refs.append(ref_img)
 
                     for ref_file in matched_refs:
-                        log_line(f"[flow] prompt #{prompt_no} use ref image: {ref_file.name} mode={args.reference_mode}")
+                        log_line(f"[flow] prompt #{prompt_no} use ref image: {ref_file.name}")
                         upload_reference_image(page, ref_file, prompt_box=box)
-                        if args.reference_mode == "tag":
-                            prompt_to_type = f"@{ref_file.stem} {prompt_to_type}"
 
                     time.sleep(random.uniform(args.pre_paste_min, args.pre_paste_max))
 
@@ -2046,7 +2035,6 @@ def main():
     ap.add_argument("--flow-count", default="1", help="Số lượng output x1/x2/x3/x4")
     ap.add_argument("--omni-duration", default="", choices=["", "4s", "6s", "8s", "10s"], help="Thời lượng chỉ áp dụng cho omni_flash")
     ap.add_argument("--video-sub-mode", default="frames", choices=["frames", "ingredients"], help="Video sub mode")
-    ap.add_argument("--reference-mode", default="paired", choices=["paired", "character", "ingredients", "tag"], help="Reference mapping mode: paired=1.jpg->prompt1, character=filename matched in prompt")
     ap.add_argument("--paired-mode", dest="paired_mode", action="store_true", help="Map ảnh theo số prompt (1.jpg->prompt1)")
     ap.add_argument("--no-paired-mode", dest="paired_mode", action="store_false", help="Không map theo số prompt")
     ap.set_defaults(paired_mode=True)
