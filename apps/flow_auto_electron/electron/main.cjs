@@ -596,13 +596,13 @@ function startRunner(payload){
   let threadFiles=[]; let threadRefs=[];
   if(profiles.length){
     threadFiles=profiles.map((pr,i)=> pr.promptFile || writeThreadPromptFile(`profile-${i+1}.txt`,i,String(pr.script||pr.prompts||'').split(/\n\s*\n/g).map(x=>x.trim()).filter(Boolean)));
-    threadRefs=profiles.map(pr=>pr.refsDir||'');
+    threadRefs=profiles.map(pr=>pr.refsDir||characterRefsDir||'');
   }else{
     const blocks=readPromptBlocks(promptFile);
     threadFiles=flowThreads>1 && blocks.length>1 ? splitRoundRobin(blocks, flowThreads).map((part,i)=>writeThreadPromptFile(promptFile,i,part)) : [promptFile];
     threadRefs=threadFiles.map(()=>payload.refsDir||'');
   }
-  const runner=runnerCommand(); const pids=[]; const workerId=crypto.randomUUID(); const runId=`${Date.now()}-${workerId}`;
+  const runner=runnerCommand(); const pids=[];
   threadFiles.forEach((pf,idx)=>{
     const logFile=path.join(DEBUG_DIR,`electron-runner-${idx+1}-${workerId}.log`); const out=fs.openSync(logFile,'a');
     const stateFile=path.join(JOB_DIR,`electron-runner-state-${idx+1}-${workerId}.json`);
