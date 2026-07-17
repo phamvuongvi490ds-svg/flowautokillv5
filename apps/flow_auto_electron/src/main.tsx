@@ -220,7 +220,7 @@ function App(){
       runMode:liveRunMode,
       flowThreads:liveThreads,
       autoDownload: overrides.autoDownload ?? autoDownload,
-      pairedMode:true,
+      pairedMode: overrides.pairedMode ?? true,
       subMode:liveSubMode, videoSubMode:liveSubMode,
     };
     append(`⚙️ Setting gửi vào worker: mode=${payload.mode}, model=${payload.model}, ratio=${payload.ratio}, count=${payload.count}${payload.omniDuration?', duration='+payload.omniDuration:''}, sub=${payload.subMode}`);
