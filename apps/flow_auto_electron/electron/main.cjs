@@ -207,11 +207,310 @@ function characterSystem(style,media,outLang='English'){
 }
 function splitIdeas(t){return String(t||'').split(/\n+/).map(x=>x.trim()).filter(Boolean)}
 
-async function buildCharacterLock(apiKey, characterImages){
-  const imgs=imageParts(characterImages);
-  if(!imgs.length) return '';
-  const sys='You are a high-fidelity visual identity analyst. Analyze reference images and create an ABSOLUTE FACE_IDENTITY_LOCK in English. Prioritize exact face geometry, eye shape, nose structure, mouth/lip shape, jawline, cheekbones, hairline, skin tone, hairstyle, facial proportions, body proportions, clothing and accessories. For animals/objects, preserve exact markings, color, shape and proportions. Do not beautify, redesign, stylize, age-change or gender-change. Max 90 words.';
-  return await geminiText(apiKey,[...imgs,{text:'Create a reusable FACE_IDENTITY_LOCK / SUBJECT_IDENTITY_LOCK. Use the uploaded reference image as the absolute source of truth. Describe every stable facial/identity trait needed to reproduce the same face/subject as closely as possible in every scene.'}],sys,false, arguments[2]||'');
+async function buildCharacterLock(apiKey, characterImages) {
+  const imgs = imageParts(characterImages);
+  if (!imgs.length) return '';
+  const structure = `# CHARACTER IDENTITY
+
+Analyze this reference image with maximum precision.
+Do not summarize.
+Create an extremely detailed identity description that preserves this person's appearance consistently across all future generations.
+
+The description must be objective only.
+Do not guess missing information.
+Only describe what is visually observable.
+
+--------------------------------------------------
+
+# 1. OVERALL IDENTITY
+
+Gender:
+Estimated age:
+Ethnicity:
+Skin undertone:
+Height estimation:
+Body type:
+Weight estimation:
+Posture:
+Overall first impression:
+Facial attractiveness:
+Visual uniqueness score:
+
+--------------------------------------------------
+
+# 2. FACE GEOMETRY
+
+Face shape:
+Jawline:
+Cheekbone structure:
+Forehead width:
+Temple shape:
+Chin shape:
+Neck length:
+Neck thickness:
+
+Symmetry:
+Facial proportions:
+Golden ratio estimation:
+
+--------------------------------------------------
+
+# 3. FOREHEAD
+
+Height
+Width
+Hairline shape
+Hairline density
+Hairline corners
+Visible wrinkles
+Skin texture
+
+--------------------------------------------------
+
+# 4. EYEBROWS
+
+Thickness
+Density
+Length
+Distance from eyes
+Arch angle
+Tail direction
+Individual hair appearance
+Color
+Texture
+
+--------------------------------------------------
+
+# 5. EYES
+
+Eye size
+Eye shape
+Eye angle
+Eye spacing
+Upper eyelid
+Lower eyelid
+Double eyelid description
+Eyelashes
+Eye color
+Pupil size
+Catchlight position
+Eye expression
+Visible veins
+Skin under eyes
+
+--------------------------------------------------
+
+# 6. NOSE
+
+Overall size
+Bridge height
+Bridge width
+Nasal bone
+Tip shape
+Tip projection
+Nostrils
+Alar width
+Septum visibility
+Shadow pattern
+
+--------------------------------------------------
+
+# 7. LIPS
+
+Upper lip thickness
+Lower lip thickness
+Cupid bow
+Lip corners
+Natural color
+Lip texture
+Moisture
+Smile characteristics
+Teeth visibility
+
+--------------------------------------------------
+
+# 8. CHEEKS
+
+Volume
+Cheekbone prominence
+Fat distribution
+Nasolabial fold
+Texture
+Freckles
+Moles
+Scars
+
+--------------------------------------------------
+
+# 9. JAW
+
+Jaw angle
+Jaw width
+Definition
+Masseter appearance
+
+--------------------------------------------------
+
+# 10. CHIN
+
+Length
+Projection
+Width
+Shape
+Dimples
+
+--------------------------------------------------
+
+# 11. EARS
+
+Size
+Position
+Attachment
+Lobes
+Unique details
+
+--------------------------------------------------
+
+# 12. HAIR
+
+Hair length
+Hair density
+Hairline
+Parting
+Color
+Natural highlights
+Texture
+Curl pattern
+Thickness
+Flyaway hairs
+Volume
+Styling
+Direction of growth
+
+--------------------------------------------------
+
+# 13. SKIN
+
+Color
+Undertone
+Texture
+Pores
+Wrinkles
+Glossiness
+Dryness
+Acne
+Pigmentation
+Sun exposure
+Visible capillaries
+Birthmarks
+Beauty marks
+
+--------------------------------------------------
+
+# 14. BODY
+
+Shoulder width
+Arm shape
+Hands
+Finger length
+Torso proportion
+Leg proportion
+Muscle definition
+Body fat estimation
+
+--------------------------------------------------
+
+# 15. CLOTHING
+
+Top
+Bottom
+Shoes
+Accessories
+Fabric
+Material
+Color
+Pattern
+Fit
+Wrinkles
+
+--------------------------------------------------
+
+# 16. JEWELRY
+
+Ring
+Bracelet
+Necklace
+Watch
+Piercing
+Material
+Color
+
+--------------------------------------------------
+
+# 17. FACIAL EXPRESSION
+
+Smile intensity
+Mouth openness
+Eye emotion
+Eyebrow emotion
+Overall mood
+
+--------------------------------------------------
+
+# 18. LIGHTING
+
+Key light
+Fill light
+Back light
+Color temperature
+Contrast
+Shadow softness
+
+--------------------------------------------------
+
+# 19. CAMERA
+
+Lens estimation
+Focal length
+Distance
+Camera height
+Perspective
+Depth of field
+Focus point
+
+--------------------------------------------------
+
+# 20. COLOR PROFILE
+
+Skin RGB estimation
+Hair RGB estimation
+Eye RGB estimation
+Dominant colors
+Secondary colors
+
+--------------------------------------------------
+
+# 21. UNIQUE FEATURES
+
+List every unique feature that can distinguish this person from another person.
+Include: moles, freckles, scars, birthmarks, eye asymmetry, lip asymmetry, hairline uniqueness, ear shape, nose uniqueness, jaw uniqueness.
+
+--------------------------------------------------
+
+# 22. CHARACTER LOCK
+
+Generate a final immutable identity paragraph.
+This paragraph must preserve: exact facial proportions, exact facial geometry, exact hairstyle, exact eyebrow shape, exact eye shape, exact nose, exact lips, exact skin tone, exact expression, exact body proportions.
+This paragraph will be reused in every future prompt.
+
+--------------------------------------------------
+
+# 23. NEGATIVE DESCRIPTION
+
+List everything that must NEVER change.
+Do NOT: change face shape, change hairstyle, change skin tone, change eye size, change eyebrow shape, change nose, change lips, change age, change gender, change ethnicity, change body type, change facial proportions, change facial identity.`;
+
+  return await geminiText(apiKey, [...imgs, { text: `Analyze the reference image and output the character identity using this structure:\n\n${structure}\n\nOutput in English only. Use maximum descriptive precision. No summarization.` }], "You are a professional visual identity analyst. Follow the structure strictly.", false, arguments[2] || '');
 }
 
 async function buildCharacterRoster(apiKey, characterImages, scriptText=''){
