@@ -172,7 +172,7 @@ function App(){
     append('🎬 Đang tạo kịch bản video...');
     const duration=`${durationValue} ${durationUnit}`;
     try {
-      const r=await api().generateScript({apiKey:apiKeys,apiModel:geminiApiModel,style,topic:scriptTopic,duration,characterImages,promptLang,voiceLang});
+      const r=await api().generateScript({apiKey:apiKeys,apiModel:geminiApiModel,style,topic:scriptTopic,duration,characterImages,refsDir,promptLang,voiceLang});
       if(r?.ok) {
         if(r.generated?.file) setGeneratedFile(r.generated.file);
         append(`✅ Đã tạo kịch bản thành công: ${r.generated?.count || 0} cảnh.`);
@@ -274,12 +274,12 @@ function App(){
           </Field>
           <div className="actions">
             <Button onClick={saveApiConfig}>💾 Lưu cấu hình API</Button>
-            <Button onClick={pickImages}><ImagePlus size={16}/> Upload ảnh nhân vật</Button>
+            <Button onClick={pickRefs}><ImagePlus size={16}/> Chọn thư mục ảnh nhân vật</Button>
             <Button onClick={pickSampleVideo}>🎞 Chọn video mẫu</Button>
             <Button onClick={analyzeSampleVideoForAi}>🧠 AI phân tích video mẫu</Button>
             <Button variant="primary" onClick={generatePrompt}>✨ Tạo prompt</Button><Button onClick={downloadGeneratedPrompt}>⬇️ Tải prompt đã tạo</Button>
           </div>
-          <p className="hint">Đã chọn {characterImages.length} ảnh nhân vật • Video mẫu: {sampleVideo||'chưa chọn'} • Prompt/kịch bản sẽ ưu tiên giữ nhân vật tương đồng tối đa theo ảnh tham chiếu và xuất theo ngôn ngữ đã chọn{generatedFile?` • File prompt: ${generatedFile}`:''}</p>
+          <p className="hint">Thư mục ảnh nhân vật: {refsDir||'chưa chọn'} • Video mẫu: {sampleVideo||'chưa chọn'} • Prompt/kịch bản sẽ ưu tiên giữ nhân vật tương đồng tối đa theo ảnh tham chiếu và xuất theo ngôn ngữ đã chọn{generatedFile?` • File prompt: ${generatedFile}`:''}</p>
         </Card>
         <Card title="Thiết lập Flow" icon={<Film/>}>
           <div className="form4">
@@ -290,7 +290,7 @@ function App(){
             <Field label="Tỉ lệ"><select id="flow-ratio-multi" value={ratio} onChange={e=>{setRatio(e.target.value);localStorage.setItem('flow_ratio',e.target.value)}}>{ratios.map(x=><option key={x} value={x}>{x}</option>)}</select></Field>
             <Field label="Số output"><select id="flow-count" value={count} onChange={e=>{setCount(e.target.value);localStorage.setItem('flow_count',e.target.value)}}>{['1','2','3','4'].map(x=><option key={x} value={x}>{x}x</option>)}</select></Field><Field label="Chế độ chạy"><select value={runMode} onChange={e=>{setRunMode(e.target.value);localStorage.setItem('flow_run_mode',e.target.value)}}><option value="single">Chạy từng prompt một</option><option value="continuous_submit_only">Chạy liên tục</option><option value="continuous_download_delay_3">Chạy liên tục - tải trễ 3 prompt</option></select></Field><Field label="Giãn cách prompt"><input id="flow-spacing" value={spacing} onChange={e=>{setSpacing(e.target.value);localStorage.setItem('flow_spacing',e.target.value)}}/></Field>
           </div>
-          <div className="actions"><Button onClick={saveFlowSettings}>💾 Lưu cấu hình setting</Button></div><div className="form4"><Field label="Auto tải xuống"><label className="switch"><input type="checkbox" checked={autoDownload} onChange={e=>{setAutoDownload(e.target.checked);localStorage.setItem('flow_auto_download',String(e.target.checked))}}/><span>{autoDownload?'Bật':'Tắt'}</span></label><small className="field-note">Bật là luôn tự tải, dù chạy từng prompt hay chạy liên tục.</small></Field></div><div className="actions"><Button variant="primary" onClick={()=>start(generatedFile,{autoDownload,characterImages})}>▶ Chạy prompt AI</Button><Button variant="danger" onClick={stop}>⏹ Stop</Button></div>
+          <div className="actions"><Button onClick={saveFlowSettings}>💾 Lưu cấu hình setting</Button></div><div className="form4"><Field label="Auto tải xuống"><label className="switch"><input type="checkbox" checked={autoDownload} onChange={e=>{setAutoDownload(e.target.checked);localStorage.setItem('flow_auto_download',String(e.target.checked))}}/><span>{autoDownload?'Bật':'Tắt'}</span></label><small className="field-note">Bật là luôn tự tải, dù chạy từng prompt hay chạy liên tục.</small></Field></div><div className="actions"><Button variant="primary" onClick={()=>start(generatedFile,{autoDownload,refsDir})}>▶ Chạy prompt AI</Button><Button variant="danger" onClick={stop}>⏹ Stop</Button></div>
         </Card>
       </div>}
       {page==='multi'&&<div className="multi-page">
