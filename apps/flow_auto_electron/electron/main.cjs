@@ -188,6 +188,18 @@ async function geminiText(apiKey,parts,system,jsonMode=false,preferredModel=''){
 }
 
 function mimeFromFile(f){ const e=String(f||'').toLowerCase().split('.').pop(); if(e==='png')return 'image/png'; if(e==='webp')return 'image/webp'; return 'image/jpeg'; }
+
+function imageFilesFromDir(dir) {
+  if (!dir) return [];
+  try {
+    const exts = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+    return fs.readdirSync(dir)
+      .map(f => path.join(dir, f))
+      .filter(f => fs.existsSync(f) && fs.statSync(f).isFile() && exts.has(path.extname(f).toLowerCase()))
+      .sort()
+      .slice(0, 30);
+  } catch { return []; }
+}
 function imageParts(files){ const out=[]; for(const f of (files||[]).slice(0,30)){ try{ out.push({inlineData:{mimeType:mimeFromFile(f),data:fs.readFileSync(f).toString('base64')}}); }catch{} } return out; }
 function characterSystem(style,media,outLang='English'){
   const label = style;
@@ -224,12 +236,12 @@ Do not summarize. Use maximum precision. Objective only.
 --------------------------------------------------
 
 # 2. CHARACTER LOCK (IMMUTABLE IDENTITY)
-[...mục 22 giữ nguyên...]
+Generate a final immutable identity paragraph that MUST preserve exact face geometry, estimated age, body proportions, hairstyle, and the exact outfit currently visible in the reference image. Clothing must include garment type, silhouette, length, neckline/collar, sleeve style, fabric texture, material, color, pattern, fit, wrinkles, accessories, shoes if visible, and layering. If the subject wears a dress, explicitly say dress and never convert it into a shirt/top/skirt unless that is visually true.
 
 --------------------------------------------------
 
 # 3. NEGATIVE CONSTRAINTS (NEVER CHANGE)
-[...mục 23 giữ nguyên...]`;
+Never change face shape, facial proportions, estimated age, gender, hairstyle, skin tone, body type, or visible outfit. Never replace a dress with a shirt, blouse, jacket, pants, school uniform, or any other garment. Never invent clothing not visible in the reference image. Never simplify clothing details.`;
 
   return await geminiText(apiKey, [...imgs, { text: `Analyze the reference image and output the combined CHARACTER DNA & CHARACTER LOCK using this structure:\n\n${structure}\n\nStrictly follow the structure. Output in English only. Maximum precision.` }], "You are a professional visual identity and DNA analyst. Follow the structure strictly.", false, arguments[2] || '');
 }
@@ -251,7 +263,7 @@ Return JSON: {"characters":[{"id":"REF_01","likelyName":"name or role from scrip
 }
 function lockPrompt(prompt, characterLock, outLang='English'){
   if(!characterLock) return prompt;
-  const guard = outLang==='Vietnamese' ? `CHARACTER_REFERENCE / FACE_IDENTITY_LOCK: Dùng ảnh tham chiếu đã upload làm nguồn nhận dạng tuyệt đối. Giữ chính xác hình học khuôn mặt, mắt, mũi, môi, xương hàm, màu da, kiểu tóc, đường chân tóc, tỉ lệ khuôn mặt, trang phục, dáng người, thần thái và biểu cảm. Không thiết kế lại, không làm đẹp khác đi, không đổi phong cách, tuổi hoặc giới tính. Chỉ lấy nhân vật từ ảnh tham chiếu; tuyệt đối không lấy bối cảnh, môi trường, ánh sáng hoặc phòng nền của ảnh tham chiếu vào cảnh video mới. Giữ cùng một nhân vật xuyên suốt: ${characterLock}. Giữ nguyên khuôn mặt, tóc, độ tuổi, vóc dáng và trang phục chính. ` : outLang==='Chinese' ? `始终保持同一个角色：${characterLock}。保持相同的脸、头发、年龄、体型和主要服装。 ` : outLang==='Korean' ? `전체 장면에서 동일한 캐릭터 유지: ${characterLock}. 얼굴, 머리, 나이, 체형, 주요 의상을 그대로 유지. ` : outLang==='Spanish' ? `Mantener el mismo personaje en todo momento: ${characterLock}. Conservar rostro, cabello, edad, tipo de cuerpo y atuendo principal. ` : `CHARACTER_REFERENCE / FACE_IDENTITY_LOCK: Use the uploaded reference image as the exact identity source. Preserve exact face geometry, eyes, nose, lips, jawline, skin tone, hairstyle, hairline, facial proportions, clothing, body posture and expression/aura. Do not redesign, beautify, stylize, age-change or gender-change. Use ONLY the character from the reference image; do NOT copy the reference image background/environment/lighting into the new video scene. Same character throughout: ${characterLock}. Keep face, hair, age, body type, and main outfit consistent. `;
+  const guard = outLang==='Vietnamese' ? `CHARACTER_REFERENCE / FACE_IDENTITY_LOCK: Dùng ảnh tham chiếu đã upload làm nguồn nhận dạng tuyệt đối. Giữ chính xác hình học khuôn mặt, mắt, mũi, môi, xương hàm, màu da, kiểu tóc, đường chân tóc, tỉ lệ khuôn mặt, trang phục, dáng người, thần thái và biểu cảm. Không thiết kế lại, không làm đẹp khác đi, không đổi phong cách, tuổi hoặc giới tính. Chỉ lấy nhân vật từ ảnh tham chiếu; tuyệt đối không lấy bối cảnh, môi trường, ánh sáng hoặc phòng nền của ảnh tham chiếu vào cảnh video mới. Giữ cùng một nhân vật xuyên suốt: ${characterLock}. Giữ nguyên khuôn mặt, tóc, độ tuổi, vóc dáng và trang phục đang mặc trong ảnh tham chiếu: đúng loại trang phục, màu, chất liệu, hoa văn, độ dài, cổ áo, tay áo, phụ kiện và giày nếu thấy. Nếu ảnh mặc váy thì mọi prompt phải ghi váy, không đổi thành áo/quần. ` : outLang==='Chinese' ? `始终保持同一个角色：${characterLock}。保持相同的脸、头发、年龄、体型和主要服装。 ` : outLang==='Korean' ? `전체 장면에서 동일한 캐릭터 유지: ${characterLock}. 얼굴, 머리, 나이, 체형, 주요 의상을 그대로 유지. ` : outLang==='Spanish' ? `Mantener el mismo personaje en todo momento: ${characterLock}. Conservar rostro, cabello, edad, tipo de cuerpo y atuendo principal. ` : `CHARACTER_REFERENCE / FACE_IDENTITY_LOCK: Use the uploaded reference image as the exact identity source. Preserve exact face geometry, eyes, nose, lips, jawline, skin tone, hairstyle, hairline, facial proportions, clothing, body posture and expression/aura. Do not redesign, beautify, stylize, age-change or gender-change. Use ONLY the character from the reference image; do NOT copy the reference image background/environment/lighting into the new video scene. Same character throughout: ${characterLock}. Keep face, hair, age, body type, and main outfit consistent. `;
   const p=String(prompt||'').trim();
   return p.includes('CHARACTER CONSISTENCY LOCK') ? p : guard + p;
 }
@@ -369,8 +381,9 @@ ${lines.map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
 
 async function generateScriptJs(payload){
   const totalScenes=durationScenes(payload.duration);
-  const imgs=imageParts(payload.characterImages);
-  let characterSheet=await buildCharacterLock(payload.apiKey,payload.characterImages);
+  const refImages = (payload.refsDir ? imageFilesFromDir(payload.refsDir) : []).concat(payload.characterImages || []);
+  const imgs=imageParts(refImages);
+  let characterSheet=await buildCharacterLock(payload.apiKey,refImages);
   const style=payload.style||'CINEMATIC';
   const outLang=langName(payload.promptLang);
   const voiceLang=voiceLangName(payload.voiceLang);
@@ -402,7 +415,7 @@ async function generateScriptJs(payload){
       8. Trả về kết quả dưới dạng JSON: {"title":"...","characterSheet":"...","scenes":[{"sceneNumber":...,"duration":"8s","description":"...","prompt":"..."}]}.`;
 
     const characterInstruction=characterSheet
-      ? `USE THIS EXACT CHARACTER SHEET FOR ALL SCENES: "${characterSheet}". Repeat this compact identity inside every prompt, translated/written in ${outLang}. Do not change face, hair, age, body type, or main outfit.`
+      ? `USE THIS EXACT CHARACTER SHEET FOR ALL SCENES: "${characterSheet}". Repeat this compact identity inside every prompt, translated/written in ${outLang}. Do not change face, hair, age, body type, or the exact visible outfit from the reference image. The outfit must remain identical: same garment type, color, material, pattern, fit, length, neckline/collar, sleeves, accessories, and shoes if visible. If the reference shows a dress, every prompt must say the same dress, not a shirt or top.`
       : `If reference images are included, first create a compact Character Sheet under 45 words from the images in ${outLang}, then repeat it inside every scene prompt.`;
     const parts=[...(i===0?imgs:[]),{text:`Topic/content: ${payload.topic}. Total video scenes: ${totalScenes}. Generate scenes ${startScene}-${endScene}. ${characterInstruction} Prompts and descriptions must be in ${outLang}. If any dialogue/speech exists, character voice language must be ${voiceLang}. Keep prompts short but preserve character consistency.`}];
     const txt=await geminiText(payload.apiKey,parts,sys,true);
