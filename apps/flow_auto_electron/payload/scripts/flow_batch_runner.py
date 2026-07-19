@@ -1837,10 +1837,9 @@ def run(args):
 
                     box = find_input_box(page)
 
-                    if needs_clear_before_insert:
-                        clear_prompt_box(page, box)
-                        clear_attached_references(page)
-                        needs_clear_before_insert = False
+                    # Always clear before typing, especially for AI Studio/Continuous runs
+                    clear_prompt_box(page, box)
+                    clear_attached_references(page)
 
                     prompt_to_type = prompt
                     matched_refs = []
