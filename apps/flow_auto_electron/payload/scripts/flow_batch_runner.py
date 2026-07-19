@@ -1171,7 +1171,7 @@ def _click_upload_image_item(page):
     return False
 
 
-def upload_reference_image(page, image_path: Path, prompt_box=None):
+def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=True):
     """Extension-style image pipeline: upload to Flow library, then search by filename and attach.
 
     This replaces the old UI-position based uploader. It follows extension 2.0.6 logic:
@@ -1183,26 +1183,29 @@ def upload_reference_image(page, image_path: Path, prompt_box=None):
 
     fname = image_path.name
 
-    # Phase 1: open add/upload picker beside prompt composer, then inject file.
-    plus_opened = _open_plus_menu(page, prompt_box=prompt_box)
-    if plus_opened:
-        log_line("[flow] plus menu opened for reference upload")
-        _click_upload_image_item(page)
-    else:
-        log_line("[flow] plus menu not found; trying direct file input fallback")
-
-    file_set = set_upload_file_input(page, image_path)
-    if not file_set and not plus_opened:
-        plus_opened = _open_plus_menu(page, prompt_box=None)
+    if upload_file:
+        # Phase 1: open add/upload picker beside prompt composer, then inject file.
+        plus_opened = _open_plus_menu(page, prompt_box=prompt_box)
         if plus_opened:
-            log_line("[flow] plus menu opened on fallback attempt")
+            log_line("[flow] plus menu opened for reference upload")
             _click_upload_image_item(page)
-            file_set = set_upload_file_input(page, image_path)
-    if not file_set:
-        raise RuntimeError(f"extension_upload:cannot_inject_file:{fname}")
+        else:
+            log_line("[flow] plus menu not found; trying direct file input fallback")
 
-    log_line(f"[flow] extension-upload injected file: {fname}")
-    time.sleep(3.0)
+        file_set = set_upload_file_input(page, image_path)
+        if not file_set and not plus_opened:
+            plus_opened = _open_plus_menu(page, prompt_box=None)
+            if plus_opened:
+                log_line("[flow] plus menu opened on fallback attempt")
+                _click_upload_image_item(page)
+                file_set = set_upload_file_input(page, image_path)
+        if not file_set:
+            raise RuntimeError(f"extension_upload:cannot_inject_file:{fname}")
+
+        log_line(f"[flow] extension-upload injected file: {fname}")
+        time.sleep(3.0)
+    else:
+        log_line(f"[flow] reuse uploaded ref from library: {fname}")
 
     # Phase 2: attach by reopening picker and searching filename (extension-style)
     attached = False
@@ -1856,7 +1859,8 @@ def run(args):
 
                     for ref_file in matched_refs:
                         log_line(f"[flow] prompt #{prompt_no} use ref image: {ref_file.name}")
-                        upload_reference_image(page, ref_file, prompt_box=box)
+                        # AI Prompt Studio uses --no-paired-mode: upload files only on prompt #1, then reuse by searching filenames in Flow library.
+                        upload_reference_image(page, ref_file, prompt_box=box, upload_file=(args.paired_mode or prompt_no == 1))
 
                     time.sleep(random.uniform(args.pre_paste_min, args.pre_paste_max))
 
