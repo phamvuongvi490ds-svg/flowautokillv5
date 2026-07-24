@@ -1860,7 +1860,7 @@ def run(args):
                     for ref_file in matched_refs:
                         log_line(f"[flow] prompt #{prompt_no} use ref image: {ref_file.name}")
                         # AI Prompt Studio uses --no-paired-mode: upload files only on prompt #1, then reuse by searching filenames in Flow library.
-                        upload_reference_image(page, ref_file, prompt_box=box, upload_file=(args.paired_mode or prompt_no == 1))
+                        upload_reference_image(page, ref_file, prompt_box=box, upload_file=(args.paired_mode if args.paired_mode else (prompt_no == 1)))
 
                     time.sleep(random.uniform(args.pre_paste_min, args.pre_paste_max))
 
