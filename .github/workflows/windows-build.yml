@@ -1,0 +1,16 @@
+name: Build Windows
+on: [push]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      - run: cd apps/flow_auto_electron && npm install
+      - run: cd apps/flow_auto_electron && npm run dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FlowAuto-Windows
+          path: apps/flow_auto_electron/release/*.exe
