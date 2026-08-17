@@ -8,9 +8,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 18
-      - run: cd apps/flow_auto_electron && npm install
-      - run: cd apps/flow_auto_electron && npm run dist
-      - uses: actions/upload-artifact@v4
+      - name: Install dependencies
+        run: |
+          cd apps/flow_auto_electron
+          npm install
+      - name: Build macOS App
+        run: |
+          cd apps/flow_auto_electron
+          npm run dist -- --verbose
+      - name: Upload Artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
         with:
           name: FlowAuto-MacOS
           path: apps/flow_auto_electron/release/*.dmg
