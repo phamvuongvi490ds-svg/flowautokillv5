@@ -818,7 +818,7 @@ ipcMain.handle('flow:stop', async()=>{ resetRunnerWorkersAsync({killChrome:false
 ipcMain.handle('license:machineId', async()=>({ok:true,machineId:machineId()}));
 ipcMain.handle('license:cached', async()=>cachedLicense() || {ok:false, reason:'missing_local_license'});
 ipcMain.handle('license:activate', async(_e,payload)=>activateLicenseJs(payload?.licenseKey, DEFAULT_API_BASE));
-ipcMain.handle('license:check', async()=>{ const r=await verifyLicenseJs(); if(r.ok) return r; const cached=cachedLicense(); if(cached) return {...cached, warning:r.reason||r.error||'online_check_failed'}; return r; });
+ipcMain.handle('license:check', async()=>{ const r=await verifyLicenseJs(); return r.ok ? {...r, strictOnline:true} : {...r, ok:false, strictOnline:true}; });
 ipcMain.handle('prompt:generate', async(_e,payload)=>{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; return generatePromptsJs(payload||{}); });
 ipcMain.handle('prompt:characters', async(_e,payload)=>{ try{ const lic=await withTimeout(onlineLicenseGuard(),15000,'license_check_timeout'); if(!lic.ok) return lic; return await withTimeout(generateCharacterPromptsJs(payload||{}),300000,'character_prompt_timeout_300s'); }catch(e){ return {ok:false,error:String(e.message||e)}; } });
 
