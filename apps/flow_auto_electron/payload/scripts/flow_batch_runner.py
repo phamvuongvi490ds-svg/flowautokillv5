@@ -1882,9 +1882,8 @@ def run(args):
             time.sleep(1.0)
 
         page = ensure_project_page(page)
-        
-                    if not getattr(args, "hide", False):
-                        page.bring_to_front()
+        if not getattr(args, "hide", False):
+            page.bring_to_front()
         time.sleep(1.0)
         capture_startup_screenshot(page)
         # Critical: do not apply mode/model until the project composer is actually ready.
