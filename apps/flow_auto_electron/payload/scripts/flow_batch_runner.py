@@ -2,6 +2,8 @@ import argparse
 import base64
 import os
 from pathlib import Path
+from urllib import error, request
+from datetime import datetime, timezone
 def build_char_map(char_images):
     char_map = {}
     for img_path in char_images:
@@ -10,14 +12,14 @@ def build_char_map(char_images):
     return char_map
 
 import subprocess
+import uuid
+import ssl
+import socket
 import sys
 import json
 import random
 import re
-import sys
 import time
-from datetime import datetime
-from pathlib import Path
 
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
@@ -1746,26 +1748,112 @@ def auto_download_with_retry(page, resolution="720p", timeout_sec=480, before_id
     return False, last
 
 
-def license_guard_or_raise():
-    checker = Path(__file__).resolve().with_name("flow_license_online_check.py")
-    if not checker.exists():
-        return
-    try:
-        r = subprocess.run([sys.executable, str(checker), "--check", "--json"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=45)
-        raw = (r.stdout or r.stderr or "").strip()
-        ok = False
-        reason = "license_check_failed"
+LICENSE_CONFIG_FILE = Path(os.environ.get("FLOW_LICENSE_ONLINE_CONFIG", str(Path(os.environ.get("FLOW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace"))) / "keys" / "license-online.json")))
+LICENSE_APP_VERSION = os.environ.get("FLOW_APP_VERSION", "3.4.5")
+LICENSE_TIMEOUT_SEC = int(os.environ.get("FLOW_LICENSE_TIMEOUT_SEC", "10"))
+LICENSE_STRICT_ONLINE = os.environ.get("FLOW_LICENSE_STRICT_ONLINE", "1").strip() == "1"
+_LICENSE_LAST_OK = 0.0
+_LICENSE_LAST_REASON = "never"
+
+def _license_now_utc():
+    return datetime.now(timezone.utc)
+
+def _license_iso_now():
+    return _license_now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def _license_read_machine_id():
+    for candidate in (Path("/etc/machine-id"), Path.home() / ".flow-machine-id"):
         try:
-            obj = json.loads(raw)
-            ok = bool(obj.get("ok")) and r.returncode == 0
-            reason = str(obj.get("reason") or reason)
+            if candidate.exists():
+                v = candidate.read_text(encoding="utf-8").strip()
+                if v:
+                    return v
         except Exception:
-            ok = r.returncode == 0
-            reason = raw[:120] or reason
-        if not ok:
-            raise RuntimeError(f"license_invalid:{reason}")
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("license_invalid:timeout")
+            pass
+    return socket.gethostname()
+
+def _license_load_cfg():
+    try:
+        if LICENSE_CONFIG_FILE.exists():
+            return json.loads(LICENSE_CONFIG_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+def _license_save_cfg(cfg):
+    try:
+        LICENSE_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        LICENSE_CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+def _license_normalize_base(base):
+    b = (base or "").strip().rstrip("/")
+    if b.endswith("/activate") or b.endswith("/verify"):
+        b = b.rsplit("/", 1)[0]
+    return b
+
+def _license_post_json(url, payload, timeout=LICENSE_TIMEOUT_SEC):
+    req = request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type":"application/json"}, method="POST")
+    try:
+        ctx = ssl.create_default_context()
+        with request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            body = resp.read().decode("utf-8")
+            return resp.getcode(), json.loads(body) if body else {}
+    except error.HTTPError as e:
+        try:
+            body = e.read().decode("utf-8")
+            data = json.loads(body) if body else {}
+        except Exception:
+            data = {"reason": f"http_{e.code}"}
+        return e.code, data
+
+def _license_verify_online():
+    cfg = _license_load_cfg()
+    base = _license_normalize_base(cfg.get("api_base", ""))
+    key = (cfg.get("license_key", "") or "").strip()
+    if not base:
+        return False, "missing_api_base"
+    if not key:
+        return False, "missing_license_key"
+    machine_id = cfg.get("machine_id") or _license_read_machine_id()
+    cfg["machine_id"] = machine_id
+    payload = {
+        "license_key": key,
+        "machine_id": machine_id,
+        "app_version": LICENSE_APP_VERSION,
+        "nonce": uuid.uuid4().hex,
+        "timestamp": _license_iso_now(),
+    }
+    if cfg.get("signed_token"):
+        payload["signed_token"] = cfg.get("signed_token")
+    try:
+        code, data = _license_post_json(f"{base}/verify", payload)
+    except Exception as e:
+        return False, f"network_error_strict:{e}"
+    if code == 200 and isinstance(data, dict) and bool(data.get("valid", False)):
+        for k in ("signed_token", "expires_at", "grace_until", "next_check_at"):
+            if data.get(k):
+                cfg[k] = data[k]
+        cfg["last_verified_at"] = _license_iso_now()
+        _license_save_cfg(cfg)
+        return True, "ok"
+    reason = data.get("reason") if isinstance(data, dict) else f"http_{code}"
+    return False, str(reason or f"http_{code}")
+
+def license_guard_or_raise(force=False):
+    global _LICENSE_LAST_OK, _LICENSE_LAST_REASON
+    # In protected runner, this online check is compiled into the binary. Do not
+    # depend on the external checker script, because protected payload ships no .py.
+    interval = int(os.environ.get("FLOW_LICENSE_RECHECK_SEC", "90"))
+    if not force and _LICENSE_LAST_OK and (time.time() - _LICENSE_LAST_OK) < interval:
+        return
+    ok, reason = _license_verify_online()
+    _LICENSE_LAST_REASON = reason
+    if ok:
+        _LICENSE_LAST_OK = time.time()
+        return
+    raise RuntimeError(f"license_invalid:{reason}")
 
 
 def run(args):
@@ -1834,7 +1922,7 @@ def run(args):
 
             for attempt in range(1, args.max_retries + 2):
                 try:
-                    license_guard_or_raise()
+                    license_guard_or_raise(force=True)
                     page.bring_to_front()
 
                     # Settings are applied only once per run. Do not re-select model/ratio/count for later prompts.
@@ -1912,6 +2000,7 @@ def run(args):
                             })
                             if len(delayed_downloads) >= int(args.download_delay_prompts or 0):
                                 item = delayed_downloads.pop(0)
+                                license_guard_or_raise(force=True)
                                 log_line(f"[flow] delayed download prompt #{item['prompt_no']}")
                                 media_ok, media_reason = wait_new_completed_media(page, before_ids=item["before_ids"], expected_count=max(1, int(item["count"] or "1")), timeout_sec=args.download_wait_sec)
                                 if not media_ok:
@@ -1934,6 +2023,7 @@ def run(args):
                                 done_wait = wait_generation_complete(page, timeout_sec=90)
                                 if not done_wait:
                                     raise RuntimeError(f"generation_not_completed:{media_reason}")
+                            license_guard_or_raise(force=True)
                             download_resolution = "1K" if args.task_mode == "createimage" else args.download_resolution
                             dl_ok, dl_step = auto_download_with_retry(page, resolution=download_resolution, timeout_sec=220, before_ids=pre_submit_tiles, output_prefix=prompt_file_prefix(prompt, prompt_no), output_dir=args.output_dir)
                             if not dl_ok:
@@ -2005,6 +2095,7 @@ def run(args):
         if args.auto_download and int(args.download_delay_prompts or 0) > 0:
             while delayed_downloads:
                 item = delayed_downloads.pop(0)
+                license_guard_or_raise(force=True)
                 log_line(f"[flow] delayed final download prompt #{item['prompt_no']}")
                 media_ok, media_reason = wait_new_completed_media(page, before_ids=item["before_ids"], expected_count=max(1, int(item["count"] or "1")), timeout_sec=args.download_wait_sec)
                 if not media_ok:
