@@ -399,16 +399,28 @@ function extractAnalysisFrames(file,dir,maxFrames=16){
 
 
 function extractVoiceFromScene(text){
-  const m=String(text||'').match(/(?:Voiceover|Lời thoại\/Voice|Lời thoại|Voice)\s*:\s*([\s\S]*?)(?:\n\s*(?:Scene\s*\d+|Hình ảnh|Hành động|Cảm xúc|Camera|Ánh sáng|Prompt)\s*:|$)/i);
-  return m ? String(m[1]||'').trim().replace(/^"|"$/g,'') : '';
+  const raw=String(text||'').trim();
+  const m=raw.match(/(?:Voiceover|Lời dẫn\/Voiceover|Lời thoại\/Voice|Lời thoại|Voice)\s*:\s*([\s\S]*?)(?:\n\s*(?:Scene\s*\d+|Hình ảnh|Hành động|Cảm xúc|Camera|Ánh sáng|Prompt)\s*:|$)/i);
+  if(m) return String(m[1]||'').trim().replace(/^"|"$/g,'');
+  // When caller passes only the voice text (no label), still preserve it.
+  if(raw && !/\n/.test(raw) && raw.length>8) return raw.replace(/^"|"$/g,'');
+  return '';
 }
 function enforceVoiceInPrompt(prompt, source, outLang='Vietnamese', voiceLang=''){
   const voice=extractVoiceFromScene(source);
   if(!voice) return prompt;
-  const p=String(prompt||'').trim();
-  if(p.includes(voice)) return p;
-  if(outLang==='Vietnamese') return `${p}. Lời dẫn/Voiceover bắt buộc: "${voice}". Giọng đọc: ${voiceLang||'tiếng Việt tự nhiên'}.`;
-  return `${p}. Required voiceover: "${voice}". Voice language/accent: ${voiceLang||'natural voice'}.`;
+  let p=String(prompt||'').trim();
+  const hasVoiceLabel=/(Voiceover|Lời dẫn|Lời thoại|Voice)\s*:/i.test(p);
+  const accent=voiceLang||'tiếng Việt tự nhiên';
+  if(outLang==='Vietnamese'){
+    const block=`\nLời dẫn/Voiceover: "${voice}"\nLời thoại nhân vật: Không có, chỉ dùng lời dẫn voiceover nếu cảnh không có nhân vật nói trực tiếp.\nGiọng đọc/Voice: ${accent}.`;
+    if(p.includes(voice) && hasVoiceLabel) return p;
+    if(p.includes(voice) && !hasVoiceLabel) p=p.replace(voice, `Lời dẫn/Voiceover: "${voice}"`);
+    return `${p}${block}`;
+  }
+  const block=`\nVoiceover: "${voice}"\nCharacter dialogue: None unless the scene explicitly has a speaking character.\nVoice: ${accent}.`;
+  if(p.includes(voice) && hasVoiceLabel) return p;
+  return `${p}${block}`;
 }
 
 function looksEnglishHeavy(text){
@@ -539,7 +551,7 @@ async function generatePromptsJs(payload){
       : (outLang==='Vietnamese'
         ? `CHẾ ĐỘ KHÔNG CÓ ẢNH THAM CHIẾU: Không có ảnh nhân vật. Không tự tạo nhân vật chính cố định, không tạo Character Sheet, không thêm REF_ID, không khóa mặt, không thêm người nếu prompt không yêu cầu. Viết đúng chủ thể trong mô tả từng prompt. Nếu prompt là phong cảnh, sản phẩm, con vật, đồ vật, địa điểm hoặc ý tưởng trừu tượng thì giữ đúng chủ thể đó, không biến thành người.`
         : `NO REFERENCE IMAGE MODE: There are no uploaded character images. Do not invent a fixed main character, character sheet, REF_ID, face identity lock, or recurring identity unless the user's scene explicitly describes one. Write only what the scene/prompt describes. If the prompt is about landscape, product, animal, object, location, or abstract concept, keep that subject and do not add a human character.`);
-    const prompt=await geminiText(apiKey,[...imgs,{text:`${refInstruction}\n\nNội dung cảnh/prompt cần tạo: ${idea}\nYÊU CẦU NGÔN NGỮ BẮT BUỘC: ${finalPromptLanguageRule(outLang)} Toàn bộ prompt cuối cùng phải viết bằng ${outLang}. Nếu ${outLang} là Vietnamese, mọi mô tả, quy tắc, cảnh quay, ánh sáng, camera, cảm xúc và lời thoại phải viết bằng tiếng Việt; không dùng tiếng Anh trừ tên riêng bất khả kháng. Bám đúng nội dung, chủ thể, hành động, bối cảnh và cảm xúc của prompt gốc. Không thêm nhân vật, đạo cụ, tuyến truyện hoặc danh tính mới nếu đầu vào không có. Nếu đầu vào có dòng Voiceover, Lời thoại/Voice hoặc Lời thoại, BẮT BUỘC giữ nguyên nội dung lời đó trong prompt cuối và ghi rõ giọng đọc/nói là ${voiceLang}. Nếu cảnh có lời thoại, nhân vật nói bằng ${voiceLang} và giữ đồng nhất. Chỉ đổi cách diễn đạt nhạy cảm thành cách nói an toàn. ${policySafeInstruction(outLang)}`}],sys,false);
+    const prompt=await geminiText(apiKey,[...imgs,{text:`${refInstruction}\n\nNội dung cảnh/prompt cần tạo: ${idea}\nYÊU CẦU NGÔN NGỮ BẮT BUỘC: ${finalPromptLanguageRule(outLang)} Toàn bộ prompt cuối cùng phải viết bằng ${outLang}. Nếu ${outLang} là Vietnamese, mọi mô tả, quy tắc, cảnh quay, ánh sáng, camera, cảm xúc và lời thoại phải viết bằng tiếng Việt; không dùng tiếng Anh trừ tên riêng bất khả kháng. Bám đúng nội dung, chủ thể, hành động, bối cảnh và cảm xúc của prompt gốc. Không thêm nhân vật, đạo cụ, tuyến truyện hoặc danh tính mới nếu đầu vào không có. Nếu đầu vào có dòng Voiceover, Lời dẫn/Voiceover, Lời thoại/Voice hoặc Lời thoại, BẮT BUỘC prompt cuối phải có nhãn rõ ràng: Lời dẫn/Voiceover: "..."; Lời thoại nhân vật: ...; Giọng đọc/Voice: ${voiceLang}. Không được chỉ mô tả hình ảnh mà bỏ phần lời. Nếu cảnh có lời thoại, nhân vật nói bằng ${voiceLang} và giữ đồng nhất. Chỉ đổi cách diễn đạt nhạy cảm thành cách nói an toàn. ${policySafeInstruction(outLang)}`}],sys,false);
     const withVoice=enforceVoiceInPrompt(policySafePostProcess(lockPrompt(prompt,characterLock,outLang),outLang), idea, outLang, voiceLang);
     results.push(await ensureOutputLanguageText(apiKey, withVoice, outLang, payload.apiModel));
   }
