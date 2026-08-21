@@ -1448,19 +1448,35 @@ def _detect_ext_from_bytes(head: bytes):
     return None
 
 
+def _next_numbered_media_target(output_dir=None, ext=".mp4"):
+    """Return next sequential media filename: 1.ext, 2.ext, ... in output_dir.
+
+    The sequence is shared across image/video extensions so auto-download order is
+    preserved when mixed media is downloaded. Existing files with pure numeric
+    stems are respected to avoid overwrites.
+    """
+    out_dir = Path(output_dir).expanduser() if output_dir else Path.home() / "Downloads"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ext = ext if str(ext).startswith(".") else f".{ext}"
+    max_n = 0
+    try:
+        for item in out_dir.iterdir():
+            if item.is_file() and item.stem.isdigit():
+                max_n = max(max_n, int(item.stem))
+    except Exception:
+        max_n = 0
+    n = max_n + 1
+    target = out_dir / f"{n}{ext}"
+    while target.exists():
+        n += 1
+        target = out_dir / f"{n}{ext}"
+    return target
+
 def _save_media_bytes(data: bytes, output_prefix="flow-auto", output_dir=None):
     ext = _detect_ext_from_bytes(data[:64])
     if not ext:
         return False, "direct_invalid_media_bytes"
-    out_dir = Path(output_dir).expanduser() if output_dir else Path.home() / "Downloads"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    safe_prefix = re.sub(r"[^A-Za-z0-9_-]+", "_", str(output_prefix or "flow-auto")).strip("_")[:80] or "flow-auto"
-    stem = f"{safe_prefix}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    target = out_dir / f"{stem}{ext}"
-    n = 1
-    while target.exists():
-        target = out_dir / f"{stem}-{n}{ext}"
-        n += 1
+    target = _next_numbered_media_target(output_dir=output_dir, ext=ext)
     target.write_bytes(data)
     return True, f"direct_saved:{target.name}"
 
@@ -1680,13 +1696,7 @@ def extension_download_tile_via_ui(page, resolution="720p", before_ids=None, out
                 out_dir.mkdir(parents=True, exist_ok=True)
             except Exception:
                 pass
-            safe_prefix = re.sub(r"[^A-Za-z0-9_-]+", "_", str(output_prefix or "flow-auto")).strip("_")[:80] or "flow-auto"
-            stem = f"{safe_prefix}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-            target = out_dir / f"{stem}{detected_ext}"
-            n = 1
-            while target.exists():
-                target = out_dir / f"{stem}-{n}{detected_ext}"
-                n += 1
+            target = _next_numbered_media_target(output_dir=out_dir, ext=detected_ext)
             try:
                 download_obj.save_as(str(target))
             except Exception:
