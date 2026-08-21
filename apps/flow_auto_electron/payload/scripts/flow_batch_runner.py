@@ -1882,7 +1882,9 @@ def run(args):
             time.sleep(1.0)
 
         page = ensure_project_page(page)
-        page.bring_to_front()
+        
+                    if not getattr(args, "hide", False):
+                        page.bring_to_front()
         time.sleep(1.0)
         capture_startup_screenshot(page)
         # Critical: do not apply mode/model until the project composer is actually ready.
@@ -1923,7 +1925,9 @@ def run(args):
             for attempt in range(1, args.max_retries + 2):
                 try:
                     license_guard_or_raise(force=True)
-                    page.bring_to_front()
+                    
+                    if not getattr(args, "hide", False):
+                        page.bring_to_front()
 
                     # Settings are applied only once per run. Do not re-select model/ratio/count for later prompts.
                     if not settings_applied:
@@ -2044,7 +2048,9 @@ def run(args):
             # Sau khi tạo/download thành công: reset UI để prompt kế tiếp upload ảnh mới đúng paired-mode
             if ok and prompt_no < total:
                 try:
-                    page.bring_to_front()
+                    
+                    if not getattr(args, "hide", False):
+                        page.bring_to_front()
                     close_open_menus(page)
                     clear_attached_references(page)
 

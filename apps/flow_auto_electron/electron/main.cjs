@@ -359,7 +359,7 @@ function writeGenerated(name,prompts){ const file=path.join(JOB_DIR,name); fs.wr
 function writeScriptText(obj){ const file=path.join(JOB_DIR,'electron-ai-video-script.txt'); const scenes=(obj.scenes||[]).sort((a,b)=>(a.sceneNumber||0)-(b.sceneNumber||0)); const lines=[`TITLE: ${obj.title||''}`, obj.characterSheet?`CHARACTER SHEET:
 ${obj.characterSheet}`:'', 'SCENES:', ...scenes.map(s=>`Scene ${s.sceneNumber||''} (${s.duration||''})\nDescription: ${s.description||''}\nPrompt: ${s.prompt||''}`)].filter(Boolean); fs.writeFileSync(file,lines.join('\n\n'),'utf8'); return file; }
 function langName(code){ return ({vi:'Vietnamese',en:'English',zh:'Chinese',ko:'Korean',es:'Spanish'}[String(code||'en')]||'English'); }
-function voiceLangName(code){ return String(code||'vi')==='en'?'English':'Vietnamese'; }
+function voiceLangName(code){ const v=String(code||'vi_south'); if(v==='en')return 'English'; if(v==='vi_north')return 'Vietnamese Northern accent (giọng Bắc)'; return 'Vietnamese Southern accent (giọng Nam)'; }
 async function generatePromptsJs(payload){
   const apiKey=payload.apiKey||''; const style=payload.style||'CINEMATIC'; const media=payload.mediaType||'IMAGE'; const outLang=langName(payload.promptLang); const voiceLang=voiceLangName(payload.voiceLang);
   const sys=characterSystem(style,media,outLang); const imgs=imageParts(payload.characterImages); const characterLock=await buildCharacterLock(apiKey,payload.characterImages); const characterRoster=await buildCharacterRoster(apiKey,payload.characterImages,payload.ideas||'');
@@ -498,13 +498,13 @@ async function generateScriptJs(payload){
          - duration: Thời lượng cảnh đó (luôn là "8s").
          - description: Mô tả nội dung cảnh bằng ${outLang} bám sát nội dung gốc.
          - prompt: Prompt chi tiết bằng ${outLang} cho Veo 3.1, tích hợp phong cách ${STYLE_SUFFIX[style]} (${style}). Prompt PHẢI bắt đầu bằng bản mô tả nhân vật đồng nhất đã xác định, chỉ gồm khuôn mặt, quần áo, tóc tai, vóc dáng, thần thái/biểu cảm. Tuyệt đối không dùng bối cảnh/môi trường/ánh sáng/phòng nền của ảnh tham chiếu; bối cảnh phải thay đổi theo kịch bản từng cảnh.
-      7. NGÔN NGỮ GIỌNG NÓI NHÂN VẬT: Nếu cảnh có lời thoại/nhân vật nói, nhân vật bắt buộc nói bằng ${voiceLang}, giọng tự nhiên theo ${voiceLang}. Trong prompt video phải ghi rõ: character speaks ${voiceLang}.
+      7. NGÔN NGỮ GIỌNG NÓI NHÂN VẬT: Nếu cảnh có lời thoại/nhân vật nói, nhân vật bắt buộc nói bằng ${voiceLang}. Toàn bộ prompt trong cùng kịch bản phải đồng nhất đúng lựa chọn này, không được lúc giọng Nam lúc giọng Bắc hoặc đổi sang ngôn ngữ khác. Trong prompt video phải ghi rõ: character speaks ${voiceLang}.
       8. Trả về kết quả dưới dạng JSON: {"title":"...","characterSheet":"...","scenes":[{"sceneNumber":...,"duration":"8s","description":"...","prompt":"..."}]}.`;
 
     const characterInstruction=characterSheet
       ? `USE THIS EXACT CHARACTER SHEET FOR ALL SCENES: "${characterSheet}". Repeat this compact identity inside every prompt, translated/written in ${outLang}. Do not change face, hair, age, body type, or the exact visible outfit from the reference image. The outfit must remain identical: same garment type, color, material, pattern, fit, length, neckline/collar, sleeves, accessories, and shoes if visible. If the reference shows a dress, every prompt must say the same dress, not a shirt or top.`
       : `If reference images are included, first create a compact Character Sheet under 45 words from the images in ${outLang}, then repeat it inside every scene prompt.`;
-    const parts=[...(i===0?imgs:[]),{text:`Topic/content: ${payload.topic}. Total video scenes: ${totalScenes}. Generate scenes ${startScene}-${endScene}. ${characterInstruction} Prompts and descriptions must be in ${outLang}. If any dialogue/speech exists, character voice language must be ${voiceLang}. Keep prompts short but preserve character consistency.`}];
+    const parts=[...(i===0?imgs:[]),{text:`Topic/content: ${payload.topic}. Total video scenes: ${totalScenes}. Generate scenes ${startScene}-${endScene}. ${characterInstruction} Prompts and descriptions must be in ${outLang}. If any dialogue/speech exists, character voice language must be ${voiceLang} and must stay identical in every generated prompt. Do not mix accents/languages. Keep prompts short but preserve character consistency.`}];
     const txt=await geminiText(payload.apiKey,parts,sys,true);
     let obj;
     try {
@@ -856,6 +856,27 @@ ipcMain.handle('video:exportTimeline', async(_e,payload={})=>{
 });
 
 
+
+function assColor(hex){
+  const h=String(hex||'#FFFFFF').replace('#','');
+  if(h.length!==6) return '&H00FFFFFF';
+  return `&H00${h.slice(4,6)}${h.slice(2,4)}${h.slice(0,2)}`;
+}
+function escapeAssText(t){ return String(t||'').replace(/[{}]/g,'').replace(/\n/g,'\\N'); }
+function secToAss(sec){ const n=Math.max(0,Number(sec)||0); const h=Math.floor(n/3600); const m=Math.floor((n%3600)/60); const s=(n%60).toFixed(2).padStart(5,'0'); return `${h}:${String(m).padStart(2,'0')}:${s}`; }
+function parseSimpleSrt(txt){
+  const blocks=String(txt||'').replace(/\r/g,'').split(/\n\s*\n/); const out=[];
+  for(const b of blocks){ const lines=b.split('\n').filter(Boolean); const timing=lines.find(x=>x.includes('-->')); if(!timing) continue; const m=timing.match(/(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)/); if(!m) continue; const to=(a,b,c,d)=>Number(a)*3600+Number(b)*60+Number(c)+Number('0.'+String(d).padEnd(3,'0').slice(0,3)); const idx=lines.indexOf(timing); out.push({start:to(m[1],m[2],m[3],m[4]),end:to(m[5],m[6],m[7],m[8]),text:lines.slice(idx+1).join(' ')}); }
+  return out;
+}
+function writeAssSub(file, rows, opt={}){
+  const font=String(opt.font||'Arial'); const size=Number(opt.size||42); const color=assColor(opt.color||'#FFFFFF'); const outline=assColor(opt.outlineColor||'#000000');
+  const head=`[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${font},${size},${color},&H000000FF,${outline},&H80000000,1,0,0,0,100,100,0,0,1,3,1,2,60,60,70,1\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
+  const ev=(rows||[]).map(r=>`Dialogue: 0,${secToAss(r.start)},${secToAss(r.end)},Default,,0,0,0,,${escapeAssText(r.text)}`).join('\n');
+  fs.writeFileSync(file,head+ev,'utf8'); return file;
+}
+function videoDurationSec(file){ const r=ffmpegRun(['-hide_banner','-i',file]); const txt=String(r.stderr||r.stdout||''); const m=txt.match(/Duration:\s*(\d+):(\d+):(\d+\.\d+)/); return m?Number(m[1])*3600+Number(m[2])*60+Number(m[3]):0; }
+
 ipcMain.handle('video:analyzeSample', async(_e,payload={})=>{
   const lic=await onlineLicenseGuard(); if(!lic.ok) return lic;
   const file=payload.file||''; const apiKey=payload.apiKey||''; if(!file)return {ok:false,error:'missing_video'}; if(!apiKey)return {ok:false,error:'missing_api_key'};
@@ -871,6 +892,54 @@ ipcMain.handle('video:analyzeSample', async(_e,payload={})=>{
   const text=await geminiText(apiKey,[...parts,{text:prompt}],sys,false);
   const scriptFile=path.join(outDir,'ai-remix-script.txt'); fs.writeFileSync(scriptFile,text,'utf8');
   return {ok:true,script:text,scriptFile,frames};
+});
+
+
+ipcMain.handle('video:postPlan', async(_e,payload={})=>{
+  const lic=await onlineLicenseGuard(); if(!lic.ok) return lic;
+  const folder=payload.folder||''; const files=(payload.files&&payload.files.length?payload.files:videoFiles(folder)).filter(Boolean); if(!folder||!files.length)return {ok:false,error:'missing_videos'};
+  const apiKey=payload.apiKey||''; const script=String(payload.script||'').trim();
+  const scenes=files.map((file,i)=>({id:`scene_${i+1}`,index:i+1,file,name:path.basename(file),keep:true,order:i+1,start:0,end:videoDurationSec(file),reason:'AI auto hậu kì'}));
+  let subtitles=[];
+  if(payload.srtFile && fs.existsSync(payload.srtFile)) subtitles=parseSimpleSrt(fs.readFileSync(payload.srtFile,'utf8'));
+  else if(payload.autoSub && apiKey){
+    let t=0; for(const sc of scenes){ const dur=sc.end||8; subtitles.push({start:t,end:t+dur,text:`${path.basename(sc.file,path.extname(sc.file))}`}); t+=dur; }
+  }
+  if(apiKey){
+    try{
+      const sys='Bạn là AI dựng hậu kì video. Phân tích tên file video và kịch bản, trả JSON {scenes:[{index,order,keep,reason,start,end}], subtitles:[{start,end,text}]}. Hãy tự bỏ đoạn thừa/lỗi giọng nếu có thể bằng start/end, sắp cảnh đúng diễn biến kịch bản.';
+      const text=`KỊCH BẢN:
+${script||'(không có)'}
+
+FILES:
+${files.map((f,i)=>`${i+1}. ${path.basename(f)} duration=${videoDurationSec(f)}s`).join('
+')}
+
+AutoSub=${!!payload.autoSub} Language=${payload.subLang||'vi'}`;
+      const out=await geminiText(apiKey,[{text}],sys,true); const obj=JSON.parse(out.replace(/^```json\s*|```$/g,''));
+      for(const item of obj.scenes||[]){ const sc=scenes[(Number(item.index)||1)-1]; if(sc){ Object.assign(sc,{order:Number(item.order||sc.order),keep:item.keep!==false,reason:item.reason||sc.reason,start:Number(item.start||0),end:Number(item.end||sc.end||0)}); }}
+      if(Array.isArray(obj.subtitles)&&obj.subtitles.length) subtitles=obj.subtitles;
+    }catch(e){ return {ok:true,warning:'ai_post_plan_failed:'+String(e.message||e),scenes,subtitles}; }
+  }
+  scenes.sort((a,b)=>a.order-b.order); return {ok:true,scenes,subtitles};
+});
+
+ipcMain.handle('video:postExport', async(_e,payload={})=>{
+  const lic=await onlineLicenseGuard(); if(!lic.ok) return lic;
+  const folder=payload.folder||''; const scenes=(payload.scenes||[]).filter(s=>s.keep!==false&&s.file); if(!folder||!scenes.length)return {ok:false,error:'missing_ai_timeline'};
+  const outDir=path.join(folder,'flow_auto_post'); fs.mkdirSync(outDir,{recursive:true});
+  const list=path.join(outDir,'ai-post-list.txt'); const temp=[];
+  for(const [i,sc] of scenes.entries()){
+    const out=path.join(outDir,`clip_${String(i+1).padStart(3,'0')}.mp4`); const args=['-y']; if(Number(sc.start)>0) args.push('-ss',String(sc.start)); args.push('-i',sc.file); if(Number(sc.end)>Number(sc.start||0)) args.push('-t',String(Number(sc.end)-Number(sc.start||0))); args.push('-map','0:v:0?','-map','0:a:0?','-c:v','libx264','-preset','veryfast','-crf','20','-c:a','aac','-b:a','192k',out);
+    const r=ffmpegRun(args); if(r.status!==0)return {ok:false,error:'ffmpeg_trim_failed:'+ffErr(r)}; temp.push(out);
+  }
+  fs.writeFileSync(list,temp.map(f=>`file '${concatPath(f)}'`).join('
+'),'utf8'); let merged=path.join(outDir,`ai_post_${Date.now()}.mp4`);
+  let r=ffmpegRun(['-y','-f','concat','-safe','0','-i',list,'-c','copy','-movflags','+faststart',merged]);
+  if(r.status!==0) r=ffmpegRun(['-y','-f','concat','-safe','0','-i',list,'-map','0:v:0?','-map','0:a:0?','-c:v','libx264','-preset','veryfast','-crf','20','-c:a','aac','-b:a','192k','-movflags','+faststart',merged]);
+  if(r.status!==0)return {ok:false,error:'ffmpeg_ai_merge_failed:'+ffErr(r)};
+  const subs=payload.subtitles||[]; if(subs.length){ const ass=writeAssSub(path.join(outDir,'ai_subtitles.ass'),subs,payload.subStyle||{}); const final=path.join(outDir,`ai_post_sub_${Date.now()}.mp4`); const vf=`ass=${ass.replace(/\/g,'/').replace(/:/g,'\:')}`; const rr=ffmpegRun(['-y','-i',merged,'-vf',vf,'-c:v','libx264','-preset','veryfast','-crf','20','-c:a','copy',final]); if(rr.status===0) merged=final; else return {ok:false,error:'ffmpeg_sub_burn_failed:'+ffErr(rr)}; }
+  return {ok:true,out:merged};
 });
 
 ipcMain.handle('prompt:script', async(_e,payload)=>{
