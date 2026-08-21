@@ -397,6 +397,20 @@ function extractAnalysisFrames(file,dir,maxFrames=16){
 
 
 
+
+function extractVoiceFromScene(text){
+  const m=String(text||'').match(/(?:Voiceover|Lời thoại\/Voice|Lời thoại|Voice)\s*:\s*([\s\S]*?)(?:\n\s*(?:Scene\s*\d+|Hình ảnh|Hành động|Cảm xúc|Camera|Ánh sáng|Prompt)\s*:|$)/i);
+  return m ? String(m[1]||'').trim().replace(/^"|"$/g,'') : '';
+}
+function enforceVoiceInPrompt(prompt, source, outLang='Vietnamese', voiceLang=''){
+  const voice=extractVoiceFromScene(source);
+  if(!voice) return prompt;
+  const p=String(prompt||'').trim();
+  if(p.includes(voice)) return p;
+  if(outLang==='Vietnamese') return `${p}. Lời dẫn/Voiceover bắt buộc: "${voice}". Giọng đọc: ${voiceLang||'tiếng Việt tự nhiên'}.`;
+  return `${p}. Required voiceover: "${voice}". Voice language/accent: ${voiceLang||'natural voice'}.`;
+}
+
 function looksEnglishHeavy(text){
   const t=String(text||'').toLowerCase();
   const hits=(t.match(/\b(the|and|with|in|on|a|an|of|to|for|from|cinematic|lighting|camera|shot|close|wide|medium|ultra|detailed|realistic|high-tech|glowing|background|character|voice|speaks|scene|prompt)\b/g)||[]).length;
@@ -525,8 +539,9 @@ async function generatePromptsJs(payload){
       : (outLang==='Vietnamese'
         ? `CHẾ ĐỘ KHÔNG CÓ ẢNH THAM CHIẾU: Không có ảnh nhân vật. Không tự tạo nhân vật chính cố định, không tạo Character Sheet, không thêm REF_ID, không khóa mặt, không thêm người nếu prompt không yêu cầu. Viết đúng chủ thể trong mô tả từng prompt. Nếu prompt là phong cảnh, sản phẩm, con vật, đồ vật, địa điểm hoặc ý tưởng trừu tượng thì giữ đúng chủ thể đó, không biến thành người.`
         : `NO REFERENCE IMAGE MODE: There are no uploaded character images. Do not invent a fixed main character, character sheet, REF_ID, face identity lock, or recurring identity unless the user's scene explicitly describes one. Write only what the scene/prompt describes. If the prompt is about landscape, product, animal, object, location, or abstract concept, keep that subject and do not add a human character.`);
-    const prompt=await geminiText(apiKey,[...imgs,{text:`${refInstruction}\n\nNội dung cảnh/prompt cần tạo: ${idea}\nYÊU CẦU NGÔN NGỮ BẮT BUỘC: ${finalPromptLanguageRule(outLang)} Toàn bộ prompt cuối cùng phải viết bằng ${outLang}. Nếu ${outLang} là Vietnamese, mọi mô tả, quy tắc, cảnh quay, ánh sáng, camera, cảm xúc và lời thoại phải viết bằng tiếng Việt; không dùng tiếng Anh trừ tên riêng bất khả kháng. Bám đúng nội dung, chủ thể, hành động, bối cảnh và cảm xúc của prompt gốc. Không thêm nhân vật, đạo cụ, tuyến truyện hoặc danh tính mới nếu đầu vào không có. Nếu cảnh có lời thoại, nhân vật nói bằng ${voiceLang} và giữ đồng nhất. Chỉ đổi cách diễn đạt nhạy cảm thành cách nói an toàn. ${policySafeInstruction(outLang)}`}],sys,false);
-    results.push(await ensureOutputLanguageText(apiKey, policySafePostProcess(lockPrompt(prompt,characterLock,outLang),outLang), outLang, payload.apiModel));
+    const prompt=await geminiText(apiKey,[...imgs,{text:`${refInstruction}\n\nNội dung cảnh/prompt cần tạo: ${idea}\nYÊU CẦU NGÔN NGỮ BẮT BUỘC: ${finalPromptLanguageRule(outLang)} Toàn bộ prompt cuối cùng phải viết bằng ${outLang}. Nếu ${outLang} là Vietnamese, mọi mô tả, quy tắc, cảnh quay, ánh sáng, camera, cảm xúc và lời thoại phải viết bằng tiếng Việt; không dùng tiếng Anh trừ tên riêng bất khả kháng. Bám đúng nội dung, chủ thể, hành động, bối cảnh và cảm xúc của prompt gốc. Không thêm nhân vật, đạo cụ, tuyến truyện hoặc danh tính mới nếu đầu vào không có. Nếu đầu vào có dòng Voiceover, Lời thoại/Voice hoặc Lời thoại, BẮT BUỘC giữ nguyên nội dung lời đó trong prompt cuối và ghi rõ giọng đọc/nói là ${voiceLang}. Nếu cảnh có lời thoại, nhân vật nói bằng ${voiceLang} và giữ đồng nhất. Chỉ đổi cách diễn đạt nhạy cảm thành cách nói an toàn. ${policySafeInstruction(outLang)}`}],sys,false);
+    const withVoice=enforceVoiceInPrompt(policySafePostProcess(lockPrompt(prompt,characterLock,outLang),outLang), idea, outLang, voiceLang);
+    results.push(await ensureOutputLanguageText(apiKey, withVoice, outLang, payload.apiModel));
   }
   return {ok:true,characterLock,characterRoster,generated:writeGenerated('electron-ai-generated-prompts.txt',results)};
 }
@@ -693,7 +708,7 @@ async function generateScriptJs(payload){
         emotion: sc.emotion||sc.camXuc||'',
         cameraLighting: sc.cameraLighting||sc.camera||sc.gocMayAnhSang||'',
         voice: sc.voice||sc.dialogue||sc.loiThoai||'',
-        prompt: await ensureOutputLanguageText(payload.apiKey, policySafePostProcess(lockPrompt(sc.prompt,characterSheet,outLang),outLang), outLang, payload.apiModel)
+        prompt: await ensureOutputLanguageText(payload.apiKey, enforceVoiceInPrompt(policySafePostProcess(lockPrompt(sc.prompt,characterSheet,outLang),outLang), `${sc.voice||sc.dialogue||sc.loiThoai||''}`, outLang, voiceLang), outLang, payload.apiModel)
       });
     }
     allScenes.push(...scenes);
