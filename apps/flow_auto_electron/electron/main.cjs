@@ -457,9 +457,30 @@ function enforceUniqueScenePrompts(scenes,outLang='English'){
   return out;
 }
 
+
+function formatSceneBlock(sc,outLang='Vietnamese'){
+  const n=String(sc.sceneNumber||'').padStart(2,'0');
+  const visual=sc.visual||sc.image||sc.hinhAnh||sc.description||'';
+  const action=sc.action||sc.hanhDong||'';
+  const emotion=sc.emotion||sc.camXuc||'';
+  const camera=sc.cameraLighting||sc.camera||sc.gocMayAnhSang||'';
+  const voice=sc.voice||sc.dialogue||sc.loiThoai||'';
+  const prompt=sc.prompt||'';
+  if(outLang==='Vietnamese'){
+    return `Scene ${n}:\n- Thời lượng: ${sc.duration||'8 giây'}\n- Hình ảnh: ${visual}\n- Hành động: ${action}\n- Cảm xúc: ${emotion}\n- Góc máy & Ánh sáng: ${camera}\n- Lời thoại/Voice: ${voice}\n- Prompt: "${String(prompt).replace(/^"|"$/g,'')}"`;
+  }
+  return `Scene ${n}:\n- Duration: ${sc.duration||'8 seconds'}\n- Visual: ${visual}\n- Action: ${action}\n- Emotion: ${emotion}\n- Camera & Lighting: ${camera}\n- Dialogue/Voice: ${voice}\n- Prompt: "${String(prompt).replace(/^"|"$/g,'')}"`;
+}
+
 function writeGenerated(name,prompts){ const file=path.join(JOB_DIR,name); fs.writeFileSync(file,prompts.map(x=>String(x).replace(/\s+/g,' ').trim()).filter(Boolean).join('\n\n')+'\n','utf8'); return {file,count:prompts.length,prompts}; }
-function writeScriptText(obj){ const file=path.join(JOB_DIR,'electron-ai-video-script.txt'); const scenes=(obj.scenes||[]).sort((a,b)=>(a.sceneNumber||0)-(b.sceneNumber||0)); const lines=[`TITLE: ${obj.title||''}`, obj.characterSheet?`CHARACTER SHEET:
-${obj.characterSheet}`:'', 'SCENES:', ...scenes.map(s=>`Scene ${s.sceneNumber||''} (${s.duration||''})\nDescription: ${s.description||''}\nPrompt: ${s.prompt||''}`)].filter(Boolean); fs.writeFileSync(file,lines.join('\n\n'),'utf8'); return file; }
+function writeScriptText(obj){
+  const file=path.join(JOB_DIR,'electron-ai-video-script.txt');
+  const outLang=obj.outLang||'Vietnamese';
+  const scenes=(obj.scenes||[]).sort((a,b)=>(a.sceneNumber||0)-(b.sceneNumber||0));
+  const lines=[`TITLE: ${obj.title||''}`, obj.characterSheet?`CHARACTER SHEET:\n${obj.characterSheet}`:'', 'SCENES:', ...scenes.map(s=>formatSceneBlock(s,outLang))].filter(Boolean);
+  fs.writeFileSync(file,lines.join('\n\n'),'utf8');
+  return file;
+}
 function langName(code){ return ({vi:'Vietnamese',en:'English',zh:'Chinese',ko:'Korean',es:'Spanish'}[String(code||'en')]||'English'); }
 function voiceLangName(code){ const v=String(code||'vi_south'); if(v==='en')return 'English'; if(v==='vi_north')return 'Vietnamese Northern accent (giọng Bắc)'; return 'Vietnamese Southern accent (giọng Nam)'; }
 function hasReferenceImages(payload){
@@ -612,16 +633,21 @@ async function generateScriptJs(payload){
       7. Mỗi cảnh quay phải có:
          - sceneNumber: Số thứ tự cảnh (từ ${startScene} đến ${endScene}).
          - duration: Thời lượng cảnh đó (luôn là "8s").
-         - description: Mô tả nội dung cảnh bằng ${outLang} bám sát nội dung gốc.
-         - prompt: Prompt chi tiết bằng ${outLang} cho Veo 3.1, tích hợp phong cách ${characterSuffixByLang(style,outLang)} (${style}). Nếu có ảnh tham chiếu và cảnh cần nhân vật đó, prompt phải dùng bản mô tả nhân vật đồng nhất. Nếu không có ảnh tham chiếu, prompt chỉ được viết theo mô tả của cảnh, không tự thêm nhân vật/Character Sheet/REF_ID. Tuyệt đối không dùng bối cảnh/môi trường/ánh sáng/phòng nền của ảnh tham chiếu; bối cảnh phải theo kịch bản từng cảnh.
+         - visual: Mô tả phần Hình ảnh thật chi tiết bằng ${outLang}, đúng nội dung cảnh, nêu rõ chủ thể, bối cảnh, màu sắc, chi tiết thị giác.
+         - action: Mô tả Hành động/chuyển động chính trong cảnh bằng ${outLang}.
+         - emotion: Mô tả Cảm xúc/không khí của cảnh bằng ${outLang}.
+         - cameraLighting: Mô tả Góc máy & Ánh sáng bằng ${outLang}, gồm loại góc máy, chuyển động camera, ánh sáng, màu chủ đạo.
+         - voice: Lời thoại/Voice bằng ${outLang} nếu phù hợp; nếu không có thoại thì ghi "Không có".
+         - description: Tóm tắt nội dung cảnh bằng ${outLang} bám sát nội dung gốc.
+         - prompt: Prompt video cuối cùng cho Veo 3.1, tích hợp phong cách ${characterSuffixByLang(style,outLang)} (${style}). Nếu có ảnh tham chiếu và cảnh cần nhân vật đó, prompt phải dùng bản mô tả nhân vật đồng nhất. Nếu không có ảnh tham chiếu, prompt chỉ được viết theo mô tả của cảnh, không tự thêm nhân vật/Character Sheet/REF_ID. Tuyệt đối không dùng bối cảnh/môi trường/ánh sáng/phòng nền của ảnh tham chiếu; bối cảnh phải theo kịch bản từng cảnh.
       8. NGÔN NGỮ GIỌNG NÓI NHÂN VẬT: Nếu cảnh có lời thoại/nhân vật nói, nhân vật bắt buộc nói bằng ${voiceLang}. Toàn bộ prompt trong cùng kịch bản phải đồng nhất đúng lựa chọn này, không được lúc giọng Nam lúc giọng Bắc hoặc đổi sang ngôn ngữ khác. Trong prompt video phải ghi rõ: character speaks ${voiceLang}.
       9. AN TOÀN CHÍNH SÁCH GOOGLE/FLOW: ${policySafeInstruction(outLang)}
-      10. Trả về kết quả dưới dạng JSON: {"title":"...","characterSheet":"...","scenes":[{"sceneNumber":...,"duration":"8s","description":"...","prompt":"..."}]}.`;
+      10. Trả về kết quả dưới dạng JSON: {"title":"...","characterSheet":"...","scenes":[{"sceneNumber":...,"duration":"8 giây","visual":"...","action":"...","emotion":"...","cameraLighting":"...","voice":"...","description":"...","prompt":"..."}]}.`;
 
     const characterInstruction=characterSheet
       ? `REFERENCE IMAGE MODE: Use this exact character sheet only for scenes that require the referenced character: "${characterSheet}". Repeat this compact identity in those scene prompts. Do not change face, hair, age, body type, or the exact visible outfit from the reference image.`
       : `NO REFERENCE IMAGE MODE: Do not create a fixed character sheet. Do not invent a main character, extra people, REF_ID, face identity lock, or recurring identity unless the user's script explicitly asks for one. For each scene, write only the subject described by that scene. Landscape remains landscape, product remains product, animal remains animal, object remains object, abstract scene remains abstract.`;
-    const parts=[...(i===0?imgs:[]),{text:`Topic/content: ${payload.topic}. Total video scenes: ${totalScenes}. Generate scenes ${startScene}-${endScene}. ${characterInstruction} Prompts and descriptions must be in ${outLang}. If ${outLang} is Vietnamese, every sentence in description and prompt must be Vietnamese; do not output English style phrases, English camera instructions, or English safety rules except unavoidable proper names. If any dialogue/speech exists, character voice language must be ${voiceLang} and must stay identical in every generated prompt. Do not mix accents/languages. Keep prompts short but preserve character consistency. Each scene must be unique, must follow the exact script progression, and must not repeat the same action, camera, setting, or wording from another scene. Apply this safety rule to every scene: ${policySafeInstruction(outLang)}`}];
+    const parts=[...(i===0?imgs:[]),{text:`Topic/content: ${payload.topic}. Total video scenes: ${totalScenes}. Generate scenes ${startScene}-${endScene}. ${characterInstruction} Prompts and descriptions must be in ${outLang}. If ${outLang} is Vietnamese, every sentence in description and prompt must be Vietnamese; do not output English style phrases, English camera instructions, or English safety rules except unavoidable proper names. If any dialogue/speech exists, character voice language must be ${voiceLang} and must stay identical in every generated prompt. Do not mix accents/languages. Keep prompts short but preserve character consistency. Each scene must be unique, must follow the exact script progression, and must not repeat the same action, camera, setting, or wording from another scene. Each scene must be detailed enough to render and must contain these fields: visual, action, emotion, cameraLighting, voice, prompt. Apply this safety rule to every scene: ${policySafeInstruction(outLang)}`}];
     const txt=await geminiText(payload.apiKey,parts,sys,true);
     let obj;
     try {
@@ -634,12 +660,17 @@ async function generateScriptJs(payload){
     if(i===0){ title=obj.title||payload.topic||''; if(hasRefs && obj.characterSheet) characterSheet=String(obj.characterSheet).replace(/\s+/g,' ').trim(); }
     const scenes=(obj.scenes||[]).map(sc=>({
       ...sc,
-      duration: sc.duration||'8s',
+      duration: sc.duration||'8 giây',
+      visual: sc.visual||sc.image||sc.hinhAnh||sc.description||'',
+      action: sc.action||sc.hanhDong||'',
+      emotion: sc.emotion||sc.camXuc||'',
+      cameraLighting: sc.cameraLighting||sc.camera||sc.gocMayAnhSang||'',
+      voice: sc.voice||sc.dialogue||sc.loiThoai||'',
       prompt: policySafePostProcess(lockPrompt(sc.prompt,characterSheet,outLang),outLang)
     }));
     allScenes.push(...scenes);
   }
-  const finalObj={title:title||payload.topic||'', characterSheet, totalDuration:payload.duration, scenes:enforceUniqueScenePrompts(allScenes.slice(0,totalScenes).sort((a,b)=>(a.sceneNumber||0)-(b.sceneNumber||0)),outLang)};
+  const finalObj={title:title||payload.topic||'', characterSheet, outLang, totalDuration:payload.duration, scenes:enforceUniqueScenePrompts(allScenes.slice(0,totalScenes).sort((a,b)=>(a.sceneNumber||0)-(b.sceneNumber||0)),outLang)};
   const prompts=finalObj.scenes.map(s=>s.prompt).filter(Boolean);
   const generated=writeGenerated('electron-ai-script-prompts.txt',prompts);
   const scriptFile=writeScriptText(finalObj);
