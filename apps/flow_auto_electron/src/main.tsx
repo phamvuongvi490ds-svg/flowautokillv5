@@ -121,8 +121,9 @@ function App(){
   const append=(x:any)=>setActivity(`${new Date().toLocaleTimeString()}  ${friendly(x)}`);
   const T=(vi:string,en:string)=>lang==='EN'?en:vi;
   const availableModels=modelsForMode(mode);
+  function normalizeModelForMode(m:string, md:string){ const list=modelsForMode(md); return list.includes(m)?m:list[0]; }
   function changeMode(v:string){ localStorage.setItem('flow_mode',v); setMode(v); const list=modelsForMode(v); if(!list.includes(model)){ setModel(list[0]); localStorage.setItem('flow_model',list[0]); } }
-  function saveFlowSettings(){ localStorage.setItem('flow_mode',mode); localStorage.setItem('flow_model',model); localStorage.setItem('flow_ratio',ratio); localStorage.setItem('flow_count',count); localStorage.setItem('flow_spacing',spacing); localStorage.setItem('flow_run_mode',runMode); localStorage.setItem('flow_auto_download',String(autoDownload)); localStorage.setItem('flow_download_dir',downloadDir); append('✅ Đã lưu cấu hình setting. Lần sau mở app sẽ giữ nguyên tùy chọn.'); }
+  function saveFlowSettings(){ const safeModel=normalizeModelForMode(model,mode); if(safeModel!==model)setModel(safeModel); localStorage.setItem('flow_mode',mode); localStorage.setItem('flow_model',safeModel); localStorage.setItem('flow_ratio',ratio); localStorage.setItem('flow_count',count); localStorage.setItem('flow_spacing',spacing); localStorage.setItem('flow_run_mode',runMode); localStorage.setItem('flow_auto_download',String(autoDownload)); localStorage.setItem('flow_download_dir',downloadDir); append('✅ Đã lưu cấu hình setting. Lần sau mở app sẽ giữ nguyên tùy chọn.'); }
   const nav=[['flow',T('Vận hành Flow','Flow Operation'),Film],['ai','AI Prompt Studio',Wand2],['chars','Prompt nhân vật',ImagePlus],['multi',T('Đa luồng','Multi-profile'),Film],['post',T('Hậu kì video','Video Post-production'),Scissors],['payment',T('Thanh toán','Payment'),CreditCard],['license','License',KeyRound]];
   function switchLang(next:string){localStorage.setItem('flow_lang',next); setLang(next); setLangNotice(true); setActivity(next==='EN'?'Language changed. Please restart app to fully apply.':'Đã đổi ngôn ngữ. Vui lòng khởi động lại app để áp dụng đầy đủ.')}
   function saveApiConfig(){localStorage.setItem('gemini_api_keys',apiKeys); localStorage.setItem('gemini_api_model',geminiApiModel); localStorage.setItem('ai_style',style); localStorage.setItem('ai_media_type',mediaType); localStorage.setItem('ai_duration_value',durationValue); localStorage.setItem('ai_duration_unit',durationUnit); localStorage.setItem('ai_prompt_lang',promptLang); localStorage.setItem('ai_voice_lang',voiceLang); append(lang==='EN'?'✅ API configuration saved.':'✅ Đã lưu cấu hình API.')}
@@ -210,7 +211,7 @@ function App(){
   function runPayload(file?:string, overrides:any={}){
     const liveMode=overrides.mode ?? mode;
     const liveSubMode=overrides.subMode ?? subMode;
-    const liveModel=overrides.model ?? model;
+    const liveModel=normalizeModelForMode(overrides.model ?? model, liveMode);
     const liveRatio=overrides.ratio ?? ratio;
     const liveCount=overrides.count ?? count;
     const liveOmniDuration=overrides.omniDuration ?? omniDuration;

@@ -583,13 +583,13 @@ def apply_flow_settings(page, args):
                 nano_banana_pro:['Nano Banana Pro'], nano_banana2:['Nano Banana 2'], nano_banana2_lite:['Nano Banana 2 Lite'], nano_banana:['Nano Banana 2','Nano Banana'], imagen4:['Imagen 4'], omni_flash:['Omni Flash','Omni']
               };
               const aliases = models[cfg.model] || (isImage ? models.nano_banana_pro : models.veo3_fast);
-              const matchAlias = (text) => aliases.some(a => { const t=norm(text).trim(), m=norm(a).trim(); if (!t || !m) return false; if (cfg.model === 'omni_flash') return t === m || t.includes('omni flash') || t === 'omni'; return t === m || t.includes(m) || (m.length > 5 && m.includes(t)); });
+              const matchAlias = (text) => aliases.some(a => { const t=norm(text).trim(), m=norm(a).trim(); if (!t || !m) return false; if (cfg.model === 'omni_flash') return t === m || t.includes('omni flash') || t === 'omni'; return t === m || t.includes(m); });
               let modelRes = {ok:true, skipped: cfg.model === 'custom'};
               if (cfg.model !== 'custom') {
                 await openPanel();
                 const buttons = () => Array.from((document.querySelector('[role="menu"][data-state="open"]') || document).querySelectorAll('button')).filter(visible);
-                let trigger = buttons().find(b => matchAlias(b.innerText||b.textContent||''))
-                  || buttons().find(b => (b.getAttribute('aria-haspopup')||'').includes('menu') && /veo|banana|imagen|omni|fast|lite|quality/i.test(b.innerText||''));
+                let trigger = buttons().find(b => (b.getAttribute('aria-haspopup')||'').includes('menu') && /veo|banana|imagen|omni|fast|lite|quality/i.test(b.innerText||b.textContent||''))
+                  || buttons().find(b => matchAlias(b.innerText||b.textContent||''));
                 const before = trigger ? (trigger.innerText || trigger.textContent || '') : '';
                 if (trigger && matchAlias(before)) {
                   modelRes = {ok:true, already:true, before, aliases};
@@ -600,9 +600,9 @@ def apply_flow_settings(page, args):
                   const btn = cfg.model === 'omni_flash' ? (opts.find(b => norm(b.innerText||b.textContent||'').trim() === 'omni flash') || opts.find(b => norm(b.innerText||b.textContent||'').trim() === 'omni') || opts.find(b => norm(b.innerText||b.textContent||'').includes('omni flash'))) : (opts.find(b => String(b.innerText||b.textContent||'').trim().includes(exact)) || opts.find(b => matchAlias(b.innerText||b.textContent||''))); 
                   if (btn) { clickExt(btn); await p(1500); }
                   await openPanel();
-                  const afterBtn = buttons().find(b => /veo|banana|imagen|omni|fast|lite|quality/i.test(b.innerText||''));
+                  const afterBtn = buttons().find(b => (b.getAttribute('aria-haspopup')||'').includes('menu') && /veo|banana|imagen|omni|fast|lite|quality/i.test(b.innerText||b.textContent||'')) || buttons().find(b => /veo|banana|imagen|omni|fast|lite|quality/i.test(b.innerText||b.textContent||''));
                   const after = afterBtn ? (afterBtn.innerText || afterBtn.textContent || '') : '';
-                  modelRes = {ok:!!btn && (matchAlias(after) || matchAlias(btn.innerText||btn.textContent||'')), before, after, clicked:btn ? (btn.innerText||btn.textContent||'') : '', aliases};
+                  modelRes = {ok:!!btn && matchAlias(after), before, after, clicked:btn ? (btn.innerText||btn.textContent||'') : '', aliases};
                 } else {
                   modelRes = {ok:false, reason:'model_trigger_missing', aliases};
                 }
