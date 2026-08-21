@@ -454,9 +454,14 @@ function writeScriptText(obj){ const file=path.join(JOB_DIR,'electron-ai-video-s
 ${obj.characterSheet}`:'', 'SCENES:', ...scenes.map(s=>`Scene ${s.sceneNumber||''} (${s.duration||''})\nDescription: ${s.description||''}\nPrompt: ${s.prompt||''}`)].filter(Boolean); fs.writeFileSync(file,lines.join('\n\n'),'utf8'); return file; }
 function langName(code){ return ({vi:'Vietnamese',en:'English',zh:'Chinese',ko:'Korean',es:'Spanish'}[String(code||'en')]||'English'); }
 function voiceLangName(code){ const v=String(code||'vi_south'); if(v==='en')return 'English'; if(v==='vi_north')return 'Vietnamese Northern accent (giọng Bắc)'; return 'Vietnamese Southern accent (giọng Nam)'; }
+function hasReferenceImages(payload){
+  const direct=Array.isArray(payload.characterImages)&&payload.characterImages.length>0;
+  const dir=payload.refsDir ? imageFilesFromDir(payload.refsDir).length>0 : false;
+  return !!(direct||dir);
+}
 async function generatePromptsJs(payload){
   const apiKey=payload.apiKey||''; const style=payload.style||'CINEMATIC'; const media=payload.mediaType||'IMAGE'; const outLang=langName(payload.promptLang); const voiceLang=voiceLangName(payload.voiceLang);
-  const sys=characterSystem(style,media,outLang); const imgs=imageParts(payload.characterImages); const characterLock=await buildCharacterLock(apiKey,payload.characterImages); const characterRoster=await buildCharacterRoster(apiKey,payload.characterImages,payload.ideas||'');
+  const sys=characterSystem(style,media,outLang); const hasRefs=Array.isArray(payload.characterImages)&&payload.characterImages.length>0; const imgs=imageParts(payload.characterImages); const characterLock=hasRefs?await buildCharacterLock(apiKey,payload.characterImages):''; const characterRoster=hasRefs?await buildCharacterRoster(apiKey,payload.characterImages,payload.ideas||''):'';
   const results=[];
   for(const idea of splitIdeas(payload.ideas)){
     const prompt=await geminiText(apiKey,[...imgs,{text:`CHARACTER LOCK TO KEEP EXACTLY:\n${characterLock||'(no reference character)'}\n\nScene/content to generate prompt for: ${idea}\nRequirement: write the prompt in ${outLang} only. Identify which uploaded reference character(s) appear in this scene by REF_ID and likelyName. For every character in the scene, include that REF_ID and its visualLock so Flow can use the correct reference image and keep the character consistent. The visualLock must describe only face, clothing, hair and expression/aura; the background/environment must be generated from the script scene, never from the reference image. If the full script has many uploaded characters, preserve all named characters from the script and never merge identities. If the scene contains speech/dialogue, the character must speak ${voiceLang} with a natural ${voiceLang} voice/accent; include this instruction explicitly in the video prompt. Follow the content, scene intent, character action, setting, and emotional meaning exactly; only rewrite sensitive or policy-risk wording into safe cinematic phrasing. ${policySafeInstruction(outLang)}`}],sys,false);
@@ -564,7 +569,8 @@ async function generateScriptJs(payload){
   const totalScenes=durationScenes(payload.duration);
   const refImages = (payload.refsDir ? imageFilesFromDir(payload.refsDir) : []).concat(payload.characterImages || []);
   const imgs=imageParts(refImages);
-  let characterSheet=await buildCharacterLock(payload.apiKey,refImages);
+  const hasRefs=hasReferenceImages(payload);
+  let characterSheet=hasRefs?await buildCharacterLock(payload.apiKey,refImages):'';
   const style=payload.style||'CINEMATIC';
   const outLang=langName(payload.promptLang);
   const voiceLang=voiceLangName(payload.voiceLang);
@@ -584,22 +590,22 @@ async function generateScriptJs(payload){
       3. BẠN PHẢI TẠO CHÍNH XÁC ${sceneCount} CẢNH QUAY (từ cảnh ${startScene} đến cảnh ${endScene}). Không được thiếu, không được thừa.
       4. MỖI CẢNH QUAY PHẢI CÓ THỜI LƯỢNG CỐ ĐỊNH LÀ 8 GIÂY (8s).
       5. TỐI ƯU ĐỒNG NHẤT NHÂN VẬT: 
-         ${characterSheet ? `- SỬ DỤNG BẢN MÔ TẢ NHÂN VẬT SAU ĐÂY CHO TẤT CẢ CÁC CẢNH: "${characterSheet}"` : `- Bước 1: Xác định một "bản mô tả nhân vật" (Character Sheet) cực kỳ chi tiết bao gồm: Giới tính, độ tuổi, sắc tộc, kiểu tóc, màu mắt, đặc điểm khuôn mặt, trang phục, phụ kiện.`}
-         - Bắt buộc lặp lại TOÀN BỘ bản mô tả nhân vật này vào phần đầu của MỖI prompt trong từng cảnh quay.
-         - Đảm bảo hành động không làm thay đổi các đặc điểm này.
+         ${characterSheet ? `- SỬ DỤNG BẢN MÔ TẢ NHÂN VẬT SAU ĐÂY CHO TẤT CẢ CÁC CẢNH CÓ NHÂN VẬT THAM CHIẾU: "${characterSheet}"` : `- KHÔNG CÓ ẢNH THAM CHIẾU: không tự tạo Character Sheet cố định, không tự thêm nhân vật chính, không tự thêm người nếu kịch bản không yêu cầu. Mỗi cảnh chỉ mô tả đúng chủ thể/nội dung có trong kịch bản.`}
+         ${characterSheet ? '- Bắt buộc lặp lại TOÀN BỘ bản mô tả nhân vật này vào prompt của các cảnh cần nhân vật tham chiếu.' : '- Nếu cảnh là phong cảnh/đồ vật/sản phẩm/con vật/địa điểm/ý tưởng trừu tượng thì giữ nguyên chủ thể đó, không biến thành người.'}
+         - Đảm bảo hành động và chủ thể không bị AI tự ý thêm hoặc đổi.
       6. CHỐNG TRÙNG LẶP CẢNH: Mỗi cảnh phải có nội dung riêng theo đúng tiến trình kịch bản. Không được lặp lại cùng hành động, cùng mô tả, cùng góc máy, cùng bối cảnh hoặc cùng prompt giữa các cảnh. Cảnh sau phải phát triển câu chuyện từ cảnh trước.
       7. Mỗi cảnh quay phải có:
          - sceneNumber: Số thứ tự cảnh (từ ${startScene} đến ${endScene}).
          - duration: Thời lượng cảnh đó (luôn là "8s").
          - description: Mô tả nội dung cảnh bằng ${outLang} bám sát nội dung gốc.
-         - prompt: Prompt chi tiết bằng ${outLang} cho Veo 3.1, tích hợp phong cách ${STYLE_SUFFIX[style]} (${style}). Prompt PHẢI bắt đầu bằng bản mô tả nhân vật đồng nhất đã xác định, chỉ gồm khuôn mặt, quần áo, tóc tai, vóc dáng, thần thái/biểu cảm. Tuyệt đối không dùng bối cảnh/môi trường/ánh sáng/phòng nền của ảnh tham chiếu; bối cảnh phải thay đổi theo kịch bản từng cảnh.
+         - prompt: Prompt chi tiết bằng ${outLang} cho Veo 3.1, tích hợp phong cách ${STYLE_SUFFIX[style]} (${style}). Nếu có ảnh tham chiếu và cảnh cần nhân vật đó, prompt phải dùng bản mô tả nhân vật đồng nhất. Nếu không có ảnh tham chiếu, prompt chỉ được viết theo mô tả của cảnh, không tự thêm nhân vật/Character Sheet/REF_ID. Tuyệt đối không dùng bối cảnh/môi trường/ánh sáng/phòng nền của ảnh tham chiếu; bối cảnh phải theo kịch bản từng cảnh.
       8. NGÔN NGỮ GIỌNG NÓI NHÂN VẬT: Nếu cảnh có lời thoại/nhân vật nói, nhân vật bắt buộc nói bằng ${voiceLang}. Toàn bộ prompt trong cùng kịch bản phải đồng nhất đúng lựa chọn này, không được lúc giọng Nam lúc giọng Bắc hoặc đổi sang ngôn ngữ khác. Trong prompt video phải ghi rõ: character speaks ${voiceLang}.
       9. AN TOÀN CHÍNH SÁCH GOOGLE/FLOW: ${policySafeInstruction(outLang)}
       10. Trả về kết quả dưới dạng JSON: {"title":"...","characterSheet":"...","scenes":[{"sceneNumber":...,"duration":"8s","description":"...","prompt":"..."}]}.`;
 
     const characterInstruction=characterSheet
-      ? `USE THIS EXACT CHARACTER SHEET FOR ALL SCENES: "${characterSheet}". Repeat this compact identity inside every prompt, translated/written in ${outLang}. Do not change face, hair, age, body type, or the exact visible outfit from the reference image. The outfit must remain identical: same garment type, color, material, pattern, fit, length, neckline/collar, sleeves, accessories, and shoes if visible. If the reference shows a dress, every prompt must say the same dress, not a shirt or top.`
-      : `If reference images are included, first create a compact Character Sheet under 45 words from the images in ${outLang}, then repeat it inside every scene prompt.`;
+      ? `REFERENCE IMAGE MODE: Use this exact character sheet only for scenes that require the referenced character: "${characterSheet}". Repeat this compact identity in those scene prompts. Do not change face, hair, age, body type, or the exact visible outfit from the reference image.`
+      : `NO REFERENCE IMAGE MODE: Do not create a fixed character sheet. Do not invent a main character, extra people, REF_ID, face identity lock, or recurring identity unless the user's script explicitly asks for one. For each scene, write only the subject described by that scene. Landscape remains landscape, product remains product, animal remains animal, object remains object, abstract scene remains abstract.`;
     const parts=[...(i===0?imgs:[]),{text:`Topic/content: ${payload.topic}. Total video scenes: ${totalScenes}. Generate scenes ${startScene}-${endScene}. ${characterInstruction} Prompts and descriptions must be in ${outLang}. If any dialogue/speech exists, character voice language must be ${voiceLang} and must stay identical in every generated prompt. Do not mix accents/languages. Keep prompts short but preserve character consistency. Each scene must be unique, must follow the exact script progression, and must not repeat the same action, camera, setting, or wording from another scene. Apply this safety rule to every scene: ${policySafeInstruction(outLang)}`}];
     const txt=await geminiText(payload.apiKey,parts,sys,true);
     let obj;
@@ -610,7 +616,7 @@ async function generateScriptJs(payload){
       const m = txt.match(/\{[\s\S]*\}/);
       if (m) obj = JSON.parse(m[0]); else throw e;
     }
-    if(i===0){ title=obj.title||payload.topic||''; if(obj.characterSheet) characterSheet=String(obj.characterSheet).replace(/\s+/g,' ').trim(); }
+    if(i===0){ title=obj.title||payload.topic||''; if(hasRefs && obj.characterSheet) characterSheet=String(obj.characterSheet).replace(/\s+/g,' ').trim(); }
     const scenes=(obj.scenes||[]).map(sc=>({
       ...sc,
       duration: sc.duration||'8s',
