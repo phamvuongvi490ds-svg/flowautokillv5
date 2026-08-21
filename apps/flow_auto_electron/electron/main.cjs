@@ -925,19 +925,35 @@ AutoSub=${!!payload.autoSub} Language=${payload.subLang||'vi'}`;
 
 ipcMain.handle('video:postExport', async(_e,payload={})=>{
   const lic=await onlineLicenseGuard(); if(!lic.ok) return lic;
-  const folder=payload.folder||''; const scenes=(payload.scenes||[]).filter(s=>s.keep!==false&&s.file); if(!folder||!scenes.length)return {ok:false,error:'missing_ai_timeline'};
+  const folder=payload.folder||'';
+  const scenes=(payload.scenes||[]).filter(s=>s.keep!==false&&s.file);
+  if(!folder||!scenes.length)return {ok:false,error:'missing_ai_timeline'};
   const outDir=path.join(folder,'flow_auto_post'); fs.mkdirSync(outDir,{recursive:true});
   const list=path.join(outDir,'ai-post-list.txt'); const temp=[];
   for(const [i,sc] of scenes.entries()){
-    const out=path.join(outDir,`clip_${String(i+1).padStart(3,'0')}.mp4`); const args=['-y']; if(Number(sc.start)>0) args.push('-ss',String(sc.start)); args.push('-i',sc.file); if(Number(sc.end)>Number(sc.start||0)) args.push('-t',String(Number(sc.end)-Number(sc.start||0))); args.push('-map','0:v:0?','-map','0:a:0?','-c:v','libx264','-preset','veryfast','-crf','20','-c:a','aac','-b:a','192k',out);
-    const r=ffmpegRun(args); if(r.status!==0)return {ok:false,error:'ffmpeg_trim_failed:'+ffErr(r)}; temp.push(out);
+    const out=path.join(outDir,`clip_${String(i+1).padStart(3,'0')}.mp4`);
+    const args=['-y'];
+    if(Number(sc.start)>0) args.push('-ss',String(sc.start));
+    args.push('-i',sc.file);
+    if(Number(sc.end)>Number(sc.start||0)) args.push('-t',String(Number(sc.end)-Number(sc.start||0)));
+    args.push('-map','0:v:0?','-map','0:a:0?','-c:v','libx264','-preset','veryfast','-crf','20','-c:a','aac','-b:a','192k',out);
+    const r=ffmpegRun(args); if(r.status!==0)return {ok:false,error:'ffmpeg_trim_failed:'+ffErr(r)};
+    temp.push(out);
   }
-  fs.writeFileSync(list,temp.map(f=>`file '${concatPath(f)}'`).join('
-'),'utf8'); let merged=path.join(outDir,`ai_post_${Date.now()}.mp4`);
+  fs.writeFileSync(list,temp.map(f=>`file '${concatPath(f)}'`).join('\n'),'utf8');
+  let merged=path.join(outDir,`ai_post_${Date.now()}.mp4`);
   let r=ffmpegRun(['-y','-f','concat','-safe','0','-i',list,'-c','copy','-movflags','+faststart',merged]);
   if(r.status!==0) r=ffmpegRun(['-y','-f','concat','-safe','0','-i',list,'-map','0:v:0?','-map','0:a:0?','-c:v','libx264','-preset','veryfast','-crf','20','-c:a','aac','-b:a','192k','-movflags','+faststart',merged]);
   if(r.status!==0)return {ok:false,error:'ffmpeg_ai_merge_failed:'+ffErr(r)};
-  const subs=payload.subtitles||[]; if(subs.length){ const ass=writeAssSub(path.join(outDir,'ai_subtitles.ass'),subs,payload.subStyle||{}); const final=path.join(outDir,`ai_post_sub_${Date.now()}.mp4`); const vf=`ass=${ass.replace(/\/g,'/').replace(/:/g,'\:')}`; const rr=ffmpegRun(['-y','-i',merged,'-vf',vf,'-c:v','libx264','-preset','veryfast','-crf','20','-c:a','copy',final]); if(rr.status===0) merged=final; else return {ok:false,error:'ffmpeg_sub_burn_failed:'+ffErr(rr)}; }
+  const subs=payload.subtitles||[];
+  if(subs.length){
+    const ass=writeAssSub(path.join(outDir,'ai_subtitles.ass'),subs,payload.subStyle||{});
+    const final=path.join(outDir,`ai_post_sub_${Date.now()}.mp4`);
+    const assPath=ass.replace(/\\/g,'/').replace(/:/g,'\\:').replace(/'/g,"\\'");
+    const vf=`ass='${assPath}'`;
+    const rr=ffmpegRun(['-y','-i',merged,'-vf',vf,'-c:v','libx264','-preset','veryfast','-crf','20','-c:a','copy',final]);
+    if(rr.status===0) merged=final; else return {ok:false,error:'ffmpeg_sub_burn_failed:'+ffErr(rr)};
+  }
   return {ok:true,out:merged};
 });
 
