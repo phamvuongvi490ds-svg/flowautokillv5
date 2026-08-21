@@ -411,6 +411,14 @@ function policySafePostProcess(text,outLang='English'){
     [/(máu me|đẫm máu|giết|giết chóc|xác chết|thi thể|súng|dao|bom|khỏa thân|khiêu dâm|gợi dục|ma túy|người nổi tiếng|logo|thương hiệu)/gi,'chi tiết điện ảnh an toàn, không trực diện']
   ];
   for(const [a,b] of reps) t=t.replace(a,b);
+  if(outLang==='Vietnamese'){
+    t=t.replace(/CHARACTER_REFERENCE\s*\/\s*FACE_IDENTITY_LOCK/gi,'KHÓA NHẬN DẠNG NHÂN VẬT')
+      .replace(/NO REFERENCE IMAGE MODE/gi,'CHẾ ĐỘ KHÔNG CÓ ẢNH THAM CHIẾU')
+      .replace(/UNIQUE SCENE/gi,'CẢNH RIÊNG BIỆT')
+      .replace(/Use the uploaded reference image as the exact identity source/gi,'Dùng ảnh tham chiếu đã upload làm nguồn nhận dạng chính xác')
+      .replace(/Same character throughout/gi,'Giữ cùng một nhân vật xuyên suốt')
+      .replace(/Keep face, hair, age, body type, and main outfit consistent/gi,'Giữ khuôn mặt, tóc, độ tuổi, vóc dáng và trang phục chính đồng nhất');
+  }
   return t;
 }
 
@@ -598,7 +606,7 @@ async function generateScriptJs(payload){
          - sceneNumber: Số thứ tự cảnh (từ ${startScene} đến ${endScene}).
          - duration: Thời lượng cảnh đó (luôn là "8s").
          - description: Mô tả nội dung cảnh bằng ${outLang} bám sát nội dung gốc.
-         - prompt: Prompt chi tiết bằng ${outLang} cho Veo 3.1, tích hợp phong cách ${STYLE_SUFFIX[style]} (${style}). Nếu có ảnh tham chiếu và cảnh cần nhân vật đó, prompt phải dùng bản mô tả nhân vật đồng nhất. Nếu không có ảnh tham chiếu, prompt chỉ được viết theo mô tả của cảnh, không tự thêm nhân vật/Character Sheet/REF_ID. Tuyệt đối không dùng bối cảnh/môi trường/ánh sáng/phòng nền của ảnh tham chiếu; bối cảnh phải theo kịch bản từng cảnh.
+         - prompt: Prompt chi tiết bằng ${outLang} cho Veo 3.1, tích hợp phong cách ${characterSuffixByLang(style,outLang)} (${style}). Nếu có ảnh tham chiếu và cảnh cần nhân vật đó, prompt phải dùng bản mô tả nhân vật đồng nhất. Nếu không có ảnh tham chiếu, prompt chỉ được viết theo mô tả của cảnh, không tự thêm nhân vật/Character Sheet/REF_ID. Tuyệt đối không dùng bối cảnh/môi trường/ánh sáng/phòng nền của ảnh tham chiếu; bối cảnh phải theo kịch bản từng cảnh.
       8. NGÔN NGỮ GIỌNG NÓI NHÂN VẬT: Nếu cảnh có lời thoại/nhân vật nói, nhân vật bắt buộc nói bằng ${voiceLang}. Toàn bộ prompt trong cùng kịch bản phải đồng nhất đúng lựa chọn này, không được lúc giọng Nam lúc giọng Bắc hoặc đổi sang ngôn ngữ khác. Trong prompt video phải ghi rõ: character speaks ${voiceLang}.
       9. AN TOÀN CHÍNH SÁCH GOOGLE/FLOW: ${policySafeInstruction(outLang)}
       10. Trả về kết quả dưới dạng JSON: {"title":"...","characterSheet":"...","scenes":[{"sceneNumber":...,"duration":"8s","description":"...","prompt":"..."}]}.`;
@@ -606,7 +614,7 @@ async function generateScriptJs(payload){
     const characterInstruction=characterSheet
       ? `REFERENCE IMAGE MODE: Use this exact character sheet only for scenes that require the referenced character: "${characterSheet}". Repeat this compact identity in those scene prompts. Do not change face, hair, age, body type, or the exact visible outfit from the reference image.`
       : `NO REFERENCE IMAGE MODE: Do not create a fixed character sheet. Do not invent a main character, extra people, REF_ID, face identity lock, or recurring identity unless the user's script explicitly asks for one. For each scene, write only the subject described by that scene. Landscape remains landscape, product remains product, animal remains animal, object remains object, abstract scene remains abstract.`;
-    const parts=[...(i===0?imgs:[]),{text:`Topic/content: ${payload.topic}. Total video scenes: ${totalScenes}. Generate scenes ${startScene}-${endScene}. ${characterInstruction} Prompts and descriptions must be in ${outLang}. If any dialogue/speech exists, character voice language must be ${voiceLang} and must stay identical in every generated prompt. Do not mix accents/languages. Keep prompts short but preserve character consistency. Each scene must be unique, must follow the exact script progression, and must not repeat the same action, camera, setting, or wording from another scene. Apply this safety rule to every scene: ${policySafeInstruction(outLang)}`}];
+    const parts=[...(i===0?imgs:[]),{text:`Topic/content: ${payload.topic}. Total video scenes: ${totalScenes}. Generate scenes ${startScene}-${endScene}. ${characterInstruction} Prompts and descriptions must be in ${outLang}. If ${outLang} is Vietnamese, every sentence in description and prompt must be Vietnamese; do not output English style phrases, English camera instructions, or English safety rules except unavoidable proper names. If any dialogue/speech exists, character voice language must be ${voiceLang} and must stay identical in every generated prompt. Do not mix accents/languages. Keep prompts short but preserve character consistency. Each scene must be unique, must follow the exact script progression, and must not repeat the same action, camera, setting, or wording from another scene. Apply this safety rule to every scene: ${policySafeInstruction(outLang)}`}];
     const txt=await geminiText(payload.apiKey,parts,sys,true);
     let obj;
     try {
@@ -620,7 +628,7 @@ async function generateScriptJs(payload){
     const scenes=(obj.scenes||[]).map(sc=>({
       ...sc,
       duration: sc.duration||'8s',
-      prompt: lockPrompt(sc.prompt,characterSheet,outLang)
+      prompt: policySafePostProcess(lockPrompt(sc.prompt,characterSheet,outLang),outLang)
     }));
     allScenes.push(...scenes);
   }
