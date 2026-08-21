@@ -1882,8 +1882,7 @@ def run(args):
             time.sleep(1.0)
 
         page = ensure_project_page(page)
-        if not getattr(args, "hide", False):
-            page.bring_to_front()
+        # Do not force the Flow browser window to front. Users may intentionally keep it hidden/minimized.
         time.sleep(1.0)
         capture_startup_screenshot(page)
         # Critical: do not apply mode/model until the project composer is actually ready.
@@ -1925,8 +1924,7 @@ def run(args):
                 try:
                     license_guard_or_raise(force=True)
                     
-                    if not getattr(args, "hide", False):
-                        page.bring_to_front()
+                    # Do not force the Flow browser window to front between prompts.
 
                     # Settings are applied only once per run. Do not re-select model/ratio/count for later prompts.
                     if not settings_applied:
@@ -2048,8 +2046,7 @@ def run(args):
             if ok and prompt_no < total:
                 try:
                     
-                    if not getattr(args, "hide", False):
-                        page.bring_to_front()
+                    # Do not force the Flow browser window to front after each prompt.
                     close_open_menus(page)
                     clear_attached_references(page)
 
