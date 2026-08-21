@@ -912,8 +912,7 @@ ipcMain.handle('video:postPlan', async(_e,payload={})=>{
 ${script||'(không có)'}
 
 FILES:
-${files.map((f,i)=>`${i+1}. ${path.basename(f)} duration=${videoDurationSec(f)}s`).join('
-')}
+${files.map((f,i)=>`${i+1}. ${path.basename(f)} duration=${videoDurationSec(f)}s`).join('\n')}
 
 AutoSub=${!!payload.autoSub} Language=${payload.subLang||'vi'}`;
       const out=await geminiText(apiKey,[{text}],sys,true); const obj=JSON.parse(out.replace(/^```json\s*|```$/g,''));
