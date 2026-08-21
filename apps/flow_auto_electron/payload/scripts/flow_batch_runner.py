@@ -1,5 +1,6 @@
 import argparse
 import base64
+import hashlib
 import os
 from pathlib import Path
 from urllib import error, request
@@ -1450,6 +1451,45 @@ def _detect_ext_from_bytes(head: bytes):
     return None
 
 
+
+def _download_manifest_path(output_dir=None):
+    out_dir = Path(output_dir).expanduser() if output_dir else Path.home() / "Downloads"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir / ".flow_auto_download_hashes.json"
+
+def _load_download_manifest(output_dir=None):
+    path = _download_manifest_path(output_dir)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            data.setdefault("items", [])
+            return data
+    except Exception:
+        pass
+    return {"items": []}
+
+def _media_sha256(data: bytes):
+    return hashlib.sha256(data or b"").hexdigest()
+
+def _is_duplicate_media(data: bytes, output_dir=None):
+    h = _media_sha256(data)
+    manifest = _load_download_manifest(output_dir)
+    recent = list(manifest.get("items") or [])[-80:]
+    for item in recent:
+        if item.get("sha256") == h:
+            return True, h, item
+    return False, h, None
+
+def _remember_media_hash(data: bytes, saved_name: str, output_dir=None):
+    manifest = _load_download_manifest(output_dir)
+    items = list(manifest.get("items") or [])
+    items.append({"sha256": _media_sha256(data), "file": saved_name, "ts": datetime.now(timezone.utc).isoformat()})
+    manifest["items"] = items[-300:]
+    try:
+        _download_manifest_path(output_dir).write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
 def _next_numbered_media_target(output_dir=None, ext=".mp4"):
     """Return next sequential media filename: 1.ext, 2.ext, ... in output_dir.
 
@@ -1478,8 +1518,12 @@ def _save_media_bytes(data: bytes, output_prefix="flow-auto", output_dir=None):
     ext = _detect_ext_from_bytes(data[:64])
     if not ext:
         return False, "direct_invalid_media_bytes"
+    dup, h, item = _is_duplicate_media(data, output_dir=output_dir)
+    if dup:
+        return True, f"duplicate_skipped:{item.get('file','existing')}"
     target = _next_numbered_media_target(output_dir=output_dir, ext=ext)
     target.write_bytes(data)
+    _remember_media_hash(data, target.name, output_dir=output_dir)
     return True, f"direct_saved:{target.name}"
 
 
@@ -1698,14 +1742,26 @@ def extension_download_tile_via_ui(page, resolution="720p", before_ids=None, out
                 out_dir.mkdir(parents=True, exist_ok=True)
             except Exception:
                 pass
+            data = download_path.read_bytes()
+            dup, h, item = _is_duplicate_media(data, output_dir=out_dir)
+            if dup:
+                try:
+                    download_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return True, f"duplicate_skipped:{item.get('file','existing')}"
             target = _next_numbered_media_target(output_dir=out_dir, ext=detected_ext)
             try:
                 download_obj.save_as(str(target))
             except Exception:
                 try:
-                    target.write_bytes(download_path.read_bytes())
+                    target.write_bytes(data)
                 except Exception:
                     pass
+            if target.exists():
+                _remember_media_hash(target.read_bytes(), target.name, output_dir=out_dir)
+            else:
+                _remember_media_hash(data, target.name, output_dir=out_dir)
             return True, f"done_saved_as:{target.name}"
 
         try:
