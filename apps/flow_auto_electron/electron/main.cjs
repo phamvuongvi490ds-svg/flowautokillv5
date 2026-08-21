@@ -359,7 +359,7 @@ async function fetchUrlReadable(url){
     const ct=String(r.headers.get('content-type')||'').toLowerCase();
     const finalUrl=r.url||u;
     if(ct.startsWith('video/')||/\.(mp4|mov|webm|mkv|m4v)(\?|$)/i.test(finalUrl)){
-      return {url:finalUrl,contentType:ct,title:path.basename(finalUrl.split('?')[0]),text:`Direct video URL: ${finalUrl}. Use this as a video source URL. Infer the script only from URL/page metadata if no transcript is available.`};
+      return {url:finalUrl,contentType:ct,isDirectVideo:true,title:path.basename(finalUrl.split('?')[0]),text:`Direct video URL: ${finalUrl}. This URL points to a downloadable video file.`};
     }
     let txt=await r.text();
     if(ct.includes('html')||/<html[\s>]/i.test(txt)){
@@ -370,6 +370,29 @@ async function fetchUrlReadable(url){
     }
     return {url:finalUrl,contentType:ct,title:'',text:String(txt||'').replace(/\s+/g,' ').trim().slice(0,25000)};
   }finally{clearTimeout(t);}
+}
+
+
+async function downloadVideoForAnalysis(url){
+  const controller=new AbortController(); const t=setTimeout(()=>controller.abort(),45000);
+  try{
+    const r=await fetch(url,{redirect:'follow',headers:{'User-Agent':'Mozilla/5.0 FlowAutoPro Video Analyzer','Accept':'video/*,*/*'},signal:controller.signal});
+    if(!r.ok) throw new Error('http_'+r.status);
+    const len=Number(r.headers.get('content-length')||0);
+    if(len && len>90*1024*1024) throw new Error('video_too_large_max_90mb');
+    const buf=Buffer.from(await r.arrayBuffer());
+    if(buf.length>90*1024*1024) throw new Error('video_too_large_max_90mb');
+    const ext=(String(new URL(r.url||url).pathname).match(/\.(mp4|mov|webm|mkv|m4v)$/i)||[])[0]||'.mp4';
+    const dir=path.join(JOB_DIR,'url-video-analysis-'+Date.now()); fs.mkdirSync(dir,{recursive:true});
+    const file=path.join(dir,'source'+ext); fs.writeFileSync(file,buf);
+    return {file,dir,bytes:buf.length};
+  }finally{clearTimeout(t);}
+}
+function extractAnalysisFrames(file,dir,maxFrames=16){
+  const pattern=path.join(dir,'url_frame_%02d.jpg');
+  const r=ffmpegRun(['-y','-i',file,'-vf','fps=1/2,scale=640:-1','-frames:v',String(maxFrames),pattern]);
+  if(r.status!==0) throw new Error('url_video_frame_extract_failed:'+ffErr(r));
+  return fs.readdirSync(dir).filter(x=>/^url_frame_\d+\.jpe?g$/i.test(x)).map(x=>path.join(dir,x)).slice(0,maxFrames);
 }
 
 function policySafeInstruction(outLang='English'){
@@ -1009,12 +1032,21 @@ ipcMain.handle('prompt:analyzeUrl', async(_e,payload={})=>{
   const outLang=langName(payload.promptLang); const duration=String(payload.duration||'60 seconds'); const targetScenes=durationScenes(duration);
   let page;
   try{ page=await fetchUrlReadable(payload.url); }catch(e){ return {ok:false,error:'fetch_url_failed:'+String(e.message||e)}; }
-  const sys=`Bạn là AI phân tích nội dung web/video/bài báo để viết lại thành kịch bản video chính xác. Ngôn ngữ đầu ra: ${outLang}. BẮT BUỘC giữ đúng sự kiện, nhân vật/chủ thể, thứ tự ý, bối cảnh, cảm xúc và thông tin cốt lõi của nguồn. Không bịa thêm chi tiết không có căn cứ. BẮT BUỘC chia đúng số cảnh người dùng chọn, mỗi cảnh 8 giây, không thiếu không thừa. Nếu nguồn là bài báo, chuyển nội dung bài báo thành kịch bản video mạch lạc. Nếu nguồn là link video trực tiếp nhưng không có transcript, hãy viết kịch bản dựa trên metadata/URL và nói rõ mức độ chắc chắn thấp trong ghi chú, không bịa cảnh cụ thể. ${policySafeInstruction(outLang)} Trả JSON {"script":"...","sourceSummary":"..."}. Trường script phải có đúng số cảnh yêu cầu, định dạng Scene 01, Scene 02...`;
-  const prompt=`URL: ${page.url}\nContent-Type: ${page.contentType}\nTitle: ${page.title||''}\nTarget duration: ${duration}\nRequired scenes: ${targetScenes} scenes, each scene 8 seconds.\n\nSOURCE TEXT / METADATA:\n${page.text}\n\nViết lại thành một kịch bản video chi tiết, sát nguồn nhất, dùng được trực tiếp trong ô kịch bản AI Prompt Studio. BẮT BUỘC chia đúng ${targetScenes} cảnh, mỗi cảnh 8 giây, đánh số Scene 01 đến Scene ${String(targetScenes).padStart(2,'0')}. Không thiếu, không thừa cảnh.`;
+  let parts=[]; let videoNote='';
+  if(page.isDirectVideo){
+    try{
+      const dl=await downloadVideoForAnalysis(page.url);
+      const frames=extractAnalysisFrames(dl.file,dl.dir,Math.min(24,Math.max(8,targetScenes)));
+      parts=imageParts(frames);
+      videoNote=`Downloaded direct video for visual scene analysis. Extracted ${frames.length} frames from ${path.basename(dl.file)}.`;
+    }catch(e){ videoNote=`Direct video visual analysis unavailable: ${String(e.message||e)}. Use URL metadata only and do not invent uncertain details.`; }
+  }
+  const sys=`Bạn là đạo diễn sáng tạo, biên kịch quảng cáo/video ngắn và chuyên gia phân tích nội dung. Ngôn ngữ đầu ra: ${outLang}. Nhiệm vụ: phân tích nguồn thật kỹ rồi viết lại thành kịch bản video chuyên nghiệp, cuốn hút hơn, nhưng vẫn bám sát nguồn. Nếu nguồn là VIDEO và có frame ảnh, hãy phân tích từng cảnh: nhân vật/chủ thể, bối cảnh, hành động, nhịp dựng, cảm xúc, góc máy, ánh sáng, màu sắc, điểm nhấn thị giác. Sau đó viết lại thành kịch bản riêng hay hơn, điện ảnh hơn, rõ nhịp mở đầu - cao trào - kết thúc. Nếu nguồn là bài báo/trang web, hãy bóc tách ý chính, sự kiện, nhân vật/chủ thể, bối cảnh, thông tin quan trọng rồi chuyển thành kịch bản video chuyên nghiệp. BẮT BUỘC giữ đúng sự kiện/chủ thể/thứ tự ý cốt lõi, không bịa thông tin không có trong nguồn. BẮT BUỘC chia đúng ${targetScenes} cảnh, mỗi cảnh 8 giây, không thiếu không thừa. ${policySafeInstruction(outLang)} Trả JSON {"script":"...","sourceSummary":"...","sceneAnalysis":"..."}. Trường script phải có đúng ${targetScenes} cảnh, định dạng Scene 01, Scene 02... Mỗi scene gồm: thời lượng 8s, mô tả hình ảnh chi tiết, hành động, cảm xúc, camera, ánh sáng/màu sắc, lời thoại/voice nếu phù hợp, prompt video chuyên nghiệp.`;
+  const prompt=`URL: ${page.url}\nContent-Type: ${page.contentType}\nTitle: ${page.title||''}\nTarget duration: ${duration}\nRequired scenes: ${targetScenes} scenes, each scene 8 seconds.\nVideo analysis note: ${videoNote}\n\nSOURCE TEXT / METADATA:\n${page.text}\n\nHãy phân tích nguồn thật chi tiết. Nếu có frame video, mô tả từng cảnh quan sát được trước, rồi viết lại thành kịch bản mới chuyên nghiệp hơn, hấp dẫn hơn, dùng trực tiếp trong AI Prompt Studio. Kịch bản cuối BẮT BUỘC đúng ${targetScenes} cảnh, mỗi cảnh 8 giây, đánh số Scene 01 đến Scene ${String(targetScenes).padStart(2,'0')}. Không thiếu, không thừa cảnh.`;
   try{
-    const out=await geminiText(apiKey,[{text:prompt}],sys,true,payload.apiModel);
+    const out=await geminiText(apiKey,[...parts,{text:prompt}],sys,true,payload.apiModel);
     const obj=JSON.parse(String(out||'').replace(/^```json\s*|```$/g,''));
-    return {ok:true,script:policySafePostProcess(obj.script||'',outLang),sourceSummary:obj.sourceSummary||'',page};
+    return {ok:true,script:policySafePostProcess(obj.script||'',outLang),sourceSummary:obj.sourceSummary||'',sceneAnalysis:obj.sceneAnalysis||'',page};
   }catch(e){ return {ok:false,error:'ai_url_analyze_failed:'+String(e.message||e),page}; }
 });
 
