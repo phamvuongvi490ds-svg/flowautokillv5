@@ -2047,7 +2047,7 @@ def run(args):
                         break
 
                     if args.auto_download:
-                        if int(args.download_delay_prompts or 0) > 0:
+                        if args.continuous_download:
                             delayed_downloads.append({
                                 "prompt_no": prompt_no,
                                 "before_ids": pre_submit_tiles,
@@ -2055,19 +2055,21 @@ def run(args):
                                 "count": args.flow_count,
                                 "output_prefix": prompt_file_prefix(prompt, prompt_no),
                             })
-                            if len(delayed_downloads) >= int(args.download_delay_prompts or 0):
-                                item = delayed_downloads.pop(0)
-                                license_guard_or_raise(force=True)
-                                log_line(f"[flow] delayed download prompt #{item['prompt_no']}")
-                                media_ok, media_reason = wait_new_completed_media(page, before_ids=item["before_ids"], expected_count=max(1, int(item["count"] or "1")), timeout_sec=args.download_wait_sec)
-                                if not media_ok:
-                                    done_wait = wait_generation_complete(page, timeout_sec=90)
-                                    if not done_wait:
-                                        raise RuntimeError(f"generation_not_completed:{media_reason}")
-                                download_resolution = "1K" if item["task_mode"] == "createimage" else args.download_resolution
-                                dl_ok, dl_step = auto_download_with_retry(page, resolution=download_resolution, timeout_sec=220, before_ids=item["before_ids"], output_prefix=item.get("output_prefix", f"prompt_{item['prompt_no']}"), output_dir=args.output_dir)
-                                if not dl_ok:
-                                    raise RuntimeError(f"auto_download_failed:{dl_step}")
+                            # Pipeline mode: do not wait for this prompt here. Submit next prompt immediately.
+                            # Opportunistically download older finished prompts with a tiny timeout; unfinished items stay queued for final drain.
+                            still_pending = []
+                            for item in delayed_downloads:
+                                media_ok, media_reason = wait_new_completed_media(page, before_ids=item["before_ids"], expected_count=max(1, int(item["count"] or "1")), timeout_sec=2)
+                                if media_ok:
+                                    license_guard_or_raise(force=True)
+                                    download_resolution = "1K" if item["task_mode"] == "createimage" else args.download_resolution
+                                    dl_ok, dl_step = auto_download_with_retry(page, resolution=download_resolution, timeout_sec=60, before_ids=item["before_ids"], output_prefix=item.get("output_prefix", f"prompt_{item['prompt_no']}"), output_dir=args.output_dir)
+                                    if not dl_ok:
+                                        log_line(f"[flow] continuous opportunistic download pending prompt #{item['prompt_no']}: {dl_step}")
+                                        still_pending.append(item)
+                                else:
+                                    still_pending.append(item)
+                            delayed_downloads = still_pending
                         else:
                             media_ok, media_reason = wait_new_completed_media(
                                 page,
@@ -2076,7 +2078,6 @@ def run(args):
                                 timeout_sec=args.download_wait_sec,
                             )
                             if not media_ok:
-                                # fallback old watcher for UI variants, then still try download
                                 done_wait = wait_generation_complete(page, timeout_sec=90)
                                 if not done_wait:
                                     raise RuntimeError(f"generation_not_completed:{media_reason}")
@@ -2150,7 +2151,7 @@ def run(args):
             if prompt_no < total:
                 time.sleep(args.between_prompts_sec)
 
-        if args.auto_download and int(args.download_delay_prompts or 0) > 0:
+        if args.auto_download and (args.continuous_download or int(args.download_delay_prompts or 0) > 0):
             while delayed_downloads:
                 item = delayed_downloads.pop(0)
                 license_guard_or_raise(force=True)
@@ -2190,6 +2191,7 @@ def main():
     ap.add_argument("--character-images", default="", help="Danh sách ảnh nhân vật upload từ AI Prompt Studio, phân tách bằng dấu phẩy")
     ap.add_argument("--auto-download", action="store_true", help="Tự động tải video sau khi render xong")
     ap.add_argument("--submit-only", action="store_true", help="Chỉ submit prompt rồi chuyển prompt tiếp theo, không chờ render và không auto-download")
+    ap.add_argument("--continuous-download", action="store_true", help="Chạy liên tục: submit prompt tiếp ngay, prompt nào xong thì tải sau")
     ap.add_argument("--download-resolution", default="720", help="Độ phân giải tải về, mặc định 720")
     ap.add_argument("--output-dir", default="", help="Thư mục lưu ảnh/video tải về")
     ap.add_argument("--download-wait-sec", type=int, default=420, help="Thời gian chờ render hoàn tất trước khi tải")
@@ -2212,7 +2214,7 @@ def main():
         args.submit_only = False
     elif args.submit_only:
         args.auto_download = False
-    log_line(f'[flow] auto_download={args.auto_download}, submit_only={args.submit_only}, download_delay_prompts={args.download_delay_prompts}')
+    log_line(f'[flow] auto_download={args.auto_download}, submit_only={args.submit_only}, continuous_download={args.continuous_download}, download_delay_prompts={args.download_delay_prompts}')
     run(args)
 
 
