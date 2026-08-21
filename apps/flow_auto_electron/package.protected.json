@@ -19,13 +19,19 @@
     {
       "from": "public/assets",
       "to": "assets"
+    },
+    {
+      "from": "integrity-manifest.json",
+      "to": "integrity-manifest.json"
     }
   ],
   "win": {
     "target": [
       {
         "target": "nsis",
-        "arch": ["x64"]
+        "arch": [
+          "x64"
+        ]
       }
     ],
     "icon": "public/assets/icon.ico",
@@ -35,7 +41,9 @@
     "target": [
       {
         "target": "dmg",
-        "arch": ["universal"]
+        "arch": [
+          "universal"
+        ]
       }
     ],
     "icon": "public/assets/icon.icns",

@@ -32,7 +32,8 @@ const PID_RUN = path.join(JOB_DIR, 'electron-runner.pid');
 const PAUSE_FILE = path.join(JOB_DIR, 'pause.flag');
 const RUN_STATE = path.join(JOB_DIR, 'electron-runner-state.json');
 const CDP_PORT = 18800;
-const DEFAULT_API_BASE = 'https://server-auto-tool.vercel.app/api/license';
+function _s(parts){ return Buffer.from(parts.join(''), 'base64').toString('utf8'); }
+const DEFAULT_API_BASE = _s(['aHR0cHM6Ly9zZXJ2ZXIt','YXV0by10b29sLnZlcmNl','bC5hcHAvYXBpL2xpY2Vuc2U=']);
 const CDP_PROFILE = path.join(BASE_DIR, 'chrome-cdp-profile');
 const LICENSE_CONFIG = path.join(BASE_DIR, 'keys', 'license-online.json');
 let stopInProgress = false;
@@ -51,7 +52,54 @@ function forceChromeLanguagePrefs(){
 }
 function resourcePath(rel){ return app.isPackaged ? path.join(process.resourcesPath, rel) : path.join(__dirname, '..', rel); }
 function appPath(rel){ return app.isPackaged ? path.join(process.resourcesPath, 'app.asar', rel) : path.join(__dirname, '..', rel); }
-function bootstrap(){ ensureDirs(); const src=resourcePath('payload/scripts'); if(fs.existsSync(src)){ for(const f of fs.readdirSync(src)){ const sp=path.join(src,f); const dp=path.join(SCRIPTS_DIR,f); if(fs.statSync(sp).isFile()) fs.copyFileSync(sp,dp); } } const req=resourcePath('payload/requirements.txt'); if(fs.existsSync(req)) fs.copyFileSync(req, REQ_FILE); }
+function bootstrap(){
+  ensureDirs();
+  const protectedBin=resourcePath('payload/bin');
+  const src=resourcePath('payload/scripts');
+  if(fs.existsSync(protectedBin)){
+    const dstBin=path.join(SCRIPTS_DIR,'bin');
+    fs.rmSync(dstBin,{recursive:true,force:true});
+    copyDirSync(protectedBin,dstBin);
+  }
+  if(fs.existsSync(src)){
+    for(const f of fs.readdirSync(src)){
+      const sp=path.join(src,f); const dp=path.join(SCRIPTS_DIR,f);
+      if(fs.statSync(sp).isFile()) fs.copyFileSync(sp,dp);
+    }
+  }
+  const req=resourcePath('payload/requirements.txt'); if(fs.existsSync(req)) fs.copyFileSync(req, REQ_FILE);
+}
+function sha256File(file){
+  const h=crypto.createHash('sha256');
+  h.update(fs.readFileSync(file));
+  return h.digest('hex');
+}
+function verifyProtectedIntegrity(){
+  if(!app.isPackaged) return {ok:true, skipped:true};
+  const manifestPath=resourcePath('integrity-manifest.json');
+  if(!fs.existsSync(manifestPath)) return {ok:false,error:'integrity_manifest_missing'};
+  let manifest={};
+  try{ manifest=JSON.parse(fs.readFileSync(manifestPath,'utf8')); }catch(e){ return {ok:false,error:'integrity_manifest_invalid'}; }
+  const files=Array.isArray(manifest.files)?manifest.files:[];
+  for(const item of files){
+    const rel=String(item.path||'').replace(/^[\\/]+/,'');
+    const expected=String(item.sha256||'').toLowerCase();
+    if(!rel || !expected) return {ok:false,error:'integrity_manifest_bad_entry'};
+    const target=resourcePath(rel);
+    if(!fs.existsSync(target)) return {ok:false,error:`integrity_missing:${rel}`};
+    const actual=sha256File(target).toLowerCase();
+    if(actual!==expected) return {ok:false,error:`integrity_mismatch:${rel}`};
+  }
+  return {ok:true, checked:files.length};
+}
+function enforceProtectedIntegrity(){
+  const r=verifyProtectedIntegrity();
+  if(r.ok) return r;
+  try{ dialog.showErrorBox('FLOW AUTO VEO 3', 'Ứng dụng đã bị thay đổi hoặc thiếu file bảo vệ. Vui lòng cài lại bản chính thức.\n\n' + r.error); }catch{}
+  setTimeout(()=>app.quit(), 50);
+  return r;
+}
+
 function systemPython(){ return process.platform==='win32' ? 'python' : 'python3'; }
 function cachedRuntimePython(){ const exe=process.platform==='win32'?path.join(RUNTIME_CACHE_DIR,'python.exe'):path.join(RUNTIME_CACHE_DIR,'bin','python3'); if(fs.existsSync(exe)) return exe; const exe2=process.platform==='win32'?path.join(RUNTIME_CACHE_DIR,'python.exe'):path.join(RUNTIME_CACHE_DIR,'bin','python'); return fs.existsSync(exe2)?exe2:''; }
 function bundledPython(){ const base=resourcePath('payload/python/runtime'); const exe=process.platform==='win32'?path.join(base,'python.exe'):path.join(base,'bin','python3'); if(fs.existsSync(exe)) return exe; const exe2=process.platform==='win32'?path.join(base,'python.exe'):path.join(base,'bin','python'); return fs.existsSync(exe2)?exe2:''; }
@@ -660,7 +708,7 @@ function createWindow(){
   return win;
 }
 
-app.whenReady().then(()=>{ ensureDirs(); const splash=createSplash(); const win=createWindow(); setTimeout(()=>{ try{ bootstrap(); }catch{} }, 300); win.once('ready-to-show',()=>{ setTimeout(()=>{ splash.webContents.executeJavaScript('window.finish&&window.finish()').catch(()=>{}); setTimeout(()=>{ if(!splash.isDestroyed()) splash.close(); win.show(); },120); },250); }); });
+app.whenReady().then(()=>{ ensureDirs(); enforceProtectedIntegrity(); const splash=createSplash(); const win=createWindow(); setTimeout(()=>{ try{ bootstrap(); }catch{} }, 300); win.once('ready-to-show',()=>{ setTimeout(()=>{ splash.webContents.executeJavaScript('window.finish&&window.finish()').catch(()=>{}); setTimeout(()=>{ if(!splash.isDestroyed()) splash.close(); win.show(); },120); },250); }); });
 app.on('window-all-closed',()=>{ if(process.platform!=='darwin') app.quit(); });
 app.on('before-quit', () => { resetRunnerWorkers(); });
 app.on('activate',()=>{ if(BrowserWindow.getAllWindows().length===0) createWindow(); });

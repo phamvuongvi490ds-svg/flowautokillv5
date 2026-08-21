@@ -38,9 +38,22 @@ jobs:
         run: |
           if (Get-ChildItem -Path payload_protected -Recurse -Filter *.py -ErrorAction SilentlyContinue) { throw 'Protected payload must not ship Python source files' }
           if (!(Test-Path payload_protected\bin\flow_batch_runner.dist\flow_batch_runner.exe)) { throw 'compiled runner missing' }
+      - name: Write protected integrity manifest
+        shell: pwsh
+        run: node build-tools/write-integrity-manifest.cjs
       - run: npm run build
+      - name: Obfuscate Electron runtime JS
+        shell: pwsh
+        run: |
+          if (Test-Path electron_obf) { Remove-Item -Recurse -Force electron_obf }
+          npx javascript-obfuscator electron --output electron_obf --compact true --control-flow-flattening true --control-flow-flattening-threshold 0.35 --dead-code-injection true --dead-code-injection-threshold 0.12 --string-array true --string-array-encoding base64 --string-array-threshold 0.85 --rename-globals false --self-defending true
+          Remove-Item -Recurse -Force electron
+          Rename-Item electron_obf electron
       - name: Build NSIS setup
         shell: pwsh
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: npx electron-builder --config package.protected.json --win nsis --x64
       - name: Collect artifact
         shell: pwsh
@@ -81,12 +94,26 @@ jobs:
           chmod +x payload_protected/bin/flow_batch_runner-arm64.dist/flow_batch_runner || true
           chmod +x payload_protected/bin/flow_batch_runner-x64.dist/flow_batch_runner || true
           cp -f payload/requirements.txt payload_protected/requirements.txt
+      - name: Write protected integrity manifest
+        run: node build-tools/write-integrity-manifest.cjs
       - name: Verify protected macOS payload
         run: |
           if find payload_protected -name '*.py' | grep -q .; then echo 'Protected payload must not ship Python source files'; exit 1; fi
           test -x payload_protected/bin/flow_batch_runner.dist/flow_batch_runner
       - run: npm run build
+      - name: Obfuscate Electron runtime JS
+        run: |
+          rm -rf electron_obf
+          npx javascript-obfuscator electron --output electron_obf --compact true --control-flow-flattening true --control-flow-flattening-threshold 0.35 --dead-code-injection true --dead-code-injection-threshold 0.12 --string-array true --string-array-encoding base64 --string-array-threshold 0.85 --rename-globals false --self-defending true
+          rm -rf electron
+          mv electron_obf electron
       - name: Build macOS universal DMG
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npx electron-builder --config package.protected.json --mac dmg --universal
       - name: Collect artifact
         run: |
