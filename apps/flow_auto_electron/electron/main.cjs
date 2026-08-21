@@ -34,6 +34,7 @@ const RUN_STATE = path.join(JOB_DIR, 'electron-runner-state.json');
 const CDP_PORT = 18800;
 function _s(parts){ return Buffer.from(parts.join(''), 'base64').toString('utf8'); }
 const DEFAULT_API_BASE = _s(['aHR0cHM6Ly9zZXJ2ZXIt','YXV0by10b29sLnZlcmNl','bC5hcHAvYXBpL2xpY2Vuc2U=']);
+try{ app.commandLine.appendSwitch('disable-dev-shm-usage'); }catch{}
 const CDP_PROFILE = path.join(BASE_DIR, 'chrome-cdp-profile');
 const LICENSE_CONFIG = path.join(BASE_DIR, 'keys', 'license-online.json');
 let stopInProgress = false;
@@ -98,6 +99,44 @@ function enforceProtectedIntegrity(){
   try{ dialog.showErrorBox('FLOW AUTO VEO 3', 'Ứng dụng đã bị thay đổi hoặc thiếu file bảo vệ. Vui lòng cài lại bản chính thức.\n\n' + r.error); }catch{}
   setTimeout(()=>app.quit(), 50);
   return r;
+}
+
+function suspiciousRuntimeSignals(){
+  const bad=[];
+  const argv=process.argv.join(' ').toLowerCase();
+  const execArgv=(process.execArgv||[]).join(' ').toLowerCase();
+  const env=process.env||{};
+  if(/--inspect|--inspect-brk|--remote-debugging-port|--js-flags|--enable-logging|--trace-/.test(argv+' '+execArgv)) bad.push('debug_flags');
+  if(env.NODE_OPTIONS && /--inspect|--require|--loader|--experimental/.test(String(env.NODE_OPTIONS))) bad.push('node_options');
+  if(app.isPackaged){
+    try{ if(!String(process.resourcesPath||'').toLowerCase().includes('resources')) bad.push('bad_resources_path'); }catch{}
+    try{ if(!fs.existsSync(path.join(process.resourcesPath,'app.asar'))) bad.push('asar_missing'); }catch{}
+  }
+  return bad;
+}
+function installRuntimeGuards(){
+  try{
+    app.on('web-contents-created', (_event, contents)=>{
+      contents.on('will-navigate', (e,url)=>{ if(!String(url||'').startsWith('file://')) e.preventDefault(); });
+      contents.setWindowOpenHandler(()=>({action:'deny'}));
+      contents.on('before-input-event', (event,input)=>{
+        const k=String(input.key||'').toLowerCase();
+        const dev=(input.control||input.meta)&&input.shift&&['i','j','c'].includes(k);
+        if(app.isPackaged && (dev || k==='f12')) event.preventDefault();
+      });
+      if(app.isPackaged){
+        try{ contents.on('devtools-opened',()=>{ try{ contents.closeDevTools(); }catch{} }); }catch{}
+      }
+    });
+  }catch{}
+}
+function enforceRuntimeGuards(){
+  if(!app.isPackaged) return {ok:true, skipped:true};
+  const bad=suspiciousRuntimeSignals();
+  if(!bad.length) return {ok:true};
+  try{ dialog.showErrorBox('FLOW AUTO VEO 3', 'Môi trường chạy không hợp lệ hoặc có dấu hiệu debug: '+bad.join(',')); }catch{}
+  setTimeout(()=>app.quit(), 50);
+  return {ok:false,error:bad.join(',')};
 }
 
 function systemPython(){ return process.platform==='win32' ? 'python' : 'python3'; }
@@ -708,7 +747,8 @@ function createWindow(){
   return win;
 }
 
-app.whenReady().then(()=>{ ensureDirs(); enforceProtectedIntegrity(); const splash=createSplash(); const win=createWindow(); setTimeout(()=>{ try{ bootstrap(); }catch{} }, 300); win.once('ready-to-show',()=>{ setTimeout(()=>{ splash.webContents.executeJavaScript('window.finish&&window.finish()').catch(()=>{}); setTimeout(()=>{ if(!splash.isDestroyed()) splash.close(); win.show(); },120); },250); }); });
+installRuntimeGuards();
+app.whenReady().then(()=>{ ensureDirs(); enforceRuntimeGuards(); enforceProtectedIntegrity(); const splash=createSplash(); const win=createWindow(); setTimeout(()=>{ try{ bootstrap(); }catch{} }, 300); win.once('ready-to-show',()=>{ setTimeout(()=>{ splash.webContents.executeJavaScript('window.finish&&window.finish()').catch(()=>{}); setTimeout(()=>{ if(!splash.isDestroyed()) splash.close(); win.show(); },120); },250); }); });
 app.on('window-all-closed',()=>{ if(process.platform!=='darwin') app.quit(); });
 app.on('before-quit', () => { resetRunnerWorkers(); });
 app.on('activate',()=>{ if(BrowserWindow.getAllWindows().length===0) createWindow(); });

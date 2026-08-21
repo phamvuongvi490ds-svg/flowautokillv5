@@ -35,7 +35,8 @@
       }
     ],
     "icon": "public/assets/icon.ico",
-    "artifactName": "FlowAutoProtected-Setup.exe"
+    "artifactName": "FlowAutoProtected-Setup.exe",
+    "verifyUpdateCodeSignature": true
   },
   "mac": {
     "target": [
@@ -61,5 +62,8 @@
   },
   "asarUnpack": [
     "node_modules/@ffmpeg-installer/**"
-  ]
+  ],
+  "compression": "maximum",
+  "npmRebuild": false,
+  "buildDependenciesFromSource": false
 }

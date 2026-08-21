@@ -41,6 +41,9 @@ jobs:
       - name: Write protected integrity manifest
         shell: pwsh
         run: node build-tools/write-integrity-manifest.cjs
+      - name: Audit protected payload
+        shell: pwsh
+        run: node build-tools/audit-protected-artifact.cjs
       - run: npm run build
       - name: Obfuscate Electron runtime JS
         shell: pwsh
@@ -96,6 +99,8 @@ jobs:
           cp -f payload/requirements.txt payload_protected/requirements.txt
       - name: Write protected integrity manifest
         run: node build-tools/write-integrity-manifest.cjs
+      - name: Audit protected payload
+        run: node build-tools/audit-protected-artifact.cjs
       - name: Verify protected macOS payload
         run: |
           if find payload_protected -name '*.py' | grep -q .; then echo 'Protected payload must not ship Python source files'; exit 1; fi
