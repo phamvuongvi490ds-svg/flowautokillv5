@@ -729,7 +729,7 @@ async function ensureCdpOn(port=CDP_PORT, profile=CDP_PROFILE){
   const exe=chromeCandidates().find(x=>x && fs.existsSync(x));
   if(!exe) return {ok:false,error:'chrome_not_found'};
   const args=[`--remote-debugging-port=${port}`,`--user-data-dir=${profile}`,'--lang=vi-VN','--accept-lang=vi-VN,vi,en-US,en','--disable-features=Translate','--no-first-run','--no-default-browser-check','https://labs.google/fx/vi/tools/flow'];
-  const p=spawn(exe,args,{detached:true,stdio:'ignore',windowsHide:true}); p.unref();
+  const p=spawn(exe,args,{detached:true,stdio:'ignore',windowsHide:false}); p.unref();
   for(let i=0;i<40;i++){ try{ const r=await fetch(`http://127.0.0.1:${port}/json/version`); if(r.ok) return {ok:true, launched:true, port}; }catch{} await wait(500); }
   return {ok:false,error:'cdp_not_ready',port};
 }
