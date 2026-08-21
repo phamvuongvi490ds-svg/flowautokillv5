@@ -924,6 +924,7 @@ function videoDurationSec(file){ const r=ffmpegRun(['-hide_banner','-i',file]); 
 ipcMain.handle('video:analyzeSample', async(_e,payload={})=>{
   const lic=await onlineLicenseGuard(); if(!lic.ok) return lic;
   const file=payload.file||''; const apiKey=payload.apiKey||''; if(!file)return {ok:false,error:'missing_video'}; if(!apiKey)return {ok:false,error:'missing_api_key'};
+  const targetScenes=durationScenes(payload.duration);
   const outDir=path.join(path.dirname(file),'flow_auto_post','sample_frames_'+Date.now()); fs.mkdirSync(outDir,{recursive:true});
   const pattern=path.join(outDir,'frame_%02d.jpg');
   const r=ffmpegRun(['-y','-i',file,'-vf','fps=1/3,scale=512:-1','-frames:v','8',pattern]);
@@ -931,7 +932,7 @@ ipcMain.handle('video:analyzeSample', async(_e,payload={})=>{
   const frames=fs.readdirSync(outDir).filter(x=>/\.jpe?g$/i.test(x)).map(x=>path.join(outDir,x)).slice(0,8);
   if(!frames.length) return {ok:false,error:'no_frames_extracted'};
   const parts=imageParts(frames);
-  const sys='Bạn là biên kịch video và chuyên gia phân tích nội dung. Hãy phân tích video mẫu qua các frame, nhận diện nhân vật, bối cảnh, hành động, nhịp câu chuyện, phong cách hình ảnh. Sau đó tạo một kịch bản mới có nội dung/tinh thần tương tự nhưng thay đổi đủ chi tiết để khác bản gốc: đổi bối cảnh phụ, hành động phụ, đạo cụ, nhịp chuyển cảnh, góc máy hoặc câu chuyện nhỏ. Không sao chép nguyên văn. Trả về tiếng Việt, có tiêu đề, tóm tắt, danh sách cảnh, và prompt tiếng Anh cho từng cảnh.';
+  const sys='Bạn là biên kịch video và chuyên gia phân tích nội dung. Hãy phân tích video mẫu qua các frame, nhận diện nhân vật, bối cảnh, hành động, nhịp câu chuyện, phong cách hình ảnh. Sau đó tạo kịch bản video khớp nội dung video mẫu nhất có thể. BẮT BUỘC chia đúng số cảnh theo yêu cầu, mỗi cảnh 8 giây. Không thiếu, không thừa cảnh. Kịch bản phải liệt kê rõ Scene 01, Scene 02... đúng thứ tự. Trả về tiếng Việt, có tiêu đề, tóm tắt, danh sách cảnh, và prompt tiếng Anh cho từng cảnh.';
   const prompt=`Video mẫu: ${path.basename(file)}\nYêu cầu: phân tích nội dung video mẫu và tạo kịch bản mới tương tự nhưng đã biến đổi để khác nội dung gốc. Thời lượng mong muốn: ${payload.duration||'60 seconds'}.`;
   const text=await geminiText(apiKey,[...parts,{text:prompt}],sys,false);
   const scriptFile=path.join(outDir,'ai-remix-script.txt'); fs.writeFileSync(scriptFile,text,'utf8');
@@ -1005,11 +1006,11 @@ ipcMain.handle('video:postExport', async(_e,payload={})=>{
 ipcMain.handle('prompt:analyzeUrl', async(_e,payload={})=>{
   const lic=await onlineLicenseGuard(); if(!lic.ok) return lic;
   const apiKey=payload.apiKey||''; if(!apiKey) return {ok:false,error:'missing_api_key'};
-  const outLang=langName(payload.promptLang); const duration=String(payload.duration||'60 seconds');
+  const outLang=langName(payload.promptLang); const duration=String(payload.duration||'60 seconds'); const targetScenes=durationScenes(duration);
   let page;
   try{ page=await fetchUrlReadable(payload.url); }catch(e){ return {ok:false,error:'fetch_url_failed:'+String(e.message||e)}; }
-  const sys=`Bạn là AI phân tích nội dung web/video/bài báo để viết lại thành kịch bản video chính xác. Ngôn ngữ đầu ra: ${outLang}. BẮT BUỘC giữ đúng sự kiện, nhân vật/chủ thể, thứ tự ý, bối cảnh, cảm xúc và thông tin cốt lõi của nguồn. Không bịa thêm chi tiết không có căn cứ. Nếu nguồn là bài báo, chuyển nội dung bài báo thành kịch bản video mạch lạc. Nếu nguồn là link video trực tiếp nhưng không có transcript, hãy viết kịch bản dựa trên metadata/URL và nói rõ mức độ chắc chắn thấp trong ghi chú, không bịa cảnh cụ thể. ${policySafeInstruction(outLang)} Trả JSON {"script":"...","sourceSummary":"..."}.`;
-  const prompt=`URL: ${page.url}\nContent-Type: ${page.contentType}\nTitle: ${page.title||''}\nTarget duration: ${duration}\n\nSOURCE TEXT / METADATA:\n${page.text}\n\nViết lại thành một kịch bản video chi tiết, sát nguồn nhất, dùng được trực tiếp trong ô kịch bản AI Prompt Studio. Chia theo cảnh nếu phù hợp.`;
+  const sys=`Bạn là AI phân tích nội dung web/video/bài báo để viết lại thành kịch bản video chính xác. Ngôn ngữ đầu ra: ${outLang}. BẮT BUỘC giữ đúng sự kiện, nhân vật/chủ thể, thứ tự ý, bối cảnh, cảm xúc và thông tin cốt lõi của nguồn. Không bịa thêm chi tiết không có căn cứ. BẮT BUỘC chia đúng số cảnh người dùng chọn, mỗi cảnh 8 giây, không thiếu không thừa. Nếu nguồn là bài báo, chuyển nội dung bài báo thành kịch bản video mạch lạc. Nếu nguồn là link video trực tiếp nhưng không có transcript, hãy viết kịch bản dựa trên metadata/URL và nói rõ mức độ chắc chắn thấp trong ghi chú, không bịa cảnh cụ thể. ${policySafeInstruction(outLang)} Trả JSON {"script":"...","sourceSummary":"..."}. Trường script phải có đúng số cảnh yêu cầu, định dạng Scene 01, Scene 02...`;
+  const prompt=`URL: ${page.url}\nContent-Type: ${page.contentType}\nTitle: ${page.title||''}\nTarget duration: ${duration}\nRequired scenes: ${targetScenes} scenes, each scene 8 seconds.\n\nSOURCE TEXT / METADATA:\n${page.text}\n\nViết lại thành một kịch bản video chi tiết, sát nguồn nhất, dùng được trực tiếp trong ô kịch bản AI Prompt Studio. BẮT BUỘC chia đúng ${targetScenes} cảnh, mỗi cảnh 8 giây, đánh số Scene 01 đến Scene ${String(targetScenes).padStart(2,'0')}. Không thiếu, không thừa cảnh.`;
   try{
     const out=await geminiText(apiKey,[{text:prompt}],sys,true,payload.apiModel);
     const obj=JSON.parse(String(out||'').replace(/^```json\s*|```$/g,''));
