@@ -683,16 +683,19 @@ async function generateScriptJs(payload){
       if (m) obj = JSON.parse(m[0]); else throw e;
     }
     if(i===0){ title=obj.title||payload.topic||''; if(hasRefs && obj.characterSheet) characterSheet=String(obj.characterSheet).replace(/\s+/g,' ').trim(); }
-    const scenes=(obj.scenes||[]).map(sc=>({
-      ...sc,
-      duration: sc.duration||'8 giây',
-      visual: sc.visual||sc.image||sc.hinhAnh||sc.description||'',
-      action: sc.action||sc.hanhDong||'',
-      emotion: sc.emotion||sc.camXuc||'',
-      cameraLighting: sc.cameraLighting||sc.camera||sc.gocMayAnhSang||'',
-      voice: sc.voice||sc.dialogue||sc.loiThoai||'',
-      prompt: await ensureOutputLanguageText(payload.apiKey, policySafePostProcess(lockPrompt(sc.prompt,characterSheet,outLang),outLang), outLang, payload.apiModel)
-    }));
+    const scenes=[];
+    for(const sc of (obj.scenes||[])){
+      scenes.push({
+        ...sc,
+        duration: sc.duration||'8 giây',
+        visual: sc.visual||sc.image||sc.hinhAnh||sc.description||'',
+        action: sc.action||sc.hanhDong||'',
+        emotion: sc.emotion||sc.camXuc||'',
+        cameraLighting: sc.cameraLighting||sc.camera||sc.gocMayAnhSang||'',
+        voice: sc.voice||sc.dialogue||sc.loiThoai||'',
+        prompt: await ensureOutputLanguageText(payload.apiKey, policySafePostProcess(lockPrompt(sc.prompt,characterSheet,outLang),outLang), outLang, payload.apiModel)
+      });
+    }
     allScenes.push(...scenes);
   }
   const finalObj={title:title||payload.topic||'', characterSheet, outLang, totalDuration:payload.duration, scenes:enforceUniqueScenePrompts(allScenes.slice(0,totalScenes).sort((a,b)=>(a.sceneNumber||0)-(b.sceneNumber||0)),outLang)};
