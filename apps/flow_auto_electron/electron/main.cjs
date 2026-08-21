@@ -349,6 +349,29 @@ Return JSON: {"characters":[{"id":"REF_01","likelyName":"name or role from scrip
   catch(e){ return JSON.stringify({characters:files.map((f,i)=>({id:`REF_${String(i+1).padStart(2,'0')}`,likelyName:path.basename(f).replace(/\.[^.]+$/,''),visualLock:`Reference image ${i+1}: ${path.basename(f)}`,usageRule:'Use this exact reference ID when this character appears.'}))}); }
 }
 
+
+async function fetchUrlReadable(url){
+  const u=String(url||'').trim();
+  if(!/^https?:\/\//i.test(u)) throw new Error('invalid_url');
+  const controller=new AbortController(); const t=setTimeout(()=>controller.abort(),25000);
+  try{
+    const r=await fetch(u,{redirect:'follow',headers:{'User-Agent':'Mozilla/5.0 FlowAutoPro AI Script Analyzer','Accept':'text/html,text/plain,application/json,video/*,*/*'},signal:controller.signal});
+    const ct=String(r.headers.get('content-type')||'').toLowerCase();
+    const finalUrl=r.url||u;
+    if(ct.startsWith('video/')||/\.(mp4|mov|webm|mkv|m4v)(\?|$)/i.test(finalUrl)){
+      return {url:finalUrl,contentType:ct,title:path.basename(finalUrl.split('?')[0]),text:`Direct video URL: ${finalUrl}. Use this as a video source URL. Infer the script only from URL/page metadata if no transcript is available.`};
+    }
+    let txt=await r.text();
+    if(ct.includes('html')||/<html[\s>]/i.test(txt)){
+      const title=(txt.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1]||'';
+      txt=txt.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<noscript[\s\S]*?<\/noscript>/gi,' ')
+        .replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/\s+/g,' ').trim();
+      return {url:finalUrl,contentType:ct,title:title.replace(/\s+/g,' ').trim(),text:txt.slice(0,25000)};
+    }
+    return {url:finalUrl,contentType:ct,title:'',text:String(txt||'').replace(/\s+/g,' ').trim().slice(0,25000)};
+  }finally{clearTimeout(t);}
+}
+
 function policySafeInstruction(outLang='English'){
   if(outLang==='Vietnamese') return `YÊU CẦU AN TOÀN NỘI DUNG CHO GOOGLE/FLOW: Giữ nguyên cốt truyện, nhân vật, bối cảnh, cảm xúc và hành động chính của kịch bản. Chỉ thay đổi CÁCH DIỄN ĐẠT các chi tiết có rủi ro chính sách thành phiên bản điện ảnh an toàn, không làm lệch ý hoặc đổi nội dung chính. Không dùng hoặc mô tả trực diện các nội dung dễ bị chặn: khỏa thân, gợi dục, tình dục, trẻ em trong tình huống nhạy cảm, máu me, thương tích nặng, giết chóc, vũ khí thật, tự hại, ma túy, thù ghét, phân biệt chủng tộc, người nổi tiếng/người thật có danh tính, thương hiệu/logo/bản quyền, lừa đảo, hướng dẫn nguy hiểm hoặc hoạt động phạm pháp. Nếu ý tưởng gốc có yếu tố nhạy cảm, hãy giữ cùng vai trò trong cảnh nhưng chuyển thành phiên bản an toàn: hồi hộp nhưng không bạo lực, xung đột không máu me, trang phục kín đáo, nhân vật hư cấu trưởng thành, không logo/không thương hiệu, không nêu tên người nổi tiếng. Ưu tiên mô tả cảnh quay, ánh sáng, cảm xúc, chuyển động máy quay, môi trường, màu sắc, hành động đời thường an toàn. Không viết các từ khóa nhạy cảm nếu có thể thay bằng mô tả trung tính.`;
   return `GOOGLE/FLOW CONTENT-SAFE REQUIREMENT: Preserve the original script's plot, characters, setting, emotion, and main action. Only rewrite policy-risk wording into safe cinematic phrasing without changing the core meaning. Do not use or directly describe commonly blocked content: nudity, sexual content, minors in sensitive contexts, gore, severe injury, killing, real weapons, self-harm, drugs, hate, racism, identifiable real people/celebrities, brands/logos/copyrighted IP, scams, dangerous instructions, or illegal activity. If the source idea contains sensitive elements, preserve the same story function but rewrite it into a safe version: suspenseful but non-graphic, conflict without gore, modest clothing, fictional adult characters, no logos/brands, no celebrity names. Prioritize camera movement, lighting, emotion, environment, colors, and safe everyday actions. Avoid sensitive keywords when a neutral description works.`;
@@ -976,6 +999,22 @@ ipcMain.handle('video:postExport', async(_e,payload={})=>{
     if(rr.status===0) merged=final; else return {ok:false,error:'ffmpeg_sub_burn_failed:'+ffErr(rr)};
   }
   return {ok:true,out:merged};
+});
+
+
+ipcMain.handle('prompt:analyzeUrl', async(_e,payload={})=>{
+  const lic=await onlineLicenseGuard(); if(!lic.ok) return lic;
+  const apiKey=payload.apiKey||''; if(!apiKey) return {ok:false,error:'missing_api_key'};
+  const outLang=langName(payload.promptLang); const duration=String(payload.duration||'60 seconds');
+  let page;
+  try{ page=await fetchUrlReadable(payload.url); }catch(e){ return {ok:false,error:'fetch_url_failed:'+String(e.message||e)}; }
+  const sys=`Bạn là AI phân tích nội dung web/video/bài báo để viết lại thành kịch bản video chính xác. Ngôn ngữ đầu ra: ${outLang}. BẮT BUỘC giữ đúng sự kiện, nhân vật/chủ thể, thứ tự ý, bối cảnh, cảm xúc và thông tin cốt lõi của nguồn. Không bịa thêm chi tiết không có căn cứ. Nếu nguồn là bài báo, chuyển nội dung bài báo thành kịch bản video mạch lạc. Nếu nguồn là link video trực tiếp nhưng không có transcript, hãy viết kịch bản dựa trên metadata/URL và nói rõ mức độ chắc chắn thấp trong ghi chú, không bịa cảnh cụ thể. ${policySafeInstruction(outLang)} Trả JSON {"script":"...","sourceSummary":"..."}.`;
+  const prompt=`URL: ${page.url}\nContent-Type: ${page.contentType}\nTitle: ${page.title||''}\nTarget duration: ${duration}\n\nSOURCE TEXT / METADATA:\n${page.text}\n\nViết lại thành một kịch bản video chi tiết, sát nguồn nhất, dùng được trực tiếp trong ô kịch bản AI Prompt Studio. Chia theo cảnh nếu phù hợp.`;
+  try{
+    const out=await geminiText(apiKey,[{text:prompt}],sys,true,payload.apiModel);
+    const obj=JSON.parse(String(out||'').replace(/^```json\s*|```$/g,''));
+    return {ok:true,script:policySafePostProcess(obj.script||'',outLang),sourceSummary:obj.sourceSummary||'',page};
+  }catch(e){ return {ok:false,error:'ai_url_analyze_failed:'+String(e.message||e),page}; }
 });
 
 ipcMain.handle('prompt:script', async(_e,payload)=>{

@@ -21,7 +21,7 @@ const geminiApiModels = [
 const api = () => window.flowAPI || {
   openFile: async()=>[], status: async()=>({ok:true,running:false}), licenseCached: async()=>({ok:true}), machineId: async()=>({machineId:''}),
   ensureCdp: async()=>({ok:false,error:'flowAPI_not_ready'}), openProfileLogin: async()=>({ok:false,error:'flowAPI_not_ready'}), start: async()=>({ok:false,error:'flowAPI_not_ready'}), pause: async()=>({ok:false,error:'flowAPI_not_ready'}), resume: async()=>({ok:false,error:'flowAPI_not_ready'}), stop: async()=>({ok:false,error:'flowAPI_not_ready'}),
-  licenseCheck: async()=>({ok:false,error:'flowAPI_not_ready'}), activateLicense: async()=>({ok:false,error:'flowAPI_not_ready'}), generatePrompt: async()=>({ok:false,error:'flowAPI_not_ready'}), generateScript: async()=>({ok:false,error:'flowAPI_not_ready'}), generateCharacters: async()=>({ok:false,error:'flowAPI_not_ready'}),
+  licenseCheck: async()=>({ok:false,error:'flowAPI_not_ready'}), activateLicense: async()=>({ok:false,error:'flowAPI_not_ready'}), generatePrompt: async()=>({ok:false,error:'flowAPI_not_ready'}), generateScript: async()=>({ok:false,error:'flowAPI_not_ready'}), generateCharacters: async()=>({ok:false,error:'flowAPI_not_ready'}), analyzeUrl: async()=>({ok:false,error:'flowAPI_not_ready'}),
   videoList: async()=>({ok:true,files:[]}), videoMerge: async()=>({ok:false,error:'flowAPI_not_ready'}), videoExtractAudio: async()=>({ok:false,error:'flowAPI_not_ready'}), videoAnalyzeSample: async()=>({ok:false,error:'flowAPI_not_ready'}), videoPostPlan: async()=>({ok:false,error:'flowAPI_not_ready'}), videoPostExport: async()=>({ok:false,error:'flowAPI_not_ready'})
 };
 
@@ -73,6 +73,7 @@ function App(){
   const [postMode,setPostMode]=useState<'ai'|'manual'>('ai');
   const [postScript,setPostScript]=useState('');
   const [sampleVideo,setSampleVideo]=useState('');
+  const [sourceUrl,setSourceUrl]=useState('');
   const [timeline,setTimeline]=useState<any[]>([]);
   const [subLang,setSubLang]=useState('vi');
   const [autoSub,setAutoSub]=useState(true);
@@ -136,7 +137,8 @@ function App(){
   async function pickSrt(){const r=await api().openFile({properties:['openFile'],filters:[{name:'Subtitle',extensions:['srt','ass']},{name:'All',extensions:['*']} ]}); if(r?.[0]){setSrtFile(r[0]); append(`File sub: ${r[0]}`)}}
   async function pickSampleVideo(){const r=await api().openFile({properties:['openFile'],filters:[{name:'Video',extensions:['mp4','mov','mkv','webm','avi','m4v']},{name:'All',extensions:['*']} ]}); if(r?.[0]){setSampleVideo(r[0]); append(`Video mẫu: ${r[0]}`)}}
   async function analyzeSampleVideo(){append('AI đang phân tích video mẫu và tạo kịch bản tương tự...'); const duration=`${durationValue} ${durationUnit}`; const r=await api().videoAnalyzeSample({file:sampleVideo,apiKey:firstKey(),apiModel:geminiApiModel,duration}); if(r?.script)setPostScript(r.script); append(r)}
-  async function analyzeSampleVideoForAi(){append('AI Prompt Studio đang phân tích video mẫu...'); const duration=`${durationValue} ${durationUnit}`; const r=await api().videoAnalyzeSample({file:sampleVideo,apiKey:firstKey(),apiModel:geminiApiModel,duration}); if(r?.script){setTopic(r.script); setIdeas(r.script);} append(r)}
+  async function analyzeSampleVideoForAi(){ if(!sampleVideo){append('❌ Vui lòng chọn video mẫu trước.'); return;} append('AI đang phân tích video mẫu và viết kịch bản khớp nội dung video...'); const duration=`${durationValue} ${durationUnit}`; const r=await api().videoAnalyzeSample({file:sampleVideo,apiKey:firstKey(),apiModel:geminiApiModel,duration}); if(r?.script){setTopic(r.script); setIdeas(r.script); append('✅ Đã phân tích video mẫu và tự điền vào ô kịch bản.');} append(r)}
+  async function analyzeUrlForAi(){ const url=sourceUrl.trim(); if(!url){append('❌ Vui lòng nhập link video, link web hoặc link bài báo.'); return;} append('AI đang đọc link và viết lại kịch bản sát nội dung nguồn...'); const duration=`${durationValue} ${durationUnit}`; const r=await api().analyzeUrl({url,apiKey:firstKey(),apiModel:geminiApiModel,duration,promptLang}); if(r?.script){setTopic(r.script); setIdeas(r.script); append('✅ Đã phân tích link và tự điền vào ô kịch bản.');} append(r)}
   async function mergeVideos(){append('Đang ghép video...'); append(await api().videoMerge({folder:videoFolder,files:videoFiles}))}
   async function extractAudio(){append('Đang tách âm thanh...'); append(await api().videoExtractAudio({file:videoFiles[0]}))}
   async function analyzeVideos(){append(postMode==='ai'?'AI đang phân tích video theo kịch bản...':'Đang tạo timeline thủ công...'); const r=await api().videoAnalyze({folder:videoFolder,files:videoFiles,script:postScript,useAi:postMode==='ai',apiKey:firstKey(),apiModel:geminiApiModel}); if(r?.scenes)setTimeline(r.scenes); append(r)}
@@ -280,14 +282,19 @@ function App(){
             <Field label="Thời lượng"><div className="duration-row"><input value={durationValue} onChange={e=>setDurationValue(e.target.value.replace(/[^0-9]/g,''))} placeholder="60"/><select value={durationUnit} onChange={e=>setDurationUnit(e.target.value as 'seconds'|'minutes')}><option value="seconds">Giây</option><option value="minutes">Phút</option></select></div></Field>
             <Field label="Giãn cách"><input value={spacing} onChange={e=>{setSpacing(e.target.value);localStorage.setItem('flow_spacing',e.target.value)}} /></Field>
           </div>
-          <Field label="Ý tưởng / chủ đề kịch bản">
-            <textarea value={ideas} onChange={e=>setIdeas(e.target.value)} placeholder="Nhập chủ đề hoặc ý tưởng kịch bản" />
+          <Field label="Kịch bản video / Ý tưởng tạo prompt">
+            <textarea value={ideas} onChange={e=>setIdeas(e.target.value)} placeholder="Dán kịch bản, nhập ý tưởng, hoặc dùng nút phân tích video mẫu / phân tích link để AI tự điền kịch bản vào đây" />
           </Field>
+          <div className="form4">
+            <Field label="Link video / web / bài báo"><input value={sourceUrl} onChange={e=>setSourceUrl(e.target.value)} placeholder="Dán URL video, trang web hoặc bài báo" /></Field>
+            <Field label="Video mẫu đã chọn"><input readOnly value={sampleVideo||'chưa chọn'} /></Field>
+          </div>
           <div className="actions">
             <Button onClick={saveApiConfig}>💾 Lưu cấu hình API</Button>
             <Button onClick={pickRefs}><ImagePlus size={16}/> Chọn thư mục ảnh nhân vật</Button>
             <Button onClick={pickSampleVideo}>🎞 Chọn video mẫu</Button>
-            <Button onClick={analyzeSampleVideoForAi}>🧠 AI phân tích video mẫu</Button>
+            <Button onClick={analyzeSampleVideoForAi}>🧠 Phân tích kịch bản video mẫu</Button>
+            <Button onClick={analyzeUrlForAi}>🌐 Phân tích link thành kịch bản</Button>
             <Button variant="primary" onClick={generatePrompt}>✨ Tạo prompt</Button><Button onClick={downloadGeneratedPrompt}>⬇️ Tải prompt đã tạo</Button>
           </div>
           <p className="hint">Thư mục ảnh nhân vật: {refsDir||'chưa chọn'} • Video mẫu: {sampleVideo||'chưa chọn'} • Prompt/kịch bản sẽ ưu tiên giữ nhân vật tương đồng tối đa theo ảnh tham chiếu và xuất theo ngôn ngữ đã chọn{generatedFile?` • File prompt: ${generatedFile}`:''}</p>

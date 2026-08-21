@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('flowAPI', {
   generatePrompt: (payload) => ipcRenderer.invoke('prompt:generate', payload),
   generateScript: (payload) => ipcRenderer.invoke('prompt:script', payload),
   generateCharacters: (payload) => ipcRenderer.invoke('prompt:characters', payload),
+  analyzeUrl: (payload) => ipcRenderer.invoke('prompt:analyzeUrl', payload),
   saveGeneratedPrompt: (file) => ipcRenderer.invoke('prompt:saveGenerated', file),
   videoList: (folder) => ipcRenderer.invoke('video:list', folder),
   videoMerge: (payload) => ipcRenderer.invoke('video:merge', payload),
