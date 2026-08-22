@@ -1443,19 +1443,44 @@ def ordered_new_media_ids(page, before_ids=None):
     except Exception:
         return []
 
-def download_prompt_queue_item(page, item, args, expected_count=1):
-    media_ok, media_reason = wait_new_completed_media(page, before_ids=item["before_ids"], expected_count=max(1, int(item.get("count") or expected_count or "1")), timeout_sec=args.download_wait_sec)
+def download_prompt_queue_item(page, item, args, expected_count=1, claimed_ids=None):
+    claimed_ids = claimed_ids if claimed_ids is not None else set()
+    expected = max(1, int(item.get("count") or expected_count or "1"))
+    # Exclude outputs already assigned to earlier prompts. A plain per-submit
+    # snapshot overlaps when Flow completes prompts out of order.
+    excluded = set(item["before_ids"]) | set(claimed_ids)
+    media_ok, media_reason = wait_new_completed_media(page, before_ids=excluded, expected_count=expected, timeout_sec=args.download_wait_sec)
     if not media_ok:
-        done_wait = wait_generation_complete(page, timeout_sec=90)
+        done_wait = wait_generation_complete(page, timeout_sec=120)
         if not done_wait:
             return False, f"generation_not_completed:{media_reason}"
-    ordered_ids = ordered_new_media_ids(page, before_ids=item["before_ids"])
-    # Lock this download to the oldest queued ready media, not the newest tile from later prompts.
-    target_ids = ordered_ids[:max(1, int(item.get("count") or expected_count or "1"))]
-    scoped_before = set(ordered_ids) - set(target_ids)
-    scoped_before.update(item["before_ids"])
+    # Allow the result grid to settle; image src/tile order can change briefly
+    # while Flow replaces placeholders with final media.
+    time.sleep(3.0)
+    ordered_ids = [x for x in ordered_new_media_ids(page, before_ids=excluded) if x not in claimed_ids]
+    target_ids = ordered_ids[:expected]
+    if len(target_ids) < expected:
+        return False, f"missing_prompt_outputs:{len(target_ids)}/{expected}"
     download_resolution = "1K" if item["task_mode"] == "createimage" else args.download_resolution
-    return auto_download_with_retry(page, resolution=download_resolution, timeout_sec=220, before_ids=scoped_before, output_prefix=item.get("output_prefix", f"prompt_{item['prompt_no']}"), output_dir=args.output_dir)
+    downloaded = 0
+    # Download each expected output separately. The old implementation called
+    # the downloader once, so count=2..4 commonly saved only one file.
+    all_visible = set(ordered_new_media_ids(page, before_ids=item["before_ids"]))
+    for output_idx, target_id in enumerate(target_ids, 1):
+        scoped_before = set(item["before_ids"]) | set(claimed_ids) | (all_visible - {target_id})
+        ok, step = auto_download_with_retry(
+            page,
+            resolution=download_resolution,
+            timeout_sec=240,
+            before_ids=scoped_before,
+            output_prefix=f"{item.get('output_prefix') or ('prompt_' + str(item['prompt_no']))}_{output_idx}",
+            output_dir=args.output_dir,
+        )
+        if not ok:
+            return False, f"output_{output_idx}/{expected}:{step}"
+        claimed_ids.add(target_id)
+        downloaded += 1
+    return True, f"downloaded_{downloaded}/{expected}"
 
 def wait_generation_complete(page, timeout_sec=360):
     deadline = time.time() + timeout_sec
@@ -2052,6 +2077,7 @@ def run(args):
 
         refs_dir = args.refs_dir
         delayed_downloads = []
+        claimed_media_ids = set()
         for idx in range(done, total):
             while PAUSE_FILE_DEFAULT.exists():
                 log_line("[flow] paused")
@@ -2140,11 +2166,11 @@ def run(args):
                                 "count": args.flow_count,
                                 "output_prefix": prompt_file_prefix(prompt, prompt_no),
                             })
-                            if len(delayed_downloads) >= int(args.download_delay_prompts or 0):
+                            if len(delayed_downloads) > int(args.download_delay_prompts or 0):
                                 item = delayed_downloads.pop(0)
                                 license_guard_or_raise(force=True)
                                 log_line(f"[flow] delayed download prompt #{item['prompt_no']} after {args.download_delay_prompts} prompt gap")
-                                dl_ok, dl_step = download_prompt_queue_item(page, item, args)
+                                dl_ok, dl_step = download_prompt_queue_item(page, item, args, claimed_ids=claimed_media_ids)
                                 if not dl_ok:
                                     raise RuntimeError(f"auto_download_failed:{dl_step}")
                         elif args.continuous_download:
@@ -2242,7 +2268,7 @@ def run(args):
                 item = delayed_downloads.pop(0)
                 license_guard_or_raise(force=True)
                 log_line(f"[flow] final batch download prompt #{item['prompt_no']}")
-                dl_ok, dl_step = download_prompt_queue_item(page, item, args)
+                dl_ok, dl_step = download_prompt_queue_item(page, item, args, claimed_ids=claimed_media_ids)
                 if not dl_ok:
                     log_line(f"[flow] delayed final download failed prompt #{item['prompt_no']}: {dl_step}")
 
