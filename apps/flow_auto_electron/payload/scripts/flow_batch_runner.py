@@ -1359,6 +1359,35 @@ def snapshot_media_tiles(page):
         return set()
 
 
+def capture_submitted_tile_ids(page, before_ids=None, expected_count=1, timeout_sec=45):
+    """Capture stable Flow tile IDs created by this submit before later prompts can overlap."""
+    before_ids = set(before_ids or [])
+    deadline = time.time() + timeout_sec
+    last = []
+    while time.time() < deadline:
+        try:
+            ids = page.evaluate(
+                """
+                (before) => {
+                  const old = new Set(before || []);
+                  const out=[];
+                  for (const tile of document.querySelectorAll('[data-tile-id]')) {
+                    const id=tile.getAttribute('data-tile-id');
+                    if(id && !old.has(id) && !out.includes(id)) out.push(id);
+                  }
+                  return out;
+                }
+                """,
+                list(before_ids),
+            ) or []
+            last = [x for x in ids if x]
+            if len(last) >= max(1, int(expected_count or 1)):
+                return last[:max(1, int(expected_count or 1))]
+        except Exception:
+            pass
+        time.sleep(1.0)
+    return last[:max(1, int(expected_count or 1))]
+
 def wait_new_completed_media(page, before_ids=None, expected_count=1, timeout_sec=480):
     before_ids = set(before_ids or [])
     deadline = time.time() + timeout_sec
@@ -1446,9 +1475,13 @@ def ordered_new_media_ids(page, before_ids=None):
 def download_prompt_queue_item(page, item, args, expected_count=1, claimed_ids=None):
     claimed_ids = claimed_ids if claimed_ids is not None else set()
     expected = max(1, int(item.get("count") or expected_count or "1"))
-    # Exclude outputs already assigned to earlier prompts. A plain per-submit
-    # snapshot overlaps when Flow completes prompts out of order.
+    assigned_ids = [x for x in (item.get("assigned_ids") or []) if x]
+    # Prefer stable tile IDs captured immediately after Create. This removes all
+    # dependence on Flow's newest-first visual order.
     excluded = set(item["before_ids"]) | set(claimed_ids)
+    if assigned_ids:
+        current_ids = snapshot_media_tiles(page)
+        excluded |= (set(current_ids) - set(assigned_ids))
     media_ok, media_reason = wait_new_completed_media(page, before_ids=excluded, expected_count=expected, timeout_sec=args.download_wait_sec)
     if not media_ok:
         done_wait = wait_generation_complete(page, timeout_sec=120)
@@ -1458,14 +1491,14 @@ def download_prompt_queue_item(page, item, args, expected_count=1, claimed_ids=N
     # while Flow replaces placeholders with final media.
     time.sleep(3.0)
     ordered_ids = [x for x in ordered_new_media_ids(page, before_ids=excluded) if x not in claimed_ids]
-    target_ids = ordered_ids[:expected]
+    target_ids = [x for x in assigned_ids if x in ordered_ids][:expected] if assigned_ids else ordered_ids[:expected]
     if len(target_ids) < expected:
         return False, f"missing_prompt_outputs:{len(target_ids)}/{expected}"
     download_resolution = "1K" if item["task_mode"] == "createimage" else args.download_resolution
     downloaded = 0
     # Download each expected output separately. The old implementation called
     # the downloader once, so count=2..4 commonly saved only one file.
-    all_visible = set(ordered_new_media_ids(page, before_ids=item["before_ids"]))
+    all_visible = set(ordered_new_media_ids(page, before_ids=item["before_ids"])) | set(snapshot_media_tiles(page))
     for output_idx, target_id in enumerate(target_ids, 1):
         scoped_before = set(item["before_ids"]) | set(claimed_ids) | (all_visible - {target_id})
         ok, step = auto_download_with_retry(
@@ -2144,6 +2177,13 @@ def run(args):
                     btn.click(timeout=5000)
                     submitted = True
                     log_line(f"[flow] prompt #{prompt_no} submitted")
+                    submitted_tile_ids = capture_submitted_tile_ids(
+                        page,
+                        before_ids=pre_submit_tiles,
+                        expected_count=max(1, int(args.flow_count or "1")),
+                        timeout_sec=45,
+                    )
+                    log_line(f"[flow] prompt #{prompt_no} locked tile IDs: {submitted_tile_ids}")
 
                     time.sleep(2)
                     fail_reason = classify_flow_error(page)
@@ -2162,6 +2202,7 @@ def run(args):
                             delayed_downloads.append({
                                 "prompt_no": prompt_no,
                                 "before_ids": pre_submit_tiles,
+                                "assigned_ids": submitted_tile_ids,
                                 "task_mode": args.task_mode,
                                 "count": args.flow_count,
                                 "output_prefix": prompt_file_prefix(prompt, prompt_no),
@@ -2177,6 +2218,7 @@ def run(args):
                             delayed_downloads.append({
                                 "prompt_no": prompt_no,
                                 "before_ids": pre_submit_tiles,
+                                "assigned_ids": submitted_tile_ids,
                                 "task_mode": args.task_mode,
                                 "count": args.flow_count,
                                 "output_prefix": prompt_file_prefix(prompt, prompt_no),
