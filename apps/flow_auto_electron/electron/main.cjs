@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -75,6 +75,10 @@ function sha256File(file){
   h.update(fs.readFileSync(file));
   return h.digest('hex');
 }
+function integrityPublicKey(){
+  const chunks=['-----BEGIN PUBLIC KEY-----','MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAr7WPVAXLM49mc4szbi23','JjoF3SL3dzcMmEy4LIfZcbYLM/fisVGjATggzcMeOBJv4p3Jg817i52/LVK5TAqF','CxVD4uFezSBnB4k6ew9a3/HBFRDE9py/w1IQqAGj6JFhfXvUusZKAl5tw7b+iasg','7RYV565xVhysWUQm3iNCQidbSnyFXqC671Uq9I5CdNMEBXKmd1FKHud9zXDaM9Q1','yq6i6UaKuixKYMM/tSHKLU0pCkdSNCvXh52CeZfiWNHKRDKh4dumDIHXrYLIwp9f','c6I59rLztWQe61ByFgMA1bYBo/VfsP5XCfdBrkAxDFDhdwhn0mwjFduHwzIxbn3C','zZOmRmvgjBqdCeGTT3Cs3OOBAcseE8UiVgjCkx54nIfqbr/4O+JKUqfKnwV5AhUf','rxxURiy4ZiahUHHG68RRdNamcPtGsrS+OYQUm1o20DjEm8zGqMWJiZSj3RhF3lSg','+hT+Qec+lOuqblN/wT1m8TdnxpqoSGnJfF9LXAcOVielAgMBAAE=','-----END PUBLIC KEY-----'];
+  return chunks.join('\n');
+}
 function verifyProtectedIntegrity(){
   if(!app.isPackaged) return {ok:true, skipped:true};
   const manifestPath=resourcePath('integrity-manifest.json');
@@ -82,16 +86,22 @@ function verifyProtectedIntegrity(){
   let manifest={};
   try{ manifest=JSON.parse(fs.readFileSync(manifestPath,'utf8')); }catch(e){ return {ok:false,error:'integrity_manifest_invalid'}; }
   const files=Array.isArray(manifest.files)?manifest.files:[];
+  if(manifest.version!==2 || !files.length || !manifest.signature) return {ok:false,error:'integrity_manifest_unsigned_or_bad_version'};
+  const body={version:manifest.version,generatedAt:manifest.generatedAt,files};
+  let signatureOk=false;
+  try{ signatureOk=crypto.verify('sha256',Buffer.from(JSON.stringify(body)),integrityPublicKey(),Buffer.from(String(manifest.signature),'base64')); }catch{}
+  if(!signatureOk) return {ok:false,error:'integrity_signature_invalid'};
   for(const item of files){
     const rel=String(item.path||'').replace(/^[\\/]+/,'');
     const expected=String(item.sha256||'').toLowerCase();
-    if(!rel || !expected) return {ok:false,error:'integrity_manifest_bad_entry'};
+    if(!rel || !expected || !Number(item.size)) return {ok:false,error:'integrity_manifest_bad_entry'};
     const target=resourcePath(rel);
     if(!fs.existsSync(target)) return {ok:false,error:`integrity_missing:${rel}`};
+    if(fs.statSync(target).size!==Number(item.size)) return {ok:false,error:`integrity_size_mismatch:${rel}`};
     const actual=sha256File(target).toLowerCase();
     if(actual!==expected) return {ok:false,error:`integrity_mismatch:${rel}`};
   }
-  return {ok:true, checked:files.length};
+  return {ok:true, signed:true, checked:files.length};
 }
 function enforceProtectedIntegrity(){
   const r=verifyProtectedIntegrity();
@@ -188,8 +198,30 @@ function machineId(){
 function licenseApiBase(){ try{ const cfg=JSON.parse(fs.readFileSync(LICENSE_CONFIG,'utf8')); return cfg.api_base||DEFAULT_API_BASE; }catch{return DEFAULT_API_BASE;} }
 
 
-function loadLicenseCfg(){ try{return JSON.parse(fs.readFileSync(LICENSE_CONFIG,'utf8'))}catch{return {}} }
-function saveLicenseCfg(cfg){ fs.mkdirSync(path.dirname(LICENSE_CONFIG),{recursive:true}); fs.writeFileSync(LICENSE_CONFIG,JSON.stringify(cfg,null,2),'utf8'); }
+function protectLocalSecret(value){
+  const v=String(value||''); if(!v)return '';
+  try{ if(process.platform==='win32' && safeStorage.isEncryptionAvailable()) return 'dpapi:'+safeStorage.encryptString(v).toString('base64'); }catch{}
+  return 'machine:'+crypto.createCipheriv('aes-256-gcm',crypto.createHash('sha256').update(machineId()).digest(),Buffer.alloc(12)).update(v,'utf8','base64');
+}
+function unprotectLocalSecret(value){
+  const v=String(value||''); if(!v)return '';
+  try{ if(v.startsWith('dpapi:') && safeStorage.isEncryptionAvailable()) return safeStorage.decryptString(Buffer.from(v.slice(6),'base64')); }catch{}
+  return v.startsWith('machine:')?'':v;
+}
+function loadLicenseCfg(){
+  try{
+    const cfg=JSON.parse(fs.readFileSync(LICENSE_CONFIG,'utf8'));
+    if(cfg.license_key_encrypted) cfg.license_key=unprotectLocalSecret(cfg.license_key_encrypted);
+    if(cfg.signed_token_encrypted) cfg.signed_token=unprotectLocalSecret(cfg.signed_token_encrypted);
+    return cfg;
+  }catch{return {}}
+}
+function saveLicenseCfg(input){
+  const cfg={...input};
+  if(cfg.license_key){ cfg.license_key_encrypted=protectLocalSecret(cfg.license_key); delete cfg.license_key; }
+  if(cfg.signed_token){ cfg.signed_token_encrypted=protectLocalSecret(cfg.signed_token); delete cfg.signed_token; }
+  fs.mkdirSync(path.dirname(LICENSE_CONFIG),{recursive:true}); fs.writeFileSync(LICENSE_CONFIG,JSON.stringify(cfg,null,2),'utf8');
+}
 function normalizeBase(b){ b=String(b||'').trim().replace(/\/+$/,''); if(b.endsWith('/activate')||b.endsWith('/verify')) b=b.replace(/\/[^\/]+$/,''); return b; }
 async function postJson(url,payload){ const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); let data={}; try{data=await r.json()}catch{} return {status:r.status,data}; }
 async function verifyLicenseJs(){ const cfg=loadLicenseCfg(); const base=normalizeBase(cfg.api_base||''); if(!base) return {ok:false,reason:'missing_api_base'}; if(!cfg.license_key) return {ok:false,reason:'missing_license_key'}; cfg.machine_id=cfg.machine_id||machineId(); const payload={license_key:cfg.license_key,machine_id:cfg.machine_id,app_version:'V2.0',nonce:Date.now().toString(36),timestamp:new Date().toISOString().replace(/\.\d{3}Z$/,'Z')}; if(cfg.signed_token) payload.signed_token=cfg.signed_token; try{ const {status,data}=await postJson(`${base}/verify`,payload); if(status===200 && data.valid){ ['signed_token','expires_at','grace_until','next_check_at'].forEach(k=>{if(data[k])cfg[k]=data[k]}); cfg.last_verified_at=payload.timestamp; saveLicenseCfg(cfg); return {ok:true,expires_at:data.expires_at||cfg.expires_at,data}; } return {ok:false,reason:data.reason||`http_${status}`,data}; }catch(e){ return {ok:false,reason:`network_error:${e.message||e}`}; }}
@@ -734,7 +766,7 @@ async function generateScriptJs(payload){
 
 async function activateLicenseJs(key,api){ const cfg=loadLicenseCfg(); cfg.api_base=normalizeBase(DEFAULT_API_BASE); cfg.license_key=String(key||'').trim(); cfg.machine_id=machineId(); if(!cfg.api_base) return {ok:false,error:'missing_api_base'}; if(!cfg.license_key) return {ok:false,error:'missing_license_key'}; const payload={license_key:cfg.license_key,machine_id:cfg.machine_id,app_version:'V2.0',nonce:Date.now().toString(36),timestamp:new Date().toISOString().replace(/\.\d{3}Z$/,'Z')}; try{ const {status,data}=await postJson(`${cfg.api_base}/activate`,payload); if(status===200 && data.valid!==false){ ['signed_token','expires_at','grace_until','next_check_at'].forEach(k=>{if(data[k])cfg[k]=data[k]}); cfg.last_verified_at=payload.timestamp; saveLicenseCfg(cfg); return {ok:true,expires_at:data.expires_at||cfg.expires_at,data}; } return {ok:false,error:data.reason||`http_${status}`,data}; }catch(e){ return {ok:false,error:`network_error:${e.message||e}`}; }}
 
-function cachedLicense(){ try{ const cfg=JSON.parse(fs.readFileSync(LICENSE_CONFIG,'utf8')); if(cfg.expires_at) return {ok:true, cached:true, expires_at:cfg.expires_at}; if(cfg.license_key) return {ok:true, cached:true, reason:'Đã có key local nhưng chưa có thời hạn'}; }catch{} return null; }
+function cachedLicense(){ try{ const cfg=loadLicenseCfg(); if(cfg.expires_at) return {ok:true, cached:true, expires_at:cfg.expires_at}; if(cfg.license_key) return {ok:true, cached:true, reason:'Đã có key local nhưng chưa có thời hạn'}; }catch{} return null; }
 function readPid(){ try{return Number(fs.readFileSync(PID_RUN,'utf8').trim())}catch{return 0} }
 function isRunningPid(pid){ if(!pid) return false; try{ process.kill(pid,0); return true; }catch{return false;} }
 
@@ -908,6 +940,8 @@ function runnerCommand(){
 }
 
 function startRunner(payload){
+  const integrity=enforceProtectedIntegrity(); if(!integrity.ok) return integrity;
+  if(app.isPackaged && suspiciousRuntimeSignals().length) return {ok:false,error:'runtime_security_check_failed'};
   ensureDirs(); try{fs.rmSync(PAUSE_FILE,{force:true})}catch{}
   const profiles=Array.isArray(payload.profiles)?payload.profiles.filter(x=>x&&(x.promptFile||String(x.script||x.prompts||'').trim())).slice(0,100):[];
   const characterImages=payload.characterImages||[];
@@ -932,7 +966,8 @@ function startRunner(payload){
     try { if(fs.existsSync(stateFile)) fs.unlinkSync(stateFile); } catch(e) {}
     const args=['--run-id',runId,'--prompts',pf,'--state',stateFile,'--fresh-run','--start-from',String(payload.startFrom||1),'--cdp',`http://127.0.0.1:${CDP_PORT+idx}`,'--task-mode',payload.mode||payload.taskMode||'createvideo','--video-sub-mode',payload.subMode||payload.videoSubMode||'frames','--flow-model',payload.model||payload.flowModel||'default','--flow-aspect-ratio',payload.ratio||payload.aspectRatio||payload.flowAspectRatio||'16:9','--flow-count',String(payload.count||payload.flowCount||1),'--omni-duration',String(payload.omniDuration||''),'--download-resolution','720','--character-images', characterImages.join(','), '--between-prompts-sec', String(payload.spacing||10)];
     args.push(payload.pairedMode===false?'--no-paired-mode':'--paired-mode'); const wantAutoDownload = payload.autoDownload !== false; if(wantAutoDownload) args.push('--auto-download'); if(wantAutoDownload && payload.runMode==='continuous_submit_only') args.push('--download-delay-prompts','2'); if(!wantAutoDownload && payload.runMode==='continuous_submit_only') args.push('--submit-only'); const refDir=threadRefs[idx]||payload.refsDir; if(refDir) args.push('--refs-dir',refDir); if(payload.downloadDir) args.push('--output-dir',payload.downloadDir); try{ fs.appendFileSync(logFile, `[runner] path=${runner.path||runner.cmd} compiled=${!!runner.compiled}\n[runner] thread=${idx+1} mode=${payload.mode||payload.taskMode} model=${payload.model||payload.flowModel} ratio=${payload.ratio||payload.aspectRatio||payload.flowAspectRatio} count=${payload.count||payload.flowCount} autoDownload=${wantAutoDownload} runMode=${payload.runMode||''}\n`); }catch{}
-    const p=spawn(runner.cmd, [...runner.prefix, ...args], spawnOpts({detached:true, stdio:['ignore',out,out]})); p.unref(); pids.push(p.pid); fs.writeFileSync(path.join(JOB_DIR,`electron-runner-${idx+1}-${workerId}.pid`),String(p.pid));
+    const licenseCfg=loadLicenseCfg(); const runnerBinding=crypto.createHash('sha256').update(`${process.pid}|${runId}|${machineId()}|flow-runner`).digest('hex'); const runnerEnv={...process.env,FLOW_PARENT_PID:String(process.pid),FLOW_RUNNER_BINDING:runnerBinding,FLOW_WORKSPACE:BASE_DIR,FLOW_PAUSE_FILE:PAUSE_FILE,FLOW_LICENSE_KEY_RUNTIME:String(licenseCfg.license_key||''),FLOW_LICENSE_API_BASE_RUNTIME:String(licenseCfg.api_base||DEFAULT_API_BASE),FLOW_LICENSE_SIGNED_TOKEN_RUNTIME:String(licenseCfg.signed_token||'')};
+    const p=spawn(runner.cmd, [...runner.prefix, ...args], spawnOpts({detached:true, stdio:['ignore',out,out], env:runnerEnv})); p.unref(); pids.push(p.pid); fs.writeFileSync(path.join(JOB_DIR,`electron-runner-${idx+1}-${workerId}.pid`),String(p.pid));
   });
   fs.writeFileSync(PID_RUN,String(pids[0]||'')); return {ok:true,workerId,pid:pids[0],pids,threads:threadFiles.length,promptFile,runner:runner.compiled?'nuitka-runner-hidden-multitab':'python-stable-hidden-multitab'};
 }

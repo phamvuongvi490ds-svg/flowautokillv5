@@ -38,8 +38,13 @@ jobs:
         run: |
           if (Get-ChildItem -Path payload_protected -Recurse -Filter *.py -ErrorAction SilentlyContinue) { throw 'Protected payload must not ship Python source files' }
           if (!(Test-Path payload_protected\bin\flow_batch_runner.dist\flow_batch_runner.exe)) { throw 'compiled runner missing' }
+      - name: Remove debug artifacts
+        shell: pwsh
+        run: Get-ChildItem payload_protected -Recurse -Include *.pdb,*.pyc,*.pyo,*.map,*.log | Remove-Item -Force -ErrorAction SilentlyContinue
       - name: Write protected integrity manifest
         shell: pwsh
+        env:
+          INTEGRITY_PRIVATE_KEY_PEM: ${{ secrets.INTEGRITY_PRIVATE_KEY_PEM }}
         run: node build-tools/write-integrity-manifest.cjs
       - name: Audit protected payload
         shell: pwsh
@@ -58,6 +63,24 @@ jobs:
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: npx electron-builder --config package.protected.json --win nsis --x64
+      - name: Audit packaged output
+        shell: pwsh
+        run: |
+          $bad = Get-ChildItem release-protected -Recurse -File | Where-Object { $_.Extension -in '.py','.pyc','.pyo','.map','.log','.pdb' }
+          if ($bad) { $bad | ForEach-Object { Write-Error "Forbidden packaged artifact: $($_.FullName)" }; throw 'Packaged output contains source/debug artifacts' }
+          if (!(Test-Path release-protected\FlowAutoProtected-Setup.exe)) { throw 'Protected installer missing' }
+      - name: Verify Authenticode when certificate is configured
+        shell: pwsh
+        env:
+          HAS_WINDOWS_CERT: ${{ secrets.WINDOWS_CSC_LINK }}
+        run: |
+          if (![string]::IsNullOrWhiteSpace($env:HAS_WINDOWS_CERT)) {
+            $sig = Get-AuthenticodeSignature release-protected\FlowAutoProtected-Setup.exe
+            if ($sig.Status -ne 'Valid') { throw "Installer signature is not valid: $($sig.Status)" }
+            Write-Host "Authenticode signature valid: $($sig.SignerCertificate.Subject)"
+          } else {
+            Write-Warning 'WINDOWS_CSC_LINK not configured; installer is unsigned. Internal signed manifest remains enforced.'
+          }
       - name: Collect artifact
         shell: pwsh
         run: |

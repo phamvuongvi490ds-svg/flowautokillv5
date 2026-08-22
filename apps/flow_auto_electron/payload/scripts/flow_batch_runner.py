@@ -1880,12 +1880,21 @@ def _license_read_machine_id():
     return socket.gethostname()
 
 def _license_load_cfg():
+    cfg = {}
     try:
         if LICENSE_CONFIG_FILE.exists():
-            return json.loads(LICENSE_CONFIG_FILE.read_text(encoding="utf-8"))
+            cfg = json.loads(LICENSE_CONFIG_FILE.read_text(encoding="utf-8"))
     except Exception:
-        pass
-    return {}
+        cfg = {}
+    # Protected Electron passes decrypted values only in the child process environment.
+    # The on-disk config keeps DPAPI-protected blobs and no plaintext license key.
+    if os.environ.get("FLOW_LICENSE_KEY_RUNTIME"):
+        cfg["license_key"] = os.environ.get("FLOW_LICENSE_KEY_RUNTIME", "")
+    if os.environ.get("FLOW_LICENSE_API_BASE_RUNTIME"):
+        cfg["api_base"] = os.environ.get("FLOW_LICENSE_API_BASE_RUNTIME", "")
+    if os.environ.get("FLOW_LICENSE_SIGNED_TOKEN_RUNTIME"):
+        cfg["signed_token"] = os.environ.get("FLOW_LICENSE_SIGNED_TOKEN_RUNTIME", "")
+    return cfg
 
 def _license_save_cfg(cfg):
     try:
@@ -1943,7 +1952,8 @@ def _license_verify_online():
             if data.get(k):
                 cfg[k] = data[k]
         cfg["last_verified_at"] = _license_iso_now()
-        _license_save_cfg(cfg)
+        if not os.environ.get("FLOW_LICENSE_KEY_RUNTIME"):
+            _license_save_cfg(cfg)
         return True, "ok"
     reason = data.get("reason") if isinstance(data, dict) else f"http_{code}"
     return False, str(reason or f"http_{code}")
@@ -1963,7 +1973,19 @@ def license_guard_or_raise(force=False):
     raise RuntimeError(f"license_invalid:{reason}")
 
 
+def _runner_parent_guard():
+    if os.environ.get("FLOW_LICENSE_KEY_RUNTIME"):
+        parent = int(os.environ.get("FLOW_PARENT_PID", "0") or 0)
+        binding = (os.environ.get("FLOW_RUNNER_BINDING", "") or "").strip()
+        if parent <= 0 or len(binding) != 64:
+            raise RuntimeError("runner_parent_binding_invalid")
+        try:
+            os.kill(parent, 0)
+        except Exception:
+            raise RuntimeError("runner_parent_not_running")
+
 def run(args):
+    _runner_parent_guard()
     # Electron resets old workers before launch; runner must not kill sibling threads.
 
 
