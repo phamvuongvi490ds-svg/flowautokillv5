@@ -2377,13 +2377,19 @@ def run(args):
                     close_open_menus(page)
                     clear_attached_references(page)
 
-                    # Nếu có thư mục ảnh ref, tạo project mới cho prompt kế tiếp để không reuse ảnh/prompt cũ
-                    if refs_dir is not None:
+                    # In delayed/continuous mode, keep the same Flow project:
+                    # previous result tiles must remain visible until their FIFO
+                    # download turn. Opening New Project here made only the final
+                    # prompt downloadable. Single mode may still isolate projects.
+                    delayed_mode = int(args.download_delay_prompts or 0) > 0 or bool(args.continuous_download)
+                    if refs_dir is not None and not delayed_mode:
                         try:
                             _try_click_new_project(page)
                             time.sleep(1.2)
                         except Exception:
                             pass
+                    elif refs_dir is not None:
+                        log_line(f"[flow] keep current project for delayed FIFO; clearing reference before prompt #{prompt_no + 1}")
 
                     next_box = find_input_box(page)
                     clear_prompt_box(page, next_box)
