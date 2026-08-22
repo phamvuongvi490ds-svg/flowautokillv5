@@ -1406,6 +1406,57 @@ def wait_new_completed_media(page, before_ids=None, expected_count=1, timeout_se
     return False, f"timeout_media_count_{last_count}"
 
 
+
+def ordered_new_media_ids(page, before_ids=None):
+    before_ids = set(before_ids or [])
+    try:
+        rows = page.evaluate(
+            """
+            (before) => {
+              const visible = (el) => {
+                if (!el) return false;
+                const st = getComputedStyle(el);
+                if (!st || st.display === 'none' || st.visibility === 'hidden') return false;
+                const r = el.getBoundingClientRect();
+                return r.width > 20 && r.height > 20;
+              };
+              const beforeSet = new Set(before || []);
+              const out=[];
+              const nodes = Array.from(document.querySelectorAll('[data-tile-id]')).filter(visible);
+              for (let i=0;i<nodes.length;i++){
+                const tile=nodes[i];
+                const id=tile.getAttribute('data-tile-id') || `tile-${i}`;
+                const media=tile.querySelector('video[src],img[src],canvas');
+                if(id && !beforeSet.has(id) && media){
+                  const r=tile.getBoundingClientRect();
+                  out.push({id, top:r.top, left:r.left, idx:i});
+                }
+              }
+              // Flow commonly puts newest result near the top. For prompt order, use older/newer order by screen position: bottom/later list first.
+              out.sort((a,b)=> (b.top-a.top) || (a.left-b.left) || (a.idx-b.idx));
+              return out.map(x=>x.id);
+            }
+            """,
+            list(before_ids),
+        )
+        return [x for x in (rows or []) if x]
+    except Exception:
+        return []
+
+def download_prompt_queue_item(page, item, args, expected_count=1):
+    media_ok, media_reason = wait_new_completed_media(page, before_ids=item["before_ids"], expected_count=max(1, int(item.get("count") or expected_count or "1")), timeout_sec=args.download_wait_sec)
+    if not media_ok:
+        done_wait = wait_generation_complete(page, timeout_sec=90)
+        if not done_wait:
+            return False, f"generation_not_completed:{media_reason}"
+    ordered_ids = ordered_new_media_ids(page, before_ids=item["before_ids"])
+    # Lock this download to the oldest queued ready media, not the newest tile from later prompts.
+    target_ids = ordered_ids[:max(1, int(item.get("count") or expected_count or "1"))]
+    scoped_before = set(ordered_ids) - set(target_ids)
+    scoped_before.update(item["before_ids"])
+    download_resolution = "1K" if item["task_mode"] == "createimage" else args.download_resolution
+    return auto_download_with_retry(page, resolution=download_resolution, timeout_sec=220, before_ids=scoped_before, output_prefix=item.get("output_prefix", f"prompt_{item['prompt_no']}"), output_dir=args.output_dir)
+
 def wait_generation_complete(page, timeout_sec=360):
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
@@ -2059,13 +2110,7 @@ def run(args):
                                 item = delayed_downloads.pop(0)
                                 license_guard_or_raise(force=True)
                                 log_line(f"[flow] delayed download prompt #{item['prompt_no']} after {args.download_delay_prompts} prompt gap")
-                                media_ok, media_reason = wait_new_completed_media(page, before_ids=item["before_ids"], expected_count=max(1, int(item["count"] or "1")), timeout_sec=args.download_wait_sec)
-                                if not media_ok:
-                                    done_wait = wait_generation_complete(page, timeout_sec=90)
-                                    if not done_wait:
-                                        raise RuntimeError(f"generation_not_completed:{media_reason}")
-                                download_resolution = "1K" if item["task_mode"] == "createimage" else args.download_resolution
-                                dl_ok, dl_step = auto_download_with_retry(page, resolution=download_resolution, timeout_sec=220, before_ids=item["before_ids"], output_prefix=item.get("output_prefix", f"prompt_{item['prompt_no']}"), output_dir=args.output_dir)
+                                dl_ok, dl_step = download_prompt_queue_item(page, item, args)
                                 if not dl_ok:
                                     raise RuntimeError(f"auto_download_failed:{dl_step}")
                         elif args.continuous_download:
@@ -2163,14 +2208,7 @@ def run(args):
                 item = delayed_downloads.pop(0)
                 license_guard_or_raise(force=True)
                 log_line(f"[flow] final batch download prompt #{item['prompt_no']}")
-                media_ok, media_reason = wait_new_completed_media(page, before_ids=item["before_ids"], expected_count=max(1, int(item["count"] or "1")), timeout_sec=args.download_wait_sec)
-                if not media_ok:
-                    done_wait = wait_generation_complete(page, timeout_sec=90)
-                    if not done_wait:
-                        log_line(f"[flow] delayed final download skipped prompt #{item['prompt_no']}: {media_reason}")
-                        continue
-                download_resolution = "1K" if item["task_mode"] == "createimage" else args.download_resolution
-                dl_ok, dl_step = auto_download_with_retry(page, resolution=download_resolution, timeout_sec=220, before_ids=item["before_ids"], output_prefix=item.get("output_prefix", f"prompt_{item['prompt_no']}"), output_dir=args.output_dir)
+                dl_ok, dl_step = download_prompt_queue_item(page, item, args)
                 if not dl_ok:
                     log_line(f"[flow] delayed final download failed prompt #{item['prompt_no']}: {dl_step}")
 
