@@ -1435,7 +1435,7 @@ def capture_submitted_tile_ids(page, before_ids=None, expected_count=1, timeout_
                 (before) => {
                   const old = new Set(before || []);
                   const out=[];
-                  const visible=el=>{if(!el)return false;const st=getComputedStyle(el),r=el.getBoundingClientRect();return st.display!=='none'&&st.visibility!=='hidden'&&r.width>120&&r.height>80;};
+                  const visible=el=>{if(!el)return false;const st=getComputedStyle(el),r=el.getBoundingClientRect();return st.display!=='none'&&st.visibility!=='hidden'&&r.width>40&&r.height>30;};
                   for (const tile of document.querySelectorAll('[data-tile-id]')) {
                     const id=tile.getAttribute('data-tile-id');
                     if(tile.closest('[role="dialog"],[data-radix-popper-content-wrapper],form')) continue;
@@ -1559,6 +1559,13 @@ def download_prompt_queue_item(page, item, args, expected_count=1, claimed_ids=N
     time.sleep(3.0)
     ordered_ids = [x for x in ordered_new_media_ids(page, before_ids=excluded) if x not in claimed_ids]
     target_ids = [x for x in assigned_ids if x in ordered_ids][:expected] if assigned_ids else ordered_ids[:expected]
+    if len(target_ids) < expected:
+        # Flow can replace the submitted placeholder tile ID with final output
+        # tile IDs. Reacquire from this prompt's pre-submit baseline while still
+        # excluding outputs claimed by earlier prompts.
+        rebased_before = set(item["before_ids"]) | set(claimed_ids)
+        rebased = [x for x in ordered_new_media_ids(page, before_ids=rebased_before) if x not in claimed_ids]
+        target_ids = rebased[:expected]
     if len(target_ids) < expected:
         return False, f"missing_prompt_outputs:{len(target_ids)}/{expected}"
     # Verify locked tiles contain the requested media type. Reference images or
@@ -2278,10 +2285,12 @@ def run(args):
                     submitted_tile_ids = capture_submitted_tile_ids(
                         page,
                         before_ids=pre_submit_tiles,
-                        expected_count=max(1, int(args.flow_count or "1")),
-                        timeout_sec=45,
+                        expected_count=1,
+                        timeout_sec=180,
                     )
                     log_line(f"[flow] prompt #{prompt_no} locked tile IDs: {submitted_tile_ids}")
+                    if not submitted_tile_ids:
+                        raise RuntimeError("submitted_job_tile_not_created")
 
                     time.sleep(2)
                     fail_reason = classify_flow_error(page)
