@@ -1142,6 +1142,30 @@ function subtitlesFromScript(script, scenes){
   const durations=(scenes||[]).map(sc=>Math.max(.5,Number(sc.end||0)-Number(sc.start||0)||8));
   let cursor=0; return texts.map((text,i)=>{const d=durations[i]||8;const row={start:cursor,end:cursor+d,text};cursor+=d;return row});
 }
+async function transcribeVideoAudioVerbatim(file,apiKey,preferredModel='',language='vi'){
+  const dir=path.join(path.dirname(file),'flow_auto_post','transcribe_audio'); fs.mkdirSync(dir,{recursive:true});
+  const audio=path.join(dir,`${path.basename(file,path.extname(file))}_${Date.now()}.mp3`);
+  const ex=ffmpegRun(['-y','-i',file,'-vn','-ac','1','-ar','16000','-b:a','64k',audio]);
+  if(ex.status!==0 || !fs.existsSync(audio)) throw new Error('audio_extract_failed:'+ffErr(ex));
+  const data=fs.readFileSync(audio).toString('base64');
+  const system=`Bạn là hệ thống speech-to-text chính xác. Chép NGUYÊN VĂN lời nói thật trong audio, ngôn ngữ ${language}. Không viết lại, không tóm tắt, không sửa văn phong, không thêm lời từ kịch bản, không đoán khi không nghe rõ. Bỏ nhạc nền và tiếng động. Nếu không có lời nói, trả segments rỗng. Trả JSON duy nhất {"segments":[{"start":0.0,"end":1.2,"text":"nguyên văn"}]}; timestamp tính bằng giây theo audio.`;
+  const out=await geminiText(apiKey,[{inlineData:{mimeType:'audio/mpeg',data}},{text:'Transcribe this audio verbatim with accurate segment timestamps. Return no invented words.'}],system,true,preferredModel);
+  const obj=JSON.parse(String(out||'').replace(/^```json\s*|```$/g,''));
+  return validSubtitleRows(obj.segments||[]);
+}
+async function transcribeTimelineVerbatim(scenes,apiKey,preferredModel='',language='vi'){
+  const all=[]; let offset=0;
+  for(const sc of scenes){
+    const clipStart=Number(sc.start)||0, clipEnd=Number(sc.end)||videoDurationSec(sc.file), dur=Math.max(.5,clipEnd-clipStart||8);
+    const rows=await transcribeVideoAudioVerbatim(sc.file,apiKey,preferredModel,language);
+    for(const r of rows){
+      const start=Math.max(0,Number(r.start)||0), end=Math.min(dur,Number(r.end)||0);
+      if(String(r.text||'').trim() && end>start) all.push({start:offset+start,end:offset+end,text:String(r.text).trim()});
+    }
+    offset+=dur;
+  }
+  return all;
+}
 function validSubtitleRows(rows){ return (Array.isArray(rows)?rows:[]).map(r=>({start:Number(r.start)||0,end:Number(r.end)||0,text:String(r.text||'').trim()})).filter(r=>r.text&&r.end>r.start); }
 function writeAssSub(file, rows, opt={}){
   const font=String(opt.font||'Arial').trim()||'Arial'; const size=Number(opt.size||42); const color=assColor(opt.color||'#FFFFFF'); const outline=assColor(opt.outlineColor||'#000000');
@@ -1195,13 +1219,13 @@ ipcMain.handle('video:postPlan', async(_e,payload={})=>{
   const apiKey=payload.apiKey||''; const script=String(payload.script||'').trim();
   const framePlan=targetVideoFrame(files); const scenes=files.map((file,i)=>{const probe=framePlan.probes[i];return {id:`scene_${i+1}`,index:i+1,file,name:path.basename(file),keep:true,order:i+1,start:0,end:probe.duration||videoDurationSec(file),width:probe.width,height:probe.height,targetWidth:framePlan.width,targetHeight:framePlan.height,orientation:framePlan.orientation,transition:payload.defaultTransition&&payload.defaultTransition!=='ai'?safeTransitionName(payload.defaultTransition):'fade',effect:'subtle_fade',reason:'AI auto hậu kì'}});
   let subtitles=[];
-  if(payload.srtFile && fs.existsSync(payload.srtFile)) subtitles=parseSimpleSrt(fs.readFileSync(payload.srtFile,'utf8'));
-  else if(payload.autoSub && apiKey){
-    let t=0; for(const sc of scenes){ const dur=sc.end||8; subtitles.push({start:t,end:t+dur,text:`${path.basename(sc.file,path.extname(sc.file))}`}); t+=dur; }
+  if(payload.srtFile && fs.existsSync(payload.srtFile)){
+    const raw=fs.readFileSync(payload.srtFile,'utf8');
+    subtitles=path.extname(payload.srtFile).toLowerCase()==='.ass'?parseSimpleAss(raw):parseSimpleSrt(raw);
   }
   if(apiKey){
     try{
-      const sys='Bạn là AI dựng hậu kì video. Phân tích tên file video và kịch bản, trả JSON {scenes:[{index,order,keep,reason,start,end,transition,effect}], subtitles:[{start,end,text}]}. transition chỉ chọn fade, fadeblack, fadewhite, smoothleft, smoothright, smoothup, smoothdown. Phân tích kích thước/tỷ lệ từng clip, tự bỏ đoạn thừa/lỗi giọng bằng start/end, sắp cảnh đúng diễn biến, chọn hiệu ứng chuyển cảnh nhẹ phù hợp từng cảnh; tránh hiệu ứng rối mắt. Subtitle phải đúng ngôn ngữ yêu cầu và khớp lời dẫn.';
+      const sys='Bạn là AI dựng hậu kì video. Phân tích tên file video và kịch bản, trả JSON {scenes:[{index,order,keep,reason,start,end,transition,effect}]}. transition chỉ chọn fade, fadeblack, fadewhite, smoothleft, smoothright, smoothup, smoothdown. Phân tích kích thước/tỷ lệ từng clip, tự bỏ đoạn thừa/lỗi giọng bằng start/end, sắp cảnh đúng diễn biến, chọn hiệu ứng chuyển cảnh nhẹ phù hợp từng cảnh; tránh hiệu ứng rối mắt. Không tạo subtitle từ kịch bản; subtitle sẽ được nhận dạng riêng từ audio thật.';
       const text=`KỊCH BẢN:
 ${script||'(không có)'}
 
@@ -1211,10 +1235,16 @@ ${files.map((f,i)=>`${i+1}. ${path.basename(f)} duration=${videoDurationSec(f)}s
 AutoSub=${!!payload.autoSub} Language=${payload.subLang||'vi'}`;
       const out=await geminiText(apiKey,[{text}],sys,true); const obj=JSON.parse(out.replace(/^```json\s*|```$/g,''));
       for(const item of obj.scenes||[]){ const sc=scenes[(Number(item.index)||1)-1]; if(sc){ Object.assign(sc,{order:Number(item.order||sc.order),keep:item.keep!==false,reason:item.reason||sc.reason,start:Number(item.start||0),end:Number(item.end||sc.end||0),transition:payload.defaultTransition&&payload.defaultTransition!=='ai'?safeTransitionName(payload.defaultTransition):safeTransitionName(item.transition),effect:String(item.effect||'subtle_fade')}); }}
-      if(Array.isArray(obj.subtitles)&&obj.subtitles.length) subtitles=obj.subtitles;
     }catch(e){ return {ok:true,warning:'ai_post_plan_failed:'+String(e.message||e),scenes,subtitles}; }
   }
-  scenes.sort((a,b)=>a.order-b.order); return {ok:true,scenes,subtitles,framePlan};
+  scenes.sort((a,b)=>a.order-b.order);
+  if(payload.autoSub && !payload.srtFile){
+    if(!apiKey) return {ok:false,error:'missing_api_key_for_audio_transcription'};
+    try{ subtitles=await transcribeTimelineVerbatim(scenes,apiKey,payload.apiModel||'',payload.subLang||'vi'); }
+    catch(e){ return {ok:false,error:'audio_transcription_failed:'+String(e.message||e),scenes}; }
+    if(!subtitles.length) return {ok:false,error:'no_spoken_audio_detected',scenes};
+  }
+  return {ok:true,scenes,subtitles,framePlan,subtitleSource:payload.srtFile?'file':payload.autoSub?'audio_verbatim':'none'};
 });
 
 ipcMain.handle('video:postExport', async(_e,payload={})=>{
@@ -1244,7 +1274,6 @@ ipcMain.handle('video:postExport', async(_e,payload={})=>{
     const raw=fs.readFileSync(payload.srtFile,'utf8');
     subs=validSubtitleRows(path.extname(payload.srtFile).toLowerCase()==='.ass'?parseSimpleAss(raw):parseSimpleSrt(raw));
   }
-  if(!subs.length && payload.autoSub) subs=validSubtitleRows(subtitlesFromScript(payload.script||'',scenes));
   if(payload.autoSub && !subs.length) return {ok:false,error:'subtitle_enabled_but_no_valid_rows'};
   if(subs.length){
     const ass=writeAssSub(path.join(outDir,'ai_subtitles.ass'),subs,payload.subStyle||{});
