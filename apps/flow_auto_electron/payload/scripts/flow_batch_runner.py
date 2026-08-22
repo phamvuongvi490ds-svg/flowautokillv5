@@ -1561,6 +1561,24 @@ def download_prompt_queue_item(page, item, args, expected_count=1, claimed_ids=N
     target_ids = [x for x in assigned_ids if x in ordered_ids][:expected] if assigned_ids else ordered_ids[:expected]
     if len(target_ids) < expected:
         return False, f"missing_prompt_outputs:{len(target_ids)}/{expected}"
+    # Verify locked tiles contain the requested media type. Reference images or
+    # image placeholders must never satisfy a video queue item.
+    kind_ok = page.evaluate(
+        """
+        ({ids,kind}) => ids.every(id => {
+          const tile=Array.from(document.querySelectorAll('[data-tile-id]')).find(t=>t.getAttribute('data-tile-id')===id);
+          if(!tile)return false;
+          if(kind==='video'){
+            const v=tile.querySelector('video');
+            return !!v && (v.readyState>=1 || !!v.currentSrc || !!v.src || !!v.querySelector('source[src]'));
+          }
+          return !!tile.querySelector('img[src],canvas');
+        })
+        """,
+        {"ids": target_ids, "kind": item.get("media_kind") or ("image" if item["task_mode"] == "createimage" else "video")},
+    )
+    if not kind_ok:
+        return False, f"locked_tiles_not_ready_as_{item.get('media_kind') or item['task_mode']}"
     download_resolution = "1K" if item["task_mode"] == "createimage" else args.download_resolution
     downloaded = 0
     # Download each expected output separately. The old implementation called
@@ -2283,6 +2301,7 @@ def run(args):
                                 "before_ids": pre_submit_tiles,
                                 "assigned_ids": submitted_tile_ids,
                                 "task_mode": args.task_mode,
+                                "media_kind": "image" if args.task_mode == "createimage" else "video",
                                 "count": args.flow_count,
                                 "output_prefix": prompt_file_prefix(prompt, prompt_no),
                             })
@@ -2299,6 +2318,7 @@ def run(args):
                                 "before_ids": pre_submit_tiles,
                                 "assigned_ids": submitted_tile_ids,
                                 "task_mode": args.task_mode,
+                                "media_kind": "image" if args.task_mode == "createimage" else "video",
                                 "count": args.flow_count,
                                 "output_prefix": prompt_file_prefix(prompt, prompt_no),
                             })
