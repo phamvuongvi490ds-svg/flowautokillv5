@@ -1149,6 +1149,16 @@ function writeAssSub(file, rows, opt={}){
   const ev=(rows||[]).map(r=>`Dialogue: 0,${secToAss(r.start)},${secToAss(r.end)},Default,,0,0,0,,${escapeAssText(r.text)}`).join('\n');
   fs.writeFileSync(file,head+ev,'utf8'); return file;
 }
+function videoProbe(file){
+  const r=ffmpegRun(['-hide_banner','-i',file]); const txt=String(r.stderr||r.stdout||'');
+  const dim=txt.match(/Video:[^\n]*?\b(\d{2,5})x(\d{2,5})\b/); const dur=txt.match(/Duration:\s*(\d+):(\d+):(\d+\.\d+)/);
+  return {width:dim?Number(dim[1]):0,height:dim?Number(dim[2]):0,duration:dur?Number(dur[1])*3600+Number(dur[2])*60+Number(dur[3]):0};
+}
+function targetVideoFrame(files){
+  const probes=(files||[]).map(videoProbe); const portrait=probes.filter(x=>x.height>x.width).length>probes.length/2;
+  return {width:portrait?1080:1920,height:portrait?1920:1080,orientation:portrait?'portrait':'landscape',probes};
+}
+function safeTransitionName(v){ const allowed=new Set(['fade','fadeblack','fadewhite','smoothleft','smoothright','smoothup','smoothdown']); return allowed.has(String(v||'').toLowerCase())?String(v).toLowerCase():'fade'; }
 function videoDurationSec(file){ const r=ffmpegRun(['-hide_banner','-i',file]); const txt=String(r.stderr||r.stdout||''); const m=txt.match(/Duration:\s*(\d+):(\d+):(\d+\.\d+)/); return m?Number(m[1])*3600+Number(m[2])*60+Number(m[3]):0; }
 
 ipcMain.handle('video:analyzeSample', async(_e,payload={})=>{
@@ -1174,7 +1184,7 @@ ipcMain.handle('video:postPlan', async(_e,payload={})=>{
   const lic=await onlineLicenseGuard(); if(!lic.ok) return lic;
   const folder=payload.folder||''; const files=(payload.files&&payload.files.length?payload.files:videoFiles(folder)).filter(Boolean); if(!folder||!files.length)return {ok:false,error:'missing_videos'};
   const apiKey=payload.apiKey||''; const script=String(payload.script||'').trim();
-  const scenes=files.map((file,i)=>({id:`scene_${i+1}`,index:i+1,file,name:path.basename(file),keep:true,order:i+1,start:0,end:videoDurationSec(file),reason:'AI auto hậu kì'}));
+  const framePlan=targetVideoFrame(files); const scenes=files.map((file,i)=>{const probe=framePlan.probes[i];return {id:`scene_${i+1}`,index:i+1,file,name:path.basename(file),keep:true,order:i+1,start:0,end:probe.duration||videoDurationSec(file),width:probe.width,height:probe.height,targetWidth:framePlan.width,targetHeight:framePlan.height,orientation:framePlan.orientation,transition:'fade',effect:'subtle_fade',reason:'AI auto hậu kì'}});
   let subtitles=[];
   if(payload.srtFile && fs.existsSync(payload.srtFile)) subtitles=parseSimpleSrt(fs.readFileSync(payload.srtFile,'utf8'));
   else if(payload.autoSub && apiKey){
@@ -1182,7 +1192,7 @@ ipcMain.handle('video:postPlan', async(_e,payload={})=>{
   }
   if(apiKey){
     try{
-      const sys='Bạn là AI dựng hậu kì video. Phân tích tên file video và kịch bản, trả JSON {scenes:[{index,order,keep,reason,start,end}], subtitles:[{start,end,text}]}. Hãy tự bỏ đoạn thừa/lỗi giọng nếu có thể bằng start/end, sắp cảnh đúng diễn biến kịch bản.';
+      const sys='Bạn là AI dựng hậu kì video. Phân tích tên file video và kịch bản, trả JSON {scenes:[{index,order,keep,reason,start,end,transition,effect}], subtitles:[{start,end,text}]}. transition chỉ chọn fade, fadeblack, fadewhite, smoothleft, smoothright, smoothup, smoothdown. Phân tích kích thước/tỷ lệ từng clip, tự bỏ đoạn thừa/lỗi giọng bằng start/end, sắp cảnh đúng diễn biến, chọn hiệu ứng chuyển cảnh nhẹ phù hợp từng cảnh; tránh hiệu ứng rối mắt. Subtitle phải đúng ngôn ngữ yêu cầu và khớp lời dẫn.';
       const text=`KỊCH BẢN:
 ${script||'(không có)'}
 
@@ -1191,11 +1201,11 @@ ${files.map((f,i)=>`${i+1}. ${path.basename(f)} duration=${videoDurationSec(f)}s
 
 AutoSub=${!!payload.autoSub} Language=${payload.subLang||'vi'}`;
       const out=await geminiText(apiKey,[{text}],sys,true); const obj=JSON.parse(out.replace(/^```json\s*|```$/g,''));
-      for(const item of obj.scenes||[]){ const sc=scenes[(Number(item.index)||1)-1]; if(sc){ Object.assign(sc,{order:Number(item.order||sc.order),keep:item.keep!==false,reason:item.reason||sc.reason,start:Number(item.start||0),end:Number(item.end||sc.end||0)}); }}
+      for(const item of obj.scenes||[]){ const sc=scenes[(Number(item.index)||1)-1]; if(sc){ Object.assign(sc,{order:Number(item.order||sc.order),keep:item.keep!==false,reason:item.reason||sc.reason,start:Number(item.start||0),end:Number(item.end||sc.end||0),transition:safeTransitionName(item.transition),effect:String(item.effect||'subtle_fade')}); }}
       if(Array.isArray(obj.subtitles)&&obj.subtitles.length) subtitles=obj.subtitles;
     }catch(e){ return {ok:true,warning:'ai_post_plan_failed:'+String(e.message||e),scenes,subtitles}; }
   }
-  scenes.sort((a,b)=>a.order-b.order); return {ok:true,scenes,subtitles};
+  scenes.sort((a,b)=>a.order-b.order); return {ok:true,scenes,subtitles,framePlan};
 });
 
 ipcMain.handle('video:postExport', async(_e,payload={})=>{
@@ -1204,14 +1214,14 @@ ipcMain.handle('video:postExport', async(_e,payload={})=>{
   const scenes=(payload.scenes||[]).filter(s=>s.keep!==false&&s.file);
   if(!folder||!scenes.length)return {ok:false,error:'missing_ai_timeline'};
   const outDir=path.join(folder,'flow_auto_post'); fs.mkdirSync(outDir,{recursive:true});
-  const list=path.join(outDir,'ai-post-list.txt'); const temp=[];
+  const list=path.join(outDir,'ai-post-list.txt'); const temp=[]; const framePlan=targetVideoFrame(scenes.map(s=>s.file));
   for(const [i,sc] of scenes.entries()){
     const out=path.join(outDir,`clip_${String(i+1).padStart(3,'0')}.mp4`);
     const args=['-y'];
     if(Number(sc.start)>0) args.push('-ss',String(sc.start));
     args.push('-i',sc.file);
     if(Number(sc.end)>Number(sc.start||0)) args.push('-t',String(Number(sc.end)-Number(sc.start||0)));
-    args.push('-map','0:v:0?','-map','0:a:0?','-c:v','libx264','-preset','veryfast','-crf','20','-c:a','aac','-b:a','192k',out);
+    const clipDur=Math.max(.5,(Number(sc.end)>Number(sc.start||0)?Number(sc.end)-Number(sc.start||0):videoProbe(sc.file).duration)||8); const fadeDur=Math.min(.35,clipDur/5); const vf=`scale=${framePlan.width}:${framePlan.height}:force_original_aspect_ratio=decrease,pad=${framePlan.width}:${framePlan.height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fade=t=in:st=0:d=${fadeDur},fade=t=out:st=${Math.max(0,clipDur-fadeDur)}:d=${fadeDur}`; args.push('-map','0:v:0?','-map','0:a:0?','-vf',vf,'-r','30','-pix_fmt','yuv420p','-c:v','libx264','-preset','veryfast','-crf','20','-c:a','aac','-ar','48000','-ac','2','-b:a','192k',out);
     const r=ffmpegRun(args); if(r.status!==0)return {ok:false,error:'ffmpeg_trim_failed:'+ffErr(r)};
     temp.push(out);
   }
