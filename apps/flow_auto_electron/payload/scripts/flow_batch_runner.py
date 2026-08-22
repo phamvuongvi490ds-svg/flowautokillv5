@@ -2316,13 +2316,25 @@ def run(args):
                                 "count": args.flow_count,
                                 "output_prefix": prompt_file_prefix(prompt, prompt_no),
                             })
-                            if len(delayed_downloads) > int(args.download_delay_prompts or 0):
-                                item = delayed_downloads.pop(0)
-                                license_guard_or_raise(force=True)
-                                log_line(f"[flow] delayed download prompt #{item['prompt_no']} after {args.download_delay_prompts} prompt gap")
-                                dl_ok, dl_step = download_prompt_queue_item(page, item, args, claimed_ids=claimed_media_ids)
-                                if not dl_ok:
-                                    raise RuntimeError(f"auto_download_failed:{dl_step}")
+                            batch_size = max(1, int(args.download_delay_prompts or 0))
+                            if len(delayed_downloads) > batch_size:
+                                # Prompt N+1 acts as the trigger, then drain the
+                                # complete previous batch in FIFO order. Keep the
+                                # newly submitted trigger prompt queued for the
+                                # next batch.
+                                batch = delayed_downloads[:batch_size]
+                                log_line(f"[flow] prompt #{prompt_no} triggered FIFO batch download: {[x['prompt_no'] for x in batch]}")
+                                for item in batch:
+                                    license_guard_or_raise(force=True)
+                                    log_line(f"[flow] batch download prompt #{item['prompt_no']} of {batch_size}")
+                                    dl_ok, dl_step = download_prompt_queue_item(page, item, args, claimed_ids=claimed_media_ids)
+                                    if not dl_ok:
+                                        raise RuntimeError(f"auto_download_failed_prompt_{item['prompt_no']}:{dl_step}")
+                                    # Remove only after successful complete download.
+                                    if delayed_downloads and delayed_downloads[0] is item:
+                                        delayed_downloads.pop(0)
+                                    else:
+                                        delayed_downloads.remove(item)
                         elif args.continuous_download:
                             delayed_downloads.append({
                                 "prompt_no": prompt_no,
