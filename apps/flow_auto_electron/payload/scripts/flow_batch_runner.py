@@ -1371,18 +1371,57 @@ def has_failure(page):
     return "Oops, something went wrong" in txt
 
 
+def wait_reference_upload_settled(page, timeout_sec=45):
+    """Wait until reference picker/upload mutations stop before output baseline."""
+    deadline = time.time() + timeout_sec
+    previous = None
+    stable = 0
+    while time.time() < deadline:
+        try:
+            state = page.evaluate(
+                """
+                () => {
+                  const visible=el=>{if(!el)return false;const st=getComputedStyle(el),r=el.getBoundingClientRect();return st.display!=='none'&&st.visibility!=='hidden'&&r.width>8&&r.height>8;};
+                  const dialogs=Array.from(document.querySelectorAll('[role="dialog"],[data-radix-popper-content-wrapper]')).filter(visible).length;
+                  const uploadBusy=Array.from(document.querySelectorAll('[role="progressbar"],[aria-busy="true"]')).filter(visible).length;
+                  const composer=document.querySelector('textarea,[contenteditable="true"]')?.closest('form') || null;
+                  const refs=composer ? Array.from(composer.querySelectorAll('img,video,[data-tile-id]')).map((el,i)=>el.getAttribute('data-tile-id')||el.currentSrc||el.src||el.getAttribute('src')||`ref-${i}`).filter(Boolean).sort() : [];
+                  return {dialogs,uploadBusy,refs};
+                }
+                """
+            ) or {}
+            signature = json.dumps(state, sort_keys=True)
+            if state.get("dialogs", 0) == 0 and state.get("uploadBusy", 0) == 0 and signature == previous:
+                stable += 1
+                if stable >= 3:
+                    return True
+            else:
+                stable = 0
+            previous = signature
+        except Exception:
+            stable = 0
+        time.sleep(1.0)
+    return False
+
 def snapshot_media_tiles(page):
+    """Snapshot output result tiles only; exclude reference picker/composer media."""
     try:
         return set(page.evaluate(
             """
-            () => Array.from(document.querySelectorAll('[data-tile-id], video, img[src*="media.getMediaUrlRedirect"], video[src*="media.getMediaUrlRedirect"], img[src^="blob:"], canvas'))
-              .map((el, i) => el.getAttribute('data-tile-id') || el.currentSrc || el.src || el.getAttribute('src') || `media-${i}`)
-              .filter(Boolean)
+            () => {
+              const visible=el=>{if(!el)return false;const st=getComputedStyle(el),r=el.getBoundingClientRect();return st.display!=='none'&&st.visibility!=='hidden'&&r.width>20&&r.height>20;};
+              const isOutput=tile=>{
+                if(!visible(tile) || tile.closest('[role="dialog"],[data-radix-popper-content-wrapper],form')) return false;
+                const r=tile.getBoundingClientRect();
+                const hasResult=!!tile.querySelector('video,canvas,img[src*="media.getMediaUrlRedirect"],button,[role="button"]');
+                return hasResult && r.width>120 && r.height>80;
+              };
+              return Array.from(document.querySelectorAll('[data-tile-id]')).filter(isOutput).map(t=>t.getAttribute('data-tile-id')).filter(Boolean);
+            }
             """
         ) or [])
     except Exception:
         return set()
-
 
 def capture_submitted_tile_ids(page, before_ids=None, expected_count=1, timeout_sec=45):
     """Capture stable Flow tile IDs created by this submit before later prompts can overlap."""
@@ -1396,8 +1435,11 @@ def capture_submitted_tile_ids(page, before_ids=None, expected_count=1, timeout_
                 (before) => {
                   const old = new Set(before || []);
                   const out=[];
+                  const visible=el=>{if(!el)return false;const st=getComputedStyle(el),r=el.getBoundingClientRect();return st.display!=='none'&&st.visibility!=='hidden'&&r.width>120&&r.height>80;};
                   for (const tile of document.querySelectorAll('[data-tile-id]')) {
                     const id=tile.getAttribute('data-tile-id');
+                    if(tile.closest('[role="dialog"],[data-radix-popper-content-wrapper],form')) continue;
+                    if(!visible(tile)) continue;
                     if(id && !old.has(id) && !out.includes(id)) out.push(id);
                   }
                   return out;
@@ -2191,6 +2233,12 @@ def run(args):
                         log_line(f"[flow] prompt #{prompt_no} use ref image: {ref_file.name}")
                         # AI Prompt Studio uses --no-paired-mode: upload files only on prompt #1, then reuse by searching filenames in Flow library.
                         upload_reference_image(page, ref_file, prompt_box=box, upload_file=(args.paired_mode if args.paired_mode else (prompt_no == 1)))
+
+                    if matched_refs:
+                        settled = wait_reference_upload_settled(page, timeout_sec=45)
+                        log_line(f"[flow] prompt #{prompt_no} reference upload settled: {settled}")
+                        if not settled:
+                            raise RuntimeError("reference_upload_not_settled")
 
                     time.sleep(random.uniform(args.pre_paste_min, args.pre_paste_max))
 
