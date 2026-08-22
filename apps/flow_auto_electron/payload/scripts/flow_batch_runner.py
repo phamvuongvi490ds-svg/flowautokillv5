@@ -1980,7 +1980,19 @@ def _runner_parent_guard():
         if parent <= 0 or len(binding) != 64:
             raise RuntimeError("runner_parent_binding_invalid")
         try:
-            os.kill(parent, 0)
+            if os.name == "nt":
+                # Never use os.kill(pid, 0) on Windows: Python maps it to
+                # TerminateProcess and can close the Electron parent immediately.
+                import ctypes
+                PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+                handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, parent)
+                if not handle:
+                    raise RuntimeError("runner_parent_not_running")
+                ctypes.windll.kernel32.CloseHandle(handle)
+            else:
+                os.kill(parent, 0)
+        except RuntimeError:
+            raise
         except Exception:
             raise RuntimeError("runner_parent_not_running")
 
