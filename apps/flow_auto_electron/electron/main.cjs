@@ -1261,6 +1261,7 @@ ipcMain.handle('video:postExport', async(_e,payload={})=>{
 ipcMain.handle('prompt:analyzeUrl', async(_e,payload={})=>{
   const lic=await onlineLicenseGuard(); if(!lic.ok) return lic;
   const apiKey=payload.apiKey||''; if(!apiKey) return {ok:false,error:'missing_api_key'};
+  const deepRewrite=payload.deepRewrite===true;
   const outLang=langName(payload.promptLang); const duration=String(payload.duration||'60 seconds'); const targetScenes=durationScenes(duration);
   let page;
   try{ page=await fetchUrlReadable(payload.url); }catch(e){ return {ok:false,error:'fetch_url_failed:'+String(e.message||e)}; }
@@ -1273,7 +1274,7 @@ ipcMain.handle('prompt:analyzeUrl', async(_e,payload={})=>{
       videoNote=`Downloaded direct video for visual scene analysis. Extracted ${frames.length} frames from ${path.basename(dl.file)}.`;
     }catch(e){ videoNote=`Direct video visual analysis unavailable: ${String(e.message||e)}. Use URL metadata only and do not invent uncertain details.`; }
   }
-  const sys=`Bạn là đạo diễn sáng tạo, biên kịch quảng cáo/video ngắn và chuyên gia phân tích nội dung. Ngôn ngữ đầu ra: ${outLang}. Nhiệm vụ: phân tích nguồn thật kỹ rồi viết lại thành kịch bản video chuyên nghiệp, cuốn hút hơn, nhưng vẫn bám sát nguồn. Nếu nguồn là VIDEO và có frame ảnh, hãy phân tích từng cảnh: nhân vật/chủ thể, bối cảnh, hành động, nhịp dựng, cảm xúc, camera, ánh sáng, màu sắc, điểm nhấn thị giác. Nếu nguồn là BÀI BÁO/TRANG WEB, hãy bóc tách ý chính, sự kiện, nhân vật/chủ thể, bối cảnh, thông tin quan trọng rồi chuyển thành kịch bản video. BẮT BUỘC giữ đúng sự kiện/chủ thể/thứ tự ý cốt lõi, không bịa thông tin không có trong nguồn. BẮT BUỘC chia đúng ${targetScenes} cảnh, mỗi cảnh 8 giây, không thiếu không thừa. ${policySafeInstruction(outLang)} Trả JSON {"script":"...","sourceSummary":"...","sceneAnalysis":"..."}. Trường script phải có đúng ${targetScenes} cảnh. Mỗi cảnh chỉ dùng đúng cấu trúc sau, không thêm dòng Prompt, không thêm Description, không thêm Thời lượng:
+  const sys=`Bạn là đạo diễn sáng tạo, biên kịch quảng cáo/video ngắn và chuyên gia phân tích nội dung. Ngôn ngữ đầu ra: ${outLang}. Nhiệm vụ: phân tích nguồn thật kỹ rồi viết lại thành kịch bản video chuyên nghiệp, cuốn hút hơn, nhưng vẫn bám sát nguồn. ${deepRewrite?'CHẾ ĐỘ VIẾT LẠI CHUYÊN SÂU TỪ BÀI BÁO: xác định luận điểm trung tâm, bối cảnh, nguyên nhân, diễn biến, tác động, các góc nhìn, dữ kiện then chốt và kết luận; tạo mở đầu có hook mạnh, mạch kể tăng tiến, chuyển cảnh logic và kết thúc gợi suy ngẫm. Chuyên sâu hơn nguồn về cách giải thích và cấu trúc nhưng tuyệt đối không bịa số liệu, trích dẫn, nhân vật hoặc sự kiện. Phân biệt rõ dữ kiện trong nguồn với nhận định/phân tích. Loại bỏ quảng cáo, nội dung lặp và chi tiết không liên quan.':'CHẾ ĐỘ PHÂN TÍCH TIÊU CHUẨN.'} Nếu nguồn là VIDEO và có frame ảnh, hãy phân tích từng cảnh: nhân vật/chủ thể, bối cảnh, hành động, nhịp dựng, cảm xúc, camera, ánh sáng, màu sắc, điểm nhấn thị giác. Nếu nguồn là BÀI BÁO/TRANG WEB, hãy bóc tách ý chính, sự kiện, nhân vật/chủ thể, bối cảnh, thông tin quan trọng rồi chuyển thành kịch bản video. BẮT BUỘC giữ đúng sự kiện/chủ thể/thứ tự ý cốt lõi, không bịa thông tin không có trong nguồn. BẮT BUỘC chia đúng ${targetScenes} cảnh, mỗi cảnh 8 giây, không thiếu không thừa. ${policySafeInstruction(outLang)} Trả JSON {"script":"...","sourceSummary":"...","sceneAnalysis":"..."}. Trường script phải có đúng ${targetScenes} cảnh. Mỗi cảnh chỉ dùng đúng cấu trúc sau, không thêm dòng Prompt, không thêm Description, không thêm Thời lượng:
 Scene 01:
 Hình ảnh: ...
 Hành động: ...
@@ -1281,11 +1282,11 @@ Cảm xúc: ...
 Camera: ...
 Ánh sáng/Màu sắc: ...
 Voiceover: ...`;
-  const prompt=`URL: ${page.url}\nContent-Type: ${page.contentType}\nTitle: ${page.title||''}\nTarget duration: ${duration}\nRequired scenes: ${targetScenes} scenes, each scene 8 seconds.\nVideo analysis note: ${videoNote}\n\nSOURCE TEXT / METADATA:\n${page.text}\n\nHãy phân tích nguồn thật chi tiết rồi viết lại thành kịch bản chuyên nghiệp dùng trực tiếp trong AI Prompt Studio. Kịch bản cuối BẮT BUỘC đúng ${targetScenes} cảnh, mỗi cảnh 8 giây, đánh số Scene 01 đến Scene ${String(targetScenes).padStart(2,'0')}. Mỗi cảnh chỉ gồm đúng các dòng: Hình ảnh, Hành động, Cảm xúc, Camera, Ánh sáng/Màu sắc, Voiceover. Không thêm dòng Prompt, không thêm Description, không thêm Thời lượng.`;
+  const prompt=`URL: ${page.url}\nContent-Type: ${page.contentType}\nTitle: ${page.title||''}\nTarget duration: ${duration}\nRequired scenes: ${targetScenes} scenes, each scene 8 seconds.\nVideo analysis note: ${videoNote}\n\nSOURCE TEXT / METADATA:\n${page.text}\n\n${deepRewrite?'Hãy viết lại bài báo thành kịch bản video chuyên sâu, hấp dẫn và có chiều sâu phân tích; mở đầu bằng hook, phát triển theo bối cảnh–diễn biến–tác động–góc nhìn–kết luận, nhưng chỉ dùng dữ kiện kiểm chứng được trong nguồn.':'Hãy phân tích nguồn thật chi tiết rồi viết lại thành kịch bản chuyên nghiệp dùng trực tiếp trong AI Prompt Studio.'} Kịch bản cuối BẮT BUỘC đúng ${targetScenes} cảnh, mỗi cảnh 8 giây, đánh số Scene 01 đến Scene ${String(targetScenes).padStart(2,'0')}. Mỗi cảnh chỉ gồm đúng các dòng: Hình ảnh, Hành động, Cảm xúc, Camera, Ánh sáng/Màu sắc, Voiceover. Không thêm dòng Prompt, không thêm Description, không thêm Thời lượng.`;
   try{
     const out=await geminiText(apiKey,[...parts,{text:prompt}],sys,true,payload.apiModel);
     const obj=JSON.parse(String(out||'').replace(/^```json\s*|```$/g,''));
-    return {ok:true,script:policySafePostProcess(obj.script||'',outLang),sourceSummary:obj.sourceSummary||'',sceneAnalysis:obj.sceneAnalysis||'',page};
+    return {ok:true,script:policySafePostProcess(obj.script||'',outLang),sourceSummary:obj.sourceSummary||'',sceneAnalysis:obj.sceneAnalysis||'',rewriteMode:deepRewrite?'deep_article':'standard',page};
   }catch(e){ return {ok:false,error:'ai_url_analyze_failed:'+String(e.message||e),page}; }
 });
 
