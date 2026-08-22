@@ -2047,7 +2047,7 @@ def run(args):
                         break
 
                     if args.auto_download:
-                        if args.continuous_download:
+                        if int(args.download_delay_prompts or 0) > 0:
                             delayed_downloads.append({
                                 "prompt_no": prompt_no,
                                 "before_ids": pre_submit_tiles,
@@ -2055,8 +2055,27 @@ def run(args):
                                 "count": args.flow_count,
                                 "output_prefix": prompt_file_prefix(prompt, prompt_no),
                             })
-                            # Continuous mode: submit prompts in bulk using the configured spacing.
-                            # Do not wait/download between prompts. Drain and download all completed outputs after all prompts are submitted.
+                            if len(delayed_downloads) >= int(args.download_delay_prompts or 0):
+                                item = delayed_downloads.pop(0)
+                                license_guard_or_raise(force=True)
+                                log_line(f"[flow] delayed download prompt #{item['prompt_no']} after {args.download_delay_prompts} prompt gap")
+                                media_ok, media_reason = wait_new_completed_media(page, before_ids=item["before_ids"], expected_count=max(1, int(item["count"] or "1")), timeout_sec=args.download_wait_sec)
+                                if not media_ok:
+                                    done_wait = wait_generation_complete(page, timeout_sec=90)
+                                    if not done_wait:
+                                        raise RuntimeError(f"generation_not_completed:{media_reason}")
+                                download_resolution = "1K" if item["task_mode"] == "createimage" else args.download_resolution
+                                dl_ok, dl_step = auto_download_with_retry(page, resolution=download_resolution, timeout_sec=220, before_ids=item["before_ids"], output_prefix=item.get("output_prefix", f"prompt_{item['prompt_no']}"), output_dir=args.output_dir)
+                                if not dl_ok:
+                                    raise RuntimeError(f"auto_download_failed:{dl_step}")
+                        elif args.continuous_download:
+                            delayed_downloads.append({
+                                "prompt_no": prompt_no,
+                                "before_ids": pre_submit_tiles,
+                                "task_mode": args.task_mode,
+                                "count": args.flow_count,
+                                "output_prefix": prompt_file_prefix(prompt, prompt_no),
+                            })
                             log_line(f"[flow] continuous queued download after all prompts: prompt #{prompt_no}")
                         else:
                             media_ok, media_reason = wait_new_completed_media(
