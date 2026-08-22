@@ -1435,7 +1435,7 @@ def wait_new_completed_media(page, before_ids=None, expected_count=1, timeout_se
                   for (let i=0;i<nodes.length;i++) {
                     const el = nodes[i];
                     const id = el.getAttribute('data-tile-id') || el.currentSrc || el.src || el.getAttribute('src') || `media-${i}`;
-                    const hasMedia = !!(el.querySelector?.('video[src*="media.getMediaUrlRedirect"],img[src*="media.getMediaUrlRedirect"],video,img[src^="blob:"],canvas') || el.matches?.('video,img,canvas'));
+                    const hasMedia = !!(el.querySelector?.('video[src*="media.getMediaUrlRedirect"],img[src*="media.getMediaUrlRedirect"],video,video source[src],img[src^="blob:"],canvas') || el.matches?.('video,img,canvas'));
                     if (id && !beforeSet.has(id) && hasMedia) ready.push(id);
                   }
                   const txt = (document.body?.innerText || '').toLowerCase();
@@ -1685,14 +1685,15 @@ def direct_download_media_from_tile(page, before_ids=None, output_prefix="flow-a
               document.querySelectorAll('[data-tile-id]').forEach(tile => {
                 const id = tile.getAttribute('data-tile-id');
                 if (before.size && before.has(id)) return;
-                const media = tile.querySelector('video[src],img[src],canvas');
+                const media = tile.querySelector('video,video source[src],img[src],canvas');
                 if (media && visible(tile)) tiles.push({tile, media, top: tile.getBoundingClientRect().top});
               });
               if (!tiles.length) return null;
               tiles.sort((a,b) => b.top - a.top);
               const m = tiles[0].media;
               if (m.tagName === 'CANVAS') return {kind:'base64', data:m.toDataURL('image/png').split(',')[1] || ''};
-              const url = m.currentSrc || m.src || m.getAttribute('src') || '';
+              const host = m.tagName === 'SOURCE' ? m.closest('video') : m;
+              const url = host?.currentSrc || m.currentSrc || m.src || m.getAttribute('src') || host?.querySelector?.('source[src]')?.src || '';
               if (!url) return null;
               if (url.startsWith('blob:') || url.startsWith('data:')) {
                 if (url.startsWith('data:')) return {kind:'base64', data:url.split(',')[1] || ''};
@@ -1737,7 +1738,12 @@ def extension_download_tile_via_ui(page, resolution="720p", before_ids=None, out
               };
 
               // Extension helpers: On(tile), Dn(tile), $n(snapshot)
-              const On = (tile) => !!tile.querySelector('video[src*="media.getMediaUrlRedirect"]') || !!tile.querySelector('img[src*="media.getMediaUrlRedirect"]');
+              const videoReady = (v) => !!v && (v.readyState >= 1 || !!v.currentSrc || !!v.src || !!v.querySelector('source[src]'));
+              const On = (tile) => {
+                const v=tile.querySelector('video');
+                const img=tile.querySelector('img[src]');
+                return videoReady(v) || !!img;
+              };
               const Dn = (tile) => !!tile.querySelector('video');
               const collectNewTiles = (snapshot) => {
                 const out = [], seen = new Set();
@@ -1776,7 +1782,7 @@ def extension_download_tile_via_ui(page, resolution="720p", before_ids=None, out
               // Extension Un(tile, quality): right-click tile media and download via UI.
               const Un = async (tile, targetQuality=null) => {
                 try {
-                  const media = tile.querySelector('video[src*="media.getMediaUrlRedirect"]') || tile.querySelector('img[src*="media.getMediaUrlRedirect"]');
+                  const media = tile.querySelector('video') || tile.querySelector('img[src*="media.getMediaUrlRedirect"]') || tile.querySelector('img[src]');
                   if (!media) return {ok:false, step:'no_media_in_tile'};
                   const r = media.getBoundingClientRect();
                   const x = r.left + r.width / 2, y = r.top + r.height / 2;
