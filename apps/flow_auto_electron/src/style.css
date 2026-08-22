@@ -182,3 +182,25 @@ input:focus,select:focus,textarea:focus{border-color:#38bdf8;box-shadow:0 0 0 3p
 .app.theme-light .field{gap:5px;margin-bottom:10px}.app.theme-light .field span{font-size:10px;font-weight:700;letter-spacing:.035em;color:#667085}.app.theme-light input,.app.theme-light select,.app.theme-light textarea{min-height:36px;padding:8px 10px;border:1px solid #dfe4eb;border-radius:6px;background:#fff;color:#1f2937;font-size:11px}.app.theme-light textarea{min-height:100px}.app.theme-light input:focus,.app.theme-light select:focus,.app.theme-light textarea:focus{border-color:#4f80ef;background:#fff;box-shadow:0 0 0 2px rgba(37,99,235,.10)}.app.theme-light .field-note,.app.theme-light .hint{font-size:10px;color:#8a96a8}
 .app.theme-light .actions{gap:7px;margin-top:10px}.app.theme-light .btn{min-height:34px;padding:8px 11px;border:1px solid #dfe4eb;border-radius:6px;background:#fff;color:#475569;font-size:11px;font-weight:700;box-shadow:0 1px 1px rgba(15,23,42,.03)}.app.theme-light .btn:hover{transform:none;border-color:#b9c5d6;background:#f8fafc;box-shadow:none}.app.theme-light .btn.primary{border-color:#2563eb;background:#2563eb;color:#fff;box-shadow:none}.app.theme-light .btn.primary:hover{background:#1d4ed8}.app.theme-light .btn.danger{border-color:#dc2626;background:#dc2626;color:#fff}.app.theme-light .switch{min-height:36px;padding:5px 9px;border-radius:6px}.app.theme-light .switch input{width:38px;height:21px;min-height:21px}.app.theme-light .switch input:before{width:15px;height:15px}.app.theme-light .switch input:checked:before{transform:translateX(17px)}
 @media(max-width:1100px){.app.theme-light .side{width:220px}.app.theme-light .main{padding-left:20px;padding-right:20px}.app.theme-light header{margin-left:-20px;margin-right:-20px;padding-left:20px;padding-right:20px}}
+
+/* Top-tab navigation: menu above, selected page options below */
+.app{flex-direction:column;min-height:100vh;height:100vh}
+.app .side{width:100%;height:auto;min-height:70px;flex:0 0 auto;display:flex;flex-direction:row;align-items:center;gap:5px;padding:10px 18px;overflow-x:auto;overflow-y:hidden;border-right:0;border-bottom:1px solid var(--border);box-shadow:0 5px 20px var(--shadow);z-index:40}
+.app .side .brand{flex:0 0 auto;width:auto;min-width:190px;margin:0 12px 0 0;padding:8px 10px}
+.app .side .lang-switch:not(.header-lang){display:none}
+.app .side .nav-caption,.app .side .sidebar-caption{display:none}
+.app .side>button{flex:0 0 auto;width:auto;min-width:max-content;min-height:38px;margin:0;padding:9px 12px;justify-content:center;white-space:nowrap;border-radius:8px}
+.app .side>button:hover{transform:none}
+.app .side>button.active:before{display:none!important}
+.app .sidebar-footer{flex:0 0 auto;margin:0 0 0 auto;padding:0 0 0 10px;border:0;border-left:1px solid var(--border)}
+.app .sidebar-footer>span{display:none}.app .sidebar-footer .price{white-space:nowrap;padding:8px 10px;font-size:11px}
+.app .main{width:100%;min-width:0;flex:1;overflow:auto}
+.app.theme-light .side{width:100%;padding:10px 18px;background:#fff;border-right:0;border-bottom:1px solid #e6eaf0;box-shadow:0 2px 10px rgba(15,23,42,.04)}
+.app.theme-light .brand{margin:0 12px 0 0;padding:7px 9px}
+.app.theme-light .side>button{min-height:38px;margin:0;padding:9px 12px;border:1px solid transparent;border-radius:7px}
+.app.theme-light .side>button:hover{background:#f5f7fb;border-color:#e8edf4}
+.app.theme-light .side>button.active{background:#2563eb;color:#fff;border-color:#2563eb;box-shadow:0 4px 12px rgba(37,99,235,.18)}
+.app.theme-light .main{padding:0 28px 28px}
+.app.theme-light header{margin:0 -28px 22px}
+@media(max-width:1200px){.app .side .brand{min-width:170px}.app .side>button{padding:8px 10px;font-size:11px}.app .sidebar-footer{display:none}}
+@media(max-width:800px){.app .side{padding:8px 10px}.app .side .brand{min-width:auto;margin-right:5px}.app .side .brand div{display:none}.app .side>button{padding:8px}.app .side>button svg{margin:0}.app .side>button{font-size:0}.app .side>button svg{width:18px;height:18px}.app .main{padding-left:14px;padding-right:14px}.app header{margin-left:-14px;margin-right:-14px;padding-left:14px;padding-right:14px}}
