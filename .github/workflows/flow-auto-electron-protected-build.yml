@@ -50,6 +50,10 @@ jobs:
         shell: pwsh
         run: node build-tools/audit-protected-artifact.cjs
       - run: npm run build
+      - name: Obfuscate protected renderer bundle
+        run: node build-tools/obfuscate-renderer.cjs
+      - name: Audit protected renderer bundle
+        run: node build-tools/audit-renderer.cjs
       - name: Obfuscate Electron runtime JS
         shell: pwsh
         run: |
