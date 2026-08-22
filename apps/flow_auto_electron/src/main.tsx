@@ -67,6 +67,7 @@ function App(){
   const [bootPct,setBootPct]=useState(0);
   const [licenseLocked,setLicenseLocked]=useState(true);
   const [licenseReady,setLicenseReady]=useState(false);
+  const [runWatch,setRunWatch]=useState(false);
   const [lang,setLang]=useState(localStorage.getItem('flow_lang')||'VI');
   const [langNotice,setLangNotice]=useState(false);
   const [videoFolder,setVideoFolder]=useState('');
@@ -201,6 +202,25 @@ function App(){
   async function activateLicense(){ append('🚀 Đang gửi yêu cầu kích hoạt...'); const r=await api().activateLicense({licenseKey}); const msg=friendly(r); setLicenseText(msg); append(msg); if(r?.ok){setLicenseLocked(false); setLicenseReady(true); setPage('flow');} else {setLicenseLocked(true); setLicenseReady(true);} return r }
   useEffect(()=>{ try{ const saved=JSON.parse(localStorage.getItem('flowProfilesConfig')||'[]'); if(Array.isArray(saved)&&saved.length) setProfiles(saved); }catch{} },[]);
   useEffect(()=>{ try{ localStorage.setItem('flowProfilesConfig', JSON.stringify(profiles)); }catch{} },[profiles]);
+
+  useEffect(()=>{
+    if(!runWatch) return;
+    let seenRunning=false;
+    const it=setInterval(async()=>{
+      try{
+        const st=await api().status();
+        if(st?.running) seenRunning=true;
+        if(seenRunning && !st?.running){
+          setRunWatch(false);
+          append('✅ Tiến trình tạo prompt đã hoàn tất.');
+          setActivity('✅ Hoàn tất tiến trình');
+          setTimeout(()=>{ try{ window.alert('✅ Tiến trình tạo prompt đã hoàn tất.'); }catch{} },100);
+        }
+      }catch{}
+    },3000);
+    return ()=>clearInterval(it);
+  },[runWatch]);
+
   useEffect(()=>{ let p=0; const it=setInterval(()=>{p=Math.min(98,p+7); setBootPct(p)},90); const t=setTimeout(()=>{setBootPct(100); setTimeout(()=>setBootLoading(false),180)},1400); api().machineId().then((r:any)=>{ if(r?.machineId)setMachineId(r.machineId) }).catch(()=>{}); api().licenseCheck().then((r:any)=>{ const msg=friendly(r); setLicenseText(msg); const ok=!!r?.ok && r?.strictOnline===true && !r?.cached && !String(r?.reason||r?.error||'').match(/expired|revoked|invalid|missing|revoked/i); setLicenseLocked(!ok); setLicenseReady(true); if(ok) api().status().then(append).catch(()=>{}); }).catch((e:any)=>{ setLicenseText('❌ Không kiểm tra được license. Vui lòng nhập key kích hoạt.'); setLicenseLocked(true); setLicenseReady(true); }); return ()=>{clearTimeout(t); clearInterval(it)}; },[])
   async function ensureCdp(){append('Đang mở/kiểm tra Chrome CDP...'); append(await api().ensureCdp())}
   async function openProfileLogin(i:number){ const pr=profiles[i]||{}; append(`🌐 Mở Chrome profile ${i+1} để đăng nhập: ${pr.accountEmail||pr.name||''}`); append(await api().openProfileLogin(pr,i)); }
@@ -238,8 +258,8 @@ function App(){
     append(`⚙️ Setting gửi vào worker: mode=${payload.mode}, model=${payload.model}, ratio=${payload.ratio}, count=${payload.count}${payload.omniDuration?', duration='+payload.omniDuration:''}, sub=${payload.subMode}`);
     return payload;
   }
-  async function start(file?:string, overrides:any={}){ const p=runPayload(file,overrides); append(`🚀 Start (ID: ${Date.now()}): mode=${p.mode}, model=${p.model}`); append(await api().start(p))}
-  async function quick(){append('Đang quick start...'); append(await api().start({...runPayload(), startFrom:1}))}
+  async function start(file?:string, overrides:any={}){ const p=runPayload(file,overrides); append(`🚀 Start (ID: ${Date.now()}): mode=${p.mode}, model=${p.model}`); const r=await api().start(p); append(r); if(r?.ok)setRunWatch(true)}
+  async function quick(){append('Đang quick start...'); const r=await api().start({...runPayload(), startFrom:1}); append(r); if(r?.ok)setRunWatch(true)}
   return <div className="app">{bootLoading&&<div className="boot-loading"><div className="loader-card"><div className="spinner"></div><b>Đang tải ứng dụng... {bootPct}%</b><div className="boot-bar"><div style={{width:`${bootPct}%`}}></div></div><span>FLOW AUTO VEO 3 đang khởi động, vui lòng chờ.</span></div></div>}{!bootLoading&&licenseReady&&licenseLocked&&<div className="license-gate"><div className="license-gate-card"><div className="brand-row"><KeyRound/><b>Kích hoạt bản quyền Flow Auto</b></div><p>Vui lòng gửi mã máy cho admin để nhận key kích hoạt bản quyền.</p><Field label="Machine ID"><div className="machine-row"><input readOnly value={machineId}/><Button onClick={()=>{navigator.clipboard?.writeText(machineId); append('Đã copy Machine ID')}}>Copy</Button></div></Field><Field label="Nhập key kích hoạt"><input value={licenseKey} onChange={e=>setLicenseKey(e.target.value)} placeholder="Dán license key admin gửi" autoFocus/></Field><div className="license-box">{licenseText}</div><div className="actions"><Button variant="primary" onClick={activateLicense}>🔐 Kích hoạt bản quyền</Button><Button onClick={checkLicense}>🔄 Kiểm tra lại</Button></div><p className="hint">Nếu chưa có key hoặc key đã hết hạn, app sẽ giữ màn hình này và không mở giao diện tool.</p></div></div>}{!bootLoading&&licenseReady&&licenseLocked?null:langNotice&&<div className="modal-backdrop"><div className="small-modal"><b>{T('Đã đổi ngôn ngữ','Language changed')}</b><p>{T('Vui lòng khởi động lại app để áp dụng đầy đủ cài đặt ngôn ngữ.','Please restart the app to fully apply the language setting.')}</p><Button variant="primary" onClick={()=>setLangNotice(false)}>OK</Button></div></div>}
     <aside className="side"><div className="brand"><Bot/><div><b>FLOW AUTO VEO 3</b><span>Modern UI</span></div></div><div className="lang-switch"><button type="button" className={lang==='VI'?'active':''} onClick={(e)=>{e.preventDefault();e.stopPropagation();switchLang('VI')}}>VI</button><button type="button" className={lang==='EN'?'active':''} onClick={(e)=>{e.preventDefault();e.stopPropagation();switchLang('EN')}}>EN</button></div>{nav.map(([id,label,Icon]:any)=><button key={id} onClick={()=>setPage(id)} className={page===id?'active':''}><Icon size={18}/>{label}</button>)}<div className="price">{T('1200K / vĩnh viễn','1200K / lifetime')}</div></aside>
     <main className="main">
