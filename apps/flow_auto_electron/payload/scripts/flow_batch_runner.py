@@ -2264,13 +2264,28 @@ def run(args):
                 time.sleep(args.between_prompts_sec)
 
         if args.auto_download and (args.continuous_download or int(args.download_delay_prompts or 0) > 0):
+            # Final prompts have no later submissions providing a natural delay.
+            # Keep the head item queued until every expected output is downloaded;
+            # never pop-and-forget the last prompt on a transient incomplete tile.
+            final_idle_deadline = time.time() + max(900, int(args.download_wait_sec or 480) * 2)
             while delayed_downloads:
-                item = delayed_downloads.pop(0)
+                item = delayed_downloads[0]
+                attempts = int(item.get("final_attempts") or 0) + 1
+                item["final_attempts"] = attempts
                 license_guard_or_raise(force=True)
-                log_line(f"[flow] final batch download prompt #{item['prompt_no']}")
+                log_line(f"[flow] final FIFO download prompt #{item['prompt_no']} attempt {attempts}")
                 dl_ok, dl_step = download_prompt_queue_item(page, item, args, claimed_ids=claimed_media_ids)
-                if not dl_ok:
-                    log_line(f"[flow] delayed final download failed prompt #{item['prompt_no']}: {dl_step}")
+                if dl_ok:
+                    delayed_downloads.pop(0)
+                    final_idle_deadline = time.time() + max(900, int(args.download_wait_sec or 480) * 2)
+                    log_line(f"[flow] final FIFO downloaded prompt #{item['prompt_no']}: {dl_step}")
+                    continue
+                log_line(f"[flow] final FIFO waiting prompt #{item['prompt_no']}: {dl_step}")
+                if time.time() >= final_idle_deadline:
+                    raise RuntimeError(f"final_download_incomplete_prompt_{item['prompt_no']}:{dl_step}")
+                # Flow may still be rendering or replacing placeholder tiles.
+                wait_generation_complete(page, timeout_sec=120)
+                time.sleep(min(30, 5 + attempts * 3))
 
         log_line("[flow] done all prompts")
 
