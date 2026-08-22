@@ -2210,6 +2210,7 @@ def run(args):
             prompt_no = idx + 1
             ok = False
             submitted = False
+            flow_rejected = False
 
             for attempt in range(1, args.max_retries + 2):
                 try:
@@ -2285,6 +2286,7 @@ def run(args):
                     time.sleep(2)
                     fail_reason = classify_flow_error(page)
                     if fail_reason:
+                        flow_rejected = True
                         if fail_reason == "daily_limit" and args.flow_model != "default":
                             log_line("[flow] daily limit detected, fallback model=default and retry")
                             args.flow_model = "default"
@@ -2346,6 +2348,12 @@ def run(args):
                     needs_clear_before_insert = True
                     log_line(f"[flow] prompt #{prompt_no} attempt {attempt} error: {e}")
                     if submitted:
+                        if flow_rejected or "flow_error:" in str(e):
+                            # Flow rejected this exact original prompt number. Do
+                            # not queue/download it and do not reuse its number.
+                            log_line(f"[flow] prompt #{prompt_no} rejected by Flow; mark failed and continue with prompt #{prompt_no + 1}")
+                            ok = False
+                            break
                         log_line(f"[flow] prompt #{prompt_no} was already submitted; skip retry to avoid duplicate prompt")
                         ok = True
                         break
@@ -2379,7 +2387,8 @@ def run(args):
             if not ok:
                 log_line(f"[flow] prompt #{prompt_no} failed after retries, skip and continue")
                 failed = state.get("failed_prompts", []) if isinstance(state, dict) else []
-                failed.append(prompt_no)
+                if prompt_no not in failed:
+                    failed.append(prompt_no)
                 state = {
                     "done": idx,
                     "total": total,
@@ -2392,11 +2401,15 @@ def run(args):
                     time.sleep(args.between_prompts_sec)
                 continue
 
-            save_state(args.state, {
+            prior_failed = state.get("failed_prompts", []) if isinstance(state, dict) else []
+            state = {
                 "done": prompt_no,
                 "total": total,
+                "failed_prompts": prior_failed,
+                "last_prompt_no": prompt_no,
                 "ts": int(time.time()),
-            })
+            }
+            save_state(args.state, state)
 
             if prompt_no % args.batch_size == 0 or prompt_no == total:
                 log_line(f"[flow] progress: {prompt_no}/{total}")
