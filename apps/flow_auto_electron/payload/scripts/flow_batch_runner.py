@@ -584,7 +584,7 @@ def apply_flow_settings(page, args):
                 nano_banana_pro:['Nano Banana Pro'], nano_banana2:['Nano Banana 2'], nano_banana2_lite:['Nano Banana 2 Lite'], nano_banana:['Nano Banana 2','Nano Banana'], imagen4:['Imagen 4'], omni_flash:['Omni Flash','Omni']
               };
               const aliases = models[cfg.model] || (isImage ? models.nano_banana_pro : models.veo3_fast);
-              const matchAlias = (text) => aliases.some(a => { const t=norm(text).trim(), m=norm(a).trim(); if (!t || !m) return false; if (cfg.model === 'omni_flash') return t === m || t.includes('omni flash') || t === 'omni'; return t === m || t.includes(m); });
+              const matchAlias = (text) => aliases.some(a => { const t=norm(text).trim(), m=norm(a).trim(); if (!t || !m) return false; if (cfg.model === 'omni_flash') return t === m || t.includes('omni flash') || t === 'omni'; if (cfg.model === 'nano_banana2') return t === 'nano banana 2' || t === 'banana 2'; if (cfg.model === 'nano_banana2_lite') return t === 'nano banana 2 lite' || t === 'banana 2 lite'; return t === m || (t.includes(m) && !(cfg.model === 'nano_banana2' && t.includes('lite'))); });
               let modelRes = {ok:true, skipped: cfg.model === 'custom'};
               if (cfg.model !== 'custom') {
                 await openPanel();
@@ -598,7 +598,7 @@ def apply_flow_settings(page, args):
                   clickExt(trigger); await p(750);
                   const opts = Array.from(document.querySelectorAll('[role="menuitem"] button, [role="option"], button')).filter(visible);
                   const exact = aliases[0];
-                  const btn = cfg.model === 'omni_flash' ? (opts.find(b => norm(b.innerText||b.textContent||'').trim() === 'omni flash') || opts.find(b => norm(b.innerText||b.textContent||'').trim() === 'omni') || opts.find(b => norm(b.innerText||b.textContent||'').includes('omni flash'))) : (opts.find(b => String(b.innerText||b.textContent||'').trim().includes(exact)) || opts.find(b => matchAlias(b.innerText||b.textContent||''))); 
+                  const btn = cfg.model === 'omni_flash' ? (opts.find(b => norm(b.innerText||b.textContent||'').trim() === 'omni flash') || opts.find(b => norm(b.innerText||b.textContent||'').trim() === 'omni') || opts.find(b => norm(b.innerText||b.textContent||'').includes('omni flash'))) : (opts.find(b => norm(b.innerText||b.textContent||'').trim() === norm(exact).trim()) || opts.find(b => matchAlias(b.innerText||b.textContent||''))); 
                   if (btn) { clickExt(btn); await p(1500); }
                   await openPanel();
                   const afterBtn = buttons().find(b => (b.getAttribute('aria-haspopup')||'').includes('menu') && /veo|banana|imagen|omni|fast|lite|quality/i.test(b.innerText||b.textContent||'')) || buttons().find(b => /veo|banana|imagen|omni|fast|lite|quality/i.test(b.innerText||b.textContent||''));
