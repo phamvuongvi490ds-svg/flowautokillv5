@@ -1123,8 +1123,28 @@ function parseSimpleSrt(txt){
   for(const b of blocks){ const lines=b.split('\n').filter(Boolean); const timing=lines.find(x=>x.includes('-->')); if(!timing) continue; const m=timing.match(/(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)/); if(!m) continue; const to=(a,b,c,d)=>Number(a)*3600+Number(b)*60+Number(c)+Number('0.'+String(d).padEnd(3,'0').slice(0,3)); const idx=lines.indexOf(timing); out.push({start:to(m[1],m[2],m[3],m[4]),end:to(m[5],m[6],m[7],m[8]),text:lines.slice(idx+1).join(' ')}); }
   return out;
 }
+function parseSimpleAss(txt){
+  const out=[];
+  for(const line of String(txt||'').replace(/\r/g,'').split('\n')){
+    if(!/^Dialogue\s*:/i.test(line)) continue;
+    const parts=line.replace(/^Dialogue\s*:\s*/i,'').split(',');
+    if(parts.length<10) continue;
+    const time=s=>{const m=String(s).trim().match(/(\d+):(\d+):(\d+(?:\.\d+)?)/);return m?Number(m[1])*3600+Number(m[2])*60+Number(m[3]):0};
+    out.push({start:time(parts[1]),end:time(parts[2]),text:parts.slice(9).join(',').replace(/\{[^}]*\}/g,'').replace(/\\N/g,' ')});
+  }
+  return out;
+}
+function subtitlesFromScript(script, scenes){
+  const texts=[];
+  const re=/(?:Lời dẫn\/Voiceover|Voiceover|Lời thoại\/Voice|Lời thoại|Voice)\s*:\s*["“]?([^\n"”]+)/gi;
+  let m; while((m=re.exec(String(script||'')))){const t=String(m[1]||'').trim();if(t&&!/^none\b/i.test(t))texts.push(t)}
+  if(!texts.length)return [];
+  const durations=(scenes||[]).map(sc=>Math.max(.5,Number(sc.end||0)-Number(sc.start||0)||8));
+  let cursor=0; return texts.map((text,i)=>{const d=durations[i]||8;const row={start:cursor,end:cursor+d,text};cursor+=d;return row});
+}
+function validSubtitleRows(rows){ return (Array.isArray(rows)?rows:[]).map(r=>({start:Number(r.start)||0,end:Number(r.end)||0,text:String(r.text||'').trim()})).filter(r=>r.text&&r.end>r.start); }
 function writeAssSub(file, rows, opt={}){
-  const font=String(opt.font||'Arial'); const size=Number(opt.size||42); const color=assColor(opt.color||'#FFFFFF'); const outline=assColor(opt.outlineColor||'#000000');
+  const font=String(opt.font||'Arial').trim()||'Arial'; const size=Number(opt.size||42); const color=assColor(opt.color||'#FFFFFF'); const outline=assColor(opt.outlineColor||'#000000');
   const head=`[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${font},${size},${color},&H000000FF,${outline},&H80000000,1,0,0,0,100,100,0,0,1,3,1,2,60,60,70,1\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
   const ev=(rows||[]).map(r=>`Dialogue: 0,${secToAss(r.start)},${secToAss(r.end)},Default,,0,0,0,,${escapeAssText(r.text)}`).join('\n');
   fs.writeFileSync(file,head+ev,'utf8'); return file;
@@ -1200,7 +1220,13 @@ ipcMain.handle('video:postExport', async(_e,payload={})=>{
   let r=ffmpegRun(['-y','-f','concat','-safe','0','-i',list,'-c','copy','-movflags','+faststart',merged]);
   if(r.status!==0) r=ffmpegRun(['-y','-f','concat','-safe','0','-i',list,'-map','0:v:0?','-map','0:a:0?','-c:v','libx264','-preset','veryfast','-crf','20','-c:a','aac','-b:a','192k','-movflags','+faststart',merged]);
   if(r.status!==0)return {ok:false,error:'ffmpeg_ai_merge_failed:'+ffErr(r)};
-  const subs=payload.subtitles||[];
+  let subs=validSubtitleRows(payload.subtitles||[]);
+  if(!subs.length && payload.srtFile && fs.existsSync(payload.srtFile)){
+    const raw=fs.readFileSync(payload.srtFile,'utf8');
+    subs=validSubtitleRows(path.extname(payload.srtFile).toLowerCase()==='.ass'?parseSimpleAss(raw):parseSimpleSrt(raw));
+  }
+  if(!subs.length && payload.autoSub) subs=validSubtitleRows(subtitlesFromScript(payload.script||'',scenes));
+  if(payload.autoSub && !subs.length) return {ok:false,error:'subtitle_enabled_but_no_valid_rows'};
   if(subs.length){
     const ass=writeAssSub(path.join(outDir,'ai_subtitles.ass'),subs,payload.subStyle||{});
     const final=path.join(outDir,`ai_post_sub_${Date.now()}.mp4`);
