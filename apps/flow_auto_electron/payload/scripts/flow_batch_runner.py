@@ -2287,8 +2287,19 @@ def run(args):
 
                     for ref_file in matched_refs:
                         log_line(f"[flow] prompt #{prompt_no} use ref image: {ref_file.name}")
-                        # AI Prompt Studio uses --no-paired-mode: upload files only on prompt #1, then reuse by searching filenames in Flow library.
-                        upload_reference_image(page, ref_file, prompt_box=box, upload_file=(args.paired_mode or args.video_sub_mode == 'ingredients' or prompt_no == 1))
+                        # All-images mode: upload the folder once on prompt #1.
+                        # Later prompts reselect exact filenames from Flow's asset
+                        # library. If one asset is missing, upload only that file.
+                        should_upload = bool(args.paired_mode or prompt_no == 1)
+                        if should_upload:
+                            upload_reference_image(page, ref_file, prompt_box=box, upload_file=True)
+                        else:
+                            try:
+                                upload_reference_image(page, ref_file, prompt_box=box, upload_file=False)
+                                log_line(f"[flow] prompt #{prompt_no} reused library ref: {ref_file.name}")
+                            except Exception as reuse_error:
+                                log_line(f"[flow] prompt #{prompt_no} library ref missing ({ref_file.name}), upload fallback: {reuse_error}")
+                                upload_reference_image(page, ref_file, prompt_box=box, upload_file=True)
 
                     if refs_dir is not None and not matched_refs:
                         raise RuntimeError(f"no_reference_images_for_prompt_{prompt_no}")
