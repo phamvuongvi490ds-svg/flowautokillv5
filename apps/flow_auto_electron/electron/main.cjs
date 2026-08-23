@@ -1145,6 +1145,18 @@ function subtitlesFromScript(script, scenes){
   const durations=(scenes||[]).map(sc=>Math.max(.5,Number(sc.end||0)-Number(sc.start||0)||8));
   let cursor=0; return texts.map((text,i)=>{const d=durations[i]||8;const row={start:cursor,end:cursor+d,text};cursor+=d;return row});
 }
+function resolveExistingVideoFile(file,folder=''){
+  let raw=String(file||'').trim();
+  try{if(/^file:\/\//i.test(raw))raw=decodeURIComponent(new URL(raw).pathname).replace(/^\/([A-Za-z]:)/,'$1')}catch{}
+  const candidates=[raw];
+  if(folder && raw)candidates.push(path.join(folder,path.basename(raw)));
+  if(folder){
+    const files=videoFiles(folder), base=path.basename(raw).toLowerCase();
+    const exact=files.find(f=>path.basename(f).toLowerCase()===base);if(exact)candidates.push(exact);
+  }
+  for(const c of candidates){try{if(c&&fs.existsSync(c)&&fs.statSync(c).isFile())return path.resolve(c)}catch{}}
+  throw new Error(`video_file_missing:${raw}${folder?`|folder:${folder}`:''}`);
+}
 async function transcribeVideoAudioVerbatim(file,apiKey,preferredModel='',language='vi'){
   const dir=path.join(path.dirname(file),'flow_auto_post','transcribe_audio'); fs.mkdirSync(dir,{recursive:true});
   const audio=path.join(dir,`${path.basename(file,path.extname(file))}_${Date.now()}.mp3`);
@@ -1156,11 +1168,12 @@ async function transcribeVideoAudioVerbatim(file,apiKey,preferredModel='',langua
   const obj=JSON.parse(String(out||'').replace(/^```json\s*|```$/g,''));
   return validSubtitleRows(obj.segments||[]);
 }
-async function transcribeTimelineVerbatim(scenes,apiKey,preferredModel='',language='vi'){
+async function transcribeTimelineVerbatim(scenes,apiKey,preferredModel='',language='vi',folder=''){
   const all=[]; let offset=0;
   for(const sc of scenes){
-    const clipStart=Number(sc.start)||0, clipEnd=Number(sc.end)||videoDurationSec(sc.file), dur=Math.max(.5,clipEnd-clipStart||8);
-    const rows=await transcribeVideoAudioVerbatim(sc.file,apiKey,preferredModel,language);
+    const resolvedFile=resolveExistingVideoFile(sc.file,folder); sc.file=resolvedFile;
+    const clipStart=Number(sc.start)||0, clipEnd=Number(sc.end)||videoDurationSec(resolvedFile), dur=Math.max(.5,clipEnd-clipStart||8);
+    const rows=await transcribeVideoAudioVerbatim(resolvedFile,apiKey,preferredModel,language);
     for(const r of rows){
       const start=Math.max(0,Number(r.start)||0), end=Math.min(dur,Number(r.end)||0);
       if(String(r.text||'').trim() && end>start) all.push({start:offset+start,end:offset+end,text:String(r.text).trim()});
@@ -1243,7 +1256,7 @@ AutoSub=${!!payload.autoSub} Language=${payload.subLang||'vi'}`;
   scenes.sort((a,b)=>a.order-b.order);
   if(payload.autoSub && !payload.srtFile){
     if(!apiKey) return {ok:false,error:'missing_api_key_for_audio_transcription'};
-    try{ subtitles=await transcribeTimelineVerbatim(scenes,apiKey,payload.apiModel||'',payload.subLang||'vi'); }
+    try{ subtitles=await transcribeTimelineVerbatim(scenes,apiKey,payload.apiModel||'',payload.subLang||'vi',folder); }
     catch(e){ return {ok:false,error:'audio_transcription_failed:'+String(e.message||e),scenes}; }
     if(!subtitles.length) return {ok:false,error:'no_spoken_audio_detected',scenes};
   }
