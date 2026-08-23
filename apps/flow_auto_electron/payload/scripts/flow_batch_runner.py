@@ -1371,6 +1371,36 @@ def has_failure(page):
     return "Oops, something went wrong" in txt
 
 
+def composer_reference_count(page, prompt_box=None):
+    try:
+        return int(page.evaluate(
+            """
+            () => {
+              const input=document.querySelector('textarea,[contenteditable="true"]');
+              const root=input?.closest('form') || input?.parentElement?.parentElement || document;
+              const media=Array.from(root.querySelectorAll('img,video')).filter(el=>{
+                const r=el.getBoundingClientRect(),st=getComputedStyle(el);
+                return st.display!=='none'&&st.visibility!=='hidden'&&r.width>20&&r.height>20;
+              });
+              return media.length;
+            }
+            """
+        ) or 0)
+    except Exception:
+        return 0
+
+def wait_composer_references(page, expected, timeout_sec=60):
+    deadline=time.time()+timeout_sec
+    stable=0; last=-1
+    while time.time()<deadline:
+        count=composer_reference_count(page)
+        if count>=expected and count==last:
+            stable+=1
+            if stable>=2:return count
+        else: stable=0
+        last=count; time.sleep(1)
+    return composer_reference_count(page)
+
 def wait_reference_upload_settled(page, timeout_sec=45):
     """Wait until reference picker/upload mutations stop before output baseline."""
     deadline = time.time() + timeout_sec
@@ -2258,10 +2288,17 @@ def run(args):
                     for ref_file in matched_refs:
                         log_line(f"[flow] prompt #{prompt_no} use ref image: {ref_file.name}")
                         # AI Prompt Studio uses --no-paired-mode: upload files only on prompt #1, then reuse by searching filenames in Flow library.
-                        upload_reference_image(page, ref_file, prompt_box=box, upload_file=(args.paired_mode if args.paired_mode else (prompt_no == 1)))
+                        upload_reference_image(page, ref_file, prompt_box=box, upload_file=(args.paired_mode or args.video_sub_mode == 'ingredients' or prompt_no == 1))
 
+                    if refs_dir is not None and not matched_refs:
+                        raise RuntimeError(f"no_reference_images_for_prompt_{prompt_no}")
                     if matched_refs:
-                        settled = wait_reference_upload_settled(page, timeout_sec=45)
+                        expected_refs = len(matched_refs) if (not args.paired_mode or args.video_sub_mode == "ingredients") else 1
+                        attached = wait_composer_references(page, expected_refs, timeout_sec=90)
+                        log_line(f"[flow] prompt #{prompt_no} attached references: {attached}/{expected_refs}")
+                        if attached < expected_refs:
+                            raise RuntimeError(f"reference_attach_incomplete:{attached}/{expected_refs}")
+                        settled = wait_reference_upload_settled(page, timeout_sec=60)
                         log_line(f"[flow] prompt #{prompt_no} reference upload settled: {settled}")
                         if not settled:
                             raise RuntimeError("reference_upload_not_settled")
