@@ -588,8 +588,6 @@ function hasReferenceImages(payload){
 }
 async function generatePromptsJs(payload){
   const apiKey=payload.apiKey||''; const style=payload.style||'CINEMATIC'; const media=payload.mediaType||'IMAGE'; const outLang=langName(payload.promptLang); const voiceLang=voiceLangName(payload.voiceLang);
-  const speakerGender=String(payload.speakerGender||'male');
-  const structuredFormat=observablePromptFormatInstruction(characterSheet,speakerGender,voiceLang,subtitlePromptRule(payload,outLang,voiceLang));
   const sys=characterSystem(style,media,outLang); const hasRefs=Array.isArray(payload.characterImages)&&payload.characterImages.length>0; const imgs=imageParts(payload.characterImages); const characterLock=hasRefs?await buildCharacterLock(apiKey,payload.characterImages):''; const characterRoster=hasRefs?await buildCharacterRoster(apiKey,payload.characterImages,payload.ideas||''):'';
   const results=[];
   for(const idea of splitIdeas(payload.ideas)){
@@ -727,6 +725,8 @@ async function generateScriptJs(payload){
   const style=payload.style||'CINEMATIC';
   const outLang=langName(payload.promptLang);
   const voiceLang=voiceLangName(payload.voiceLang);
+  const speakerGender=String(payload.speakerGender||'male');
+  const structuredFormat=observablePromptFormatInstruction(characterSheet,speakerGender,voiceLang,subtitlePromptRule(payload,outLang,voiceLang));
   const batchSize=20;
   const batches=Math.ceil(totalScenes/batchSize);
   let title=''; const allScenes=[];
