@@ -1286,11 +1286,23 @@ ipcMain.handle('video:postExport', async(_e,payload={})=>{
     const rr=ffmpegRun(['-y','-i',merged,'-vf',vf,'-c:v','libx264','-preset','veryfast','-crf','20','-c:a','copy',final]);
     if(rr.status===0) merged=final; else return {ok:false,error:'ffmpeg_sub_burn_failed:'+ffErr(rr)};
   }
-  return {ok:true,out:merged};
+  const extra=[];
+  if(payload.audioFile && fs.existsSync(payload.audioFile)) extra.push({file:payload.audioFile,volume:1,loop:false});
+  if(payload.musicFile && fs.existsSync(payload.musicFile)) extra.push({file:payload.musicFile,volume:Math.max(0,Math.min(1,Number(payload.musicVolume??.25))),loop:true});
+  if(extra.length || payload.removeOriginalAudio){
+    const audioOut=path.join(outDir,`ai_post_audio_${Date.now()}.mp4`), args=['-y','-i',merged];
+    for(const a of extra){if(a.loop)args.push('-stream_loop','-1');args.push('-i',a.file)}
+    const filters=[],labels=[];let k=1;if(!payload.removeOriginalAudio){filters.push('[0:a]volume=1[a0]');labels.push('[a0]')}
+    for(const a of extra){const l=`a${k}`;filters.push(`[${k}:a]volume=${a.volume}[${l}]`);labels.push(`[${l}]`);k++}
+    if(labels.length>1){filters.push(`${labels.join('')}amix=inputs=${labels.length}:duration=first:dropout_transition=2[aout]`);args.push('-filter_complex',filters.join(';'),'-map','0:v:0','-map','[aout]')}
+    else if(labels.length===1)args.push('-filter_complex',filters.join(';'),'-map','0:v:0','-map',labels[0]);else args.push('-map','0:v:0','-an');
+    args.push('-c:v','copy','-c:a','aac','-b:a','192k','-shortest',audioOut);const ar=ffmpegRun(args);if(ar.status!==0)return {ok:false,error:'ffmpeg_audio_mix_failed:'+ffErr(ar)};merged=audioOut;
+  }
+  return {ok:true,out:merged,musicApplied:!!payload.musicFile,insertedAudioApplied:!!payload.audioFile,originalAudioRemoved:!!payload.removeOriginalAudio};
 });
 
 
-ipcMain.handle('prompt:analyzeUrl', async(_e,payload={})=>{
+ipcMain.handle('prompt:analyzeUrl' , async(_e,payload={})=>{
   const lic=await onlineLicenseGuard(); if(!lic.ok) return lic;
   const apiKey=payload.apiKey||''; if(!apiKey) return {ok:false,error:'missing_api_key'};
   const deepRewrite=payload.deepRewrite===true;
