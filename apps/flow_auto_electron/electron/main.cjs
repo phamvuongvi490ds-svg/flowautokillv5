@@ -1315,6 +1315,20 @@ ipcMain.handle('video:postExport', async(_e,payload={})=>{
 });
 
 
+ipcMain.handle('prompt:rewriteScriptDeep', async(_e,payload={})=>{
+  const lic=await onlineLicenseGuard(); if(!lic.ok)return lic;
+  const apiKey=payload.apiKey||''; const source=String(payload.script||'').trim();
+  if(!apiKey)return {ok:false,error:'missing_api_key'}; if(!source)return {ok:false,error:'missing_script'};
+  const outLang=langName(payload.promptLang), duration=String(payload.duration||'60 seconds'), targetScenes=durationScenes(duration);
+  const voice=voiceLangName(payload.voiceLang), gender=String(payload.speakerGender||'male')==='female'?'nữ':'nam';
+  const sys=`Bạn là biên kịch video chuyên sâu. Viết lại kịch bản người dùng bằng ${outLang}, hay hơn, logic hơn, giàu chiều sâu và hấp dẫn hơn. Giữ nguyên tuyệt đối dữ kiện, nhân vật, tên riêng, số liệu, phát ngôn và thông điệp cốt lõi; không bịa thêm. Mở đầu có hook mạnh; phát triển theo bối cảnh, diễn biến, nguyên nhân, tác động, góc nhìn và kết luận. Loại bỏ lặp ý, quảng cáo và câu thừa. Tạo đúng ${targetScenes} cảnh, mỗi cảnh khoảng 8 giây. Voiceover toàn kịch bản dùng duy nhất giọng ${gender}, ${voice}, không đổi chất giọng giữa các cảnh. Trả JSON {"script":"..."}. Mỗi cảnh chỉ gồm Scene NN, Hình ảnh, Hành động, Cảm xúc, Camera, Ánh sáng/Màu sắc, Voiceover. Không thêm Prompt, Description hoặc Thời lượng.`;
+  try{
+    const raw=await geminiText(apiKey,`KỊCH BẢN GỐC:\n${source}\n\nHãy viết lại chuyên sâu, giữ đúng dữ kiện và đúng ${targetScenes} cảnh.`,sys,true,payload.apiModel);
+    const obj=JSON.parse(String(raw).replace(/^```json\s*|```$/g,''));
+    return {ok:true,script:policySafePostProcess(obj.script||'',outLang),rewriteMode:'deep_pasted_script'};
+  }catch(e){return {ok:false,error:String(e.message||e)}}
+});
+
 ipcMain.handle('prompt:analyzeUrl' , async(_e,payload={})=>{
   const lic=await onlineLicenseGuard(); if(!lic.ok) return lic;
   const apiKey=payload.apiKey||''; if(!apiKey) return {ok:false,error:'missing_api_key'};
