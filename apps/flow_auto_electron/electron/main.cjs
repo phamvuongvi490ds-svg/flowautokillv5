@@ -453,19 +453,20 @@ function extractVoiceFromScene(text){
   if(raw && !/\n/.test(raw) && raw.length>8) return raw.replace(/^"|"$/g,'');
   return '';
 }
-function enforceVoiceInPrompt(prompt, source, outLang='Vietnamese', voiceLang=''){
+function enforceVoiceInPrompt(prompt, source, outLang='Vietnamese', voiceLang='', speakerGender='male'){
   const voice=extractVoiceFromScene(source);
   if(!voice) return prompt;
   let p=String(prompt||'').trim();
   const hasVoiceLabel=/(Voiceover|Lời dẫn|Lời thoại|Voice)\s*:/i.test(p);
   const accent=voiceLang||'tiếng Việt tự nhiên';
+  const speaker=String(speakerGender||'male')==='female'?'nữ':'nam';
   if(outLang==='Vietnamese'){
-    const block=`\nLời dẫn/Voiceover: "${voice}"\nLời thoại nhân vật: Không có, chỉ dùng lời dẫn voiceover nếu cảnh không có nhân vật nói trực tiếp.\nGiọng đọc/Voice: ${accent}.`;
+    const block=`\nLời dẫn/Voiceover: "${voice}"\nLời thoại nhân vật: Không có, chỉ dùng lời dẫn voiceover nếu cảnh không có nhân vật nói trực tiếp.\nGiọng đọc/Voice: giọng ${speaker}, ${accent}. Toàn bộ kịch bản chỉ dùng giọng ${speaker}; không đổi sang giọng ${speaker==='nam'?'nữ':'nam'} ở bất kỳ cảnh nào.`;
     if(p.includes(voice) && hasVoiceLabel) return p;
     if(p.includes(voice) && !hasVoiceLabel) p=p.replace(voice, `Lời dẫn/Voiceover: "${voice}"`);
     return `${p}${block}`;
   }
-  const block=`\nVoiceover: "${voice}"\nCharacter dialogue: None unless the scene explicitly has a speaking character.\nVoice: ${accent}.`;
+  const block=`\nVoiceover: "${voice}"\nCharacter dialogue: None unless the scene explicitly has a speaking character.\nVoice: ${speaker==='nam'?'male':'female'} ${accent}. Use only this ${speaker==='nam'?'male':'female'} voice throughout the entire script; never switch speaker gender between scenes.`;
   if(p.includes(voice) && hasVoiceLabel) return p;
   return `${p}${block}`;
 }
@@ -709,6 +710,8 @@ async function generateScriptJs(payload){
   const style=payload.style||'CINEMATIC';
   const outLang=langName(payload.promptLang);
   const voiceLang=voiceLangName(payload.voiceLang);
+  const speakerGender=String(payload.speakerGender||'male')==='female'?'female':'male';
+  const speakerGenderLabel=speakerGender==='female'?'nữ':'nam';
   const batchSize=20;
   const batches=Math.ceil(totalScenes/batchSize);
   let title=''; const allScenes=[];
@@ -739,7 +742,7 @@ async function generateScriptJs(payload){
          - voice: Lời thoại/Voice bằng ${outLang} nếu phù hợp; nếu không có thoại thì ghi "Không có".
          - description: Tóm tắt nội dung cảnh bằng ${outLang} bám sát nội dung gốc.
          - prompt: Prompt video cuối cùng cho Veo 3.1, tích hợp phong cách ${characterSuffixByLang(style,outLang)} (${style}). ${finalPromptLanguageRule(outLang)} Nếu có ảnh tham chiếu và cảnh cần nhân vật đó, prompt phải dùng bản mô tả nhân vật đồng nhất. Nếu không có ảnh tham chiếu, prompt chỉ được viết theo mô tả của cảnh, không tự thêm nhân vật/Character Sheet/REF_ID. Tuyệt đối không dùng bối cảnh/môi trường/ánh sáng/phòng nền của ảnh tham chiếu; bối cảnh phải theo kịch bản từng cảnh.
-      8. NGÔN NGỮ GIỌNG NÓI NHÂN VẬT: Nếu cảnh có lời thoại/nhân vật nói, nhân vật bắt buộc nói bằng ${voiceLang}. Toàn bộ prompt trong cùng kịch bản phải đồng nhất đúng lựa chọn này, không được lúc giọng Nam lúc giọng Bắc hoặc đổi sang ngôn ngữ khác. Trong prompt video phải ghi rõ: character speaks ${voiceLang}.
+      8. NGÔN NGỮ GIỌNG NÓI NHÂN VẬT: Nếu cảnh có lời thoại/nhân vật nói, nhân vật bắt buộc nói bằng ${voiceLang}. Toàn bộ prompt trong cùng kịch bản phải đồng nhất đúng lựa chọn này, không được lúc giọng Nam lúc giọng Bắc hoặc đổi sang ngôn ngữ khác. Trong prompt video phải ghi rõ nhân vật dùng giọng ${speakerGenderLabel}, ${voiceLang}. MỌI cảnh trong toàn bộ kịch bản chỉ được dùng một giới tính giọng là ${speakerGenderLabel}; tuyệt đối không chuyển sang giới tính giọng khác, không xen kẽ nam/nữ.
       9. QUY TẮC PHỤ ĐỀ BẮT BUỘC CHO MỌI PROMPT: ${subtitlePromptRule(payload,outLang,voiceLang)}
       10. AN TOÀN CHÍNH SÁCH GOOGLE/FLOW: ${policySafeInstruction(outLang)}
       11. Trả về kết quả dưới dạng JSON: {"title":"...","characterSheet":"...","scenes":[{"sceneNumber":...,"duration":"8 giây","visual":"...","action":"...","emotion":"...","cameraLighting":"...","voice":"...","description":"...","prompt":"..."}]}.`;
@@ -747,7 +750,7 @@ async function generateScriptJs(payload){
     const characterInstruction=characterSheet
       ? `REFERENCE IMAGE MODE: Use this exact character sheet only for scenes that require the referenced character: "${characterSheet}". Repeat this compact identity in those scene prompts. Do not change face, hair, age, body type, or the exact visible outfit from the reference image.`
       : `NO REFERENCE IMAGE MODE: Do not create a fixed character sheet. Do not invent a main character, extra people, REF_ID, face identity lock, or recurring identity unless the user's script explicitly asks for one. For each scene, write only the subject described by that scene. Landscape remains landscape, product remains product, animal remains animal, object remains object, abstract scene remains abstract.`;
-    const parts=[...(i===0?imgs:[]),{text:`Topic/content: ${payload.topic}. Total video scenes: ${totalScenes}. Generate scenes ${startScene}-${endScene}. ${characterInstruction} Prompts and descriptions must be in ${outLang}. ${finalPromptLanguageRule(outLang)} If ${outLang} is Vietnamese, every sentence in description and prompt must be Vietnamese; do not output English style phrases, English camera instructions, or English safety rules except unavoidable proper names. If any dialogue/speech exists, character voice language must be ${voiceLang} and must stay identical in every generated prompt. Do not mix accents/languages. Keep prompts short but preserve character consistency. Each scene must be unique, must follow the exact script progression, and must not repeat the same action, camera, setting, or wording from another scene. Each scene must be detailed enough to render and must contain these fields: visual, action, emotion, cameraLighting, voice, prompt. Apply this subtitle rule to every scene: ${subtitlePromptRule(payload,outLang,voiceLang)} Apply this safety rule to every scene: ${policySafeInstruction(outLang)}`}];
+    const parts=[...(i===0?imgs:[]),{text:`Topic/content: ${payload.topic}. Total video scenes: ${totalScenes}. Generate scenes ${startScene}-${endScene}. ${characterInstruction} Prompts and descriptions must be in ${outLang}. ${finalPromptLanguageRule(outLang)} If ${outLang} is Vietnamese, every sentence in description and prompt must be Vietnamese; do not output English style phrases, English camera instructions, or English safety rules except unavoidable proper names. If any dialogue/speech exists, the only allowed speaker voice is ${speakerGender} using ${voiceLang}; both speaker gender and accent must stay identical in every generated prompt. Do not mix accents/languages. Keep prompts short but preserve character consistency. Each scene must be unique, must follow the exact script progression, and must not repeat the same action, camera, setting, or wording from another scene. Each scene must be detailed enough to render and must contain these fields: visual, action, emotion, cameraLighting, voice, prompt. Apply this subtitle rule to every scene: ${subtitlePromptRule(payload,outLang,voiceLang)} Apply this safety rule to every scene: ${policySafeInstruction(outLang)}`}];
     const txt=await geminiText(payload.apiKey,parts,sys,true);
     let obj;
     try {
@@ -768,7 +771,7 @@ async function generateScriptJs(payload){
         emotion: sc.emotion||sc.camXuc||'',
         cameraLighting: sc.cameraLighting||sc.camera||sc.gocMayAnhSang||'',
         voice: sc.voice||sc.dialogue||sc.loiThoai||'',
-        prompt: await ensureOutputLanguageText(payload.apiKey, enforceSubtitleInPrompt(enforceVoiceInPrompt(policySafePostProcess(lockPrompt(sc.prompt,characterSheet,outLang),outLang), `${sc.voice||sc.dialogue||sc.loiThoai||''}`, outLang, voiceLang),payload,outLang,voiceLang), outLang, payload.apiModel)
+        prompt: await ensureOutputLanguageText(payload.apiKey, enforceSubtitleInPrompt(enforceVoiceInPrompt(policySafePostProcess(lockPrompt(sc.prompt,characterSheet,outLang),outLang), `${sc.voice||sc.dialogue||sc.loiThoai||''}`, outLang, voiceLang, speakerGender),payload,outLang,voiceLang), outLang, payload.apiModel)
       });
     }
     allScenes.push(...scenes);
