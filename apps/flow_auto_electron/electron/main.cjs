@@ -588,6 +588,8 @@ function hasReferenceImages(payload){
 }
 async function generatePromptsJs(payload){
   const apiKey=payload.apiKey||''; const style=payload.style||'CINEMATIC'; const media=payload.mediaType||'IMAGE'; const outLang=langName(payload.promptLang); const voiceLang=voiceLangName(payload.voiceLang);
+  const speakerGender=String(payload.speakerGender||'male');
+  const structuredFormat=observablePromptFormatInstruction(characterSheet,speakerGender,voiceLang,subtitlePromptRule(payload,outLang,voiceLang));
   const sys=characterSystem(style,media,outLang); const hasRefs=Array.isArray(payload.characterImages)&&payload.characterImages.length>0; const imgs=imageParts(payload.characterImages); const characterLock=hasRefs?await buildCharacterLock(apiKey,payload.characterImages):''; const characterRoster=hasRefs?await buildCharacterRoster(apiKey,payload.characterImages,payload.ideas||''):'';
   const results=[];
   for(const idea of splitIdeas(payload.ideas)){
@@ -700,12 +702,28 @@ ${lines.map((x,i)=>`${i+1}. ${x}`).join('\n')}`;
   return {ok:true,generated:{file:generated.file,count:prompts.length,prompts}};
 }
 
+function referenceName(file){ return path.basename(String(file||''),path.extname(String(file||''))).replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim(); }
+function labeledImageParts(files){ const out=[]; for(const f of (files||[]).slice(0,30)){try{out.push({text:`REFERENCE FILE NAME / CHARACTER NAME HINT: ${referenceName(f)}`});out.push({inlineData:{mimeType:mimeFromFile(f),data:fs.readFileSync(f).toString('base64')}})}catch{}}return out;}
+async function buildObservableCharacterMasters(apiKey,files,script,preferredModel=''){
+  if(!files.length)return {masters:[],text:''};
+  const sys=`Bạn là chuyên gia phân tích nhân vật từ ảnh tham chiếu. Chỉ mô tả đặc điểm quan sát được; không suy đoán danh tính, quốc tịch, nghề nghiệp hay dữ liệu cá nhân. Tên file là gợi ý tên nhân vật để nối với kịch bản, không phải bằng chứng về danh tính. Phân tích riêng từng ảnh/người, không trộn đặc điểm. Không dùng FACE_IDENTITY_LOCK, CHARACTER_IDENTITY_LOCK, BIOMETRIC LOCK, exact identity replication, clone face hoặc thuật ngữ sao chép sinh trắc học. Trả JSON {"masters":[{"name":"tên từ file","aliases":[],"subjectNumber":1,"role":"","genderPresentation":"","ageRange":"","appearance":"","face":"","hair":"","physique":"","wardrobe":"","expression":"","visibleOnlyNotes":""}]}. Wardrobe phải đúng loại đồ nhìn thấy; không bịa phần bị khuất.`;
+  const parts=[...labeledImageParts(files),{text:`SCRIPT CHARACTER NAMES AND CONTEXT:\n${String(script||'').slice(0,30000)}\nMatch only explicit character names to reference file names.`}];
+  const raw=await geminiText(apiKey,parts,sys,true,preferredModel); const obj=JSON.parse(String(raw).replace(/^```json\s*|```$/g,''));
+  const masters=Array.isArray(obj.masters)?obj.masters:[];
+  const text=masters.map((m,i)=>`SUBJECT ${m.subjectNumber||i+1} — ${m.name||m.role||'CHARACTER'}\nAppearance: ${m.appearance||''}\nFace: ${m.face||''}\nHair: ${m.hair||''}\nPhysique: ${m.physique||''}\nWardrobe: ${m.wardrobe||''}\nExpression / Presence: ${m.expression||''}`).join('\n\n');
+  return {masters,text};
+}
+function observablePromptFormatInstruction(masterText,speakerGender,voiceLang,subtitleRule){
+  const gender=speakerGender==='female'?'female':'male';
+  return `MANDATORY FINAL PROMPT FORMAT, output only the complete prompt and no analysis commentary:\nCHARACTER VISUAL REFERENCE\nCHARACTER MASTER DESCRIPTION\n${masterText}\nCHARACTER CONTINUITY\nUse uploaded references as visual guidance for observable appearance, hairstyle, wardrobe, body proportions and presentation. Maintain strong visual continuity.\nREFERENCE IMAGE BOUNDARY\nUse references only for character appearance and wardrobe. Do not reproduce reference background, room, objects, lighting or camera composition unless the scene explicitly requests it.\nSCENE [NUMBER] — [SHORT TITLE]\nENVIRONMENT\nCHARACTER POSITION\nACTION\nCAMERA\nMOTION\nLIGHTING\nVISUAL STYLE\nVOICEOVER\nCHARACTER DIALOGUE\nON-SCREEN TEXT\nSCENE CONTINUITY\nDistinguish character description from scene/environment. Match character names in the script to reference filename names; never mix Subjects. Include only characters named or required in that scene. Preserve observable face structure/proportions, age range, skin tone, hair, physique, garment category/design/colors, accessories and visible footwear. Do not invent hidden details. Do not use FACE_IDENTITY_LOCK, CHARACTER_IDENTITY_LOCK, BIOMETRIC LOCK, absolute identity source, exact identity replication, 100% identical face, clone face, copy biometric identity, or replicate exact identity. The only direct speaking/lip-sync character gender is ${gender}. Other characters have no direct dialogue unless explicitly required. Voice/accent: ${voiceLang}. ${subtitleRule}`;
+}
 async function generateScriptJs(payload){
   const totalScenes=durationScenes(payload.duration);
   const refImages = (payload.refsDir ? imageFilesFromDir(payload.refsDir) : []).concat(payload.characterImages || []);
-  const imgs=imageParts(refImages);
+  const imgs=labeledImageParts(refImages);
   const hasRefs=hasReferenceImages(payload);
-  let characterSheet=hasRefs?await buildCharacterLock(payload.apiKey,refImages):'';
+  const observed=hasRefs?await buildObservableCharacterMasters(payload.apiKey,refImages,payload.topic||'',payload.apiModel):{masters:[],text:''};
+  let characterSheet=observed.text;
   const style=payload.style||'CINEMATIC';
   const outLang=langName(payload.promptLang);
   const voiceLang=voiceLangName(payload.voiceLang);
@@ -741,13 +759,14 @@ async function generateScriptJs(payload){
          - prompt: Prompt video cuối cùng cho Veo 3.1, tích hợp phong cách ${characterSuffixByLang(style,outLang)} (${style}). ${finalPromptLanguageRule(outLang)} Nếu có ảnh tham chiếu và cảnh cần nhân vật đó, prompt phải dùng bản mô tả nhân vật đồng nhất. Nếu không có ảnh tham chiếu, prompt chỉ được viết theo mô tả của cảnh, không tự thêm nhân vật/Character Sheet/REF_ID. Tuyệt đối không dùng bối cảnh/môi trường/ánh sáng/phòng nền của ảnh tham chiếu; bối cảnh phải theo kịch bản từng cảnh.
       8. NGÔN NGỮ GIỌNG NÓI NHÂN VẬT: Nếu cảnh có lời thoại/nhân vật nói, nhân vật bắt buộc nói bằng ${voiceLang}. Toàn bộ prompt trong cùng kịch bản phải đồng nhất đúng lựa chọn này, không được lúc giọng Nam lúc giọng Bắc hoặc đổi sang ngôn ngữ khác. Trong prompt video phải ghi rõ: character speaks ${voiceLang}.
       9. QUY TẮC PHỤ ĐỀ BẮT BUỘC CHO MỌI PROMPT: ${subtitlePromptRule(payload,outLang,voiceLang)}
+      10. CẤU TRÚC PROMPT VIDEO BẮT BUỘC: ${structuredFormat}
       10. AN TOÀN CHÍNH SÁCH GOOGLE/FLOW: ${policySafeInstruction(outLang)}
       11. Trả về kết quả dưới dạng JSON: {"title":"...","characterSheet":"...","scenes":[{"sceneNumber":...,"duration":"8 giây","visual":"...","action":"...","emotion":"...","cameraLighting":"...","voice":"...","description":"...","prompt":"..."}]}.`;
 
     const characterInstruction=characterSheet
       ? `REFERENCE IMAGE MODE: Use this exact character sheet only for scenes that require the referenced character: "${characterSheet}". Repeat this compact identity in those scene prompts. Do not change face, hair, age, body type, or the exact visible outfit from the reference image.`
       : `NO REFERENCE IMAGE MODE: Do not create a fixed character sheet. Do not invent a main character, extra people, REF_ID, face identity lock, or recurring identity unless the user's script explicitly asks for one. For each scene, write only the subject described by that scene. Landscape remains landscape, product remains product, animal remains animal, object remains object, abstract scene remains abstract.`;
-    const parts=[...(i===0?imgs:[]),{text:`Topic/content: ${payload.topic}. Total video scenes: ${totalScenes}. Generate scenes ${startScene}-${endScene}. ${characterInstruction} Prompts and descriptions must be in ${outLang}. ${finalPromptLanguageRule(outLang)} If ${outLang} is Vietnamese, every sentence in description and prompt must be Vietnamese; do not output English style phrases, English camera instructions, or English safety rules except unavoidable proper names. If any dialogue/speech exists, character voice language must be ${voiceLang} and must stay identical in every generated prompt. Do not mix accents/languages. Keep prompts short but preserve character consistency. Each scene must be unique, must follow the exact script progression, and must not repeat the same action, camera, setting, or wording from another scene. Each scene must be detailed enough to render and must contain these fields: visual, action, emotion, cameraLighting, voice, prompt. Apply this subtitle rule to every scene: ${subtitlePromptRule(payload,outLang,voiceLang)} Apply this safety rule to every scene: ${policySafeInstruction(outLang)}`}];
+    const parts=[...(i===0?imgs:[]),{text:`Topic/content: ${payload.topic}. Total video scenes: ${totalScenes}. Generate scenes ${startScene}-${endScene}. ${characterInstruction} Prompts and descriptions must be in ${outLang}. ${finalPromptLanguageRule(outLang)} If ${outLang} is Vietnamese, every sentence in description and prompt must be Vietnamese; do not output English style phrases, English camera instructions, or English safety rules except unavoidable proper names. If any dialogue/speech exists, character voice language must be ${voiceLang} and must stay identical in every generated prompt. Do not mix accents/languages. Keep prompts short but preserve character consistency. Each scene must be unique, must follow the exact script progression, and must not repeat the same action, camera, setting, or wording from another scene. Each scene must be detailed enough to render and must contain these fields: visual, action, emotion, cameraLighting, voice, prompt. Apply this exact structured format to every scene prompt: ${structuredFormat} Apply this subtitle rule to every scene: ${subtitlePromptRule(payload,outLang,voiceLang)} Apply this safety rule to every scene: ${policySafeInstruction(outLang)}`}];
     const txt=await geminiText(payload.apiKey,parts,sys,true);
     let obj;
     try {
@@ -768,7 +787,7 @@ async function generateScriptJs(payload){
         emotion: sc.emotion||sc.camXuc||'',
         cameraLighting: sc.cameraLighting||sc.camera||sc.gocMayAnhSang||'',
         voice: sc.voice||sc.dialogue||sc.loiThoai||'',
-        prompt: await ensureOutputLanguageText(payload.apiKey, enforceSubtitleInPrompt(enforceVoiceInPrompt(policySafePostProcess(lockPrompt(sc.prompt,characterSheet,outLang),outLang), `${sc.voice||sc.dialogue||sc.loiThoai||''}`, outLang, voiceLang),payload,outLang,voiceLang), outLang, payload.apiModel)
+        prompt: await ensureOutputLanguageText(payload.apiKey, enforceSubtitleInPrompt(enforceVoiceInPrompt(policySafePostProcess(sc.prompt,outLang), `${sc.voice||sc.dialogue||sc.loiThoai||''}`, outLang, voiceLang),payload,outLang,voiceLang), outLang, payload.apiModel)
       });
     }
     allScenes.push(...scenes);
