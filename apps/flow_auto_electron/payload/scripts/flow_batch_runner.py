@@ -372,71 +372,38 @@ def apply_output_count(page, count: str):
 
 
 def apply_model(page, model_key: str):
-    key = (model_key or "default").strip().lower()
-    if key == "custom":
-        return True
-    label = MODEL_LABELS.get(key, MODEL_LABELS["default"])
-
+    key=(model_key or "default").strip().lower()
+    if key=="custom": return True
+    label=MODEL_LABELS.get(key,MODEL_LABELS["default"])
     try:
-        # mở dropdown model bên trong settings panel giống extension
-        opened = page.evaluate("""
-        () => {
-          const visible = (el) => {
-            if (!el) return false;
-            const st = getComputedStyle(el);
-            const r = el.getBoundingClientRect();
-            return st.display !== 'none' && st.visibility !== 'hidden' && r.width > 8 && r.height > 8;
-          };
-          const menu = document.querySelector('div[role="menu"][data-state="open"], [role="menu"][data-state="open"]');
-          const scope = menu || document;
-          const triggers = Array.from(scope.querySelectorAll("button[aria-haspopup='menu']")).filter(visible);
-          const trigger = triggers.find(b => b.querySelector('div[data-type="button-overlay"]')) || triggers[triggers.length - 1];
-          if (!trigger) return false;
-          trigger.click();
-          return true;
+        result=page.evaluate("""
+        async ({key,label})=>{
+          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          const visible=el=>{if(!el)return false;const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>8&&r.height>8};
+          const norm=x=>String(x||'').normalize('NFKC').toLowerCase().replace(/[–—]/g,'-').replace(/lower priority/g,'low priority').replace(/[\\[\\]]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
+          const wanted=norm(label), isWanted=x=>{const n=norm(x);return key==='veo3_lite_low_priority'?n==='veo 3 1 lite low priority':n===wanted};
+          const click=el=>{el.scrollIntoView({block:'center'});const r=el.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,b={bubbles:true,cancelable:true,clientX:x,clientY:y,button:0};el.dispatchEvent(new PointerEvent('pointerdown',{...b,pointerId:1,pointerType:'mouse',isPrimary:true,buttons:1}));el.dispatchEvent(new MouseEvent('mousedown',{...b,buttons:1}));el.dispatchEvent(new PointerEvent('pointerup',{...b,pointerId:1,pointerType:'mouse',isPrimary:true,buttons:0}));el.dispatchEvent(new MouseEvent('mouseup',b));el.dispatchEvent(new MouseEvent('click',b));};
+          const triggerCandidates=()=>Array.from(document.querySelectorAll("button[aria-haspopup='menu'],button[aria-haspopup='listbox'],[role='combobox']")).filter(visible);
+          let trigger=triggerCandidates().find(el=>/veo|banana|imagen|omni|fast|lite|quality/i.test(el.innerText||el.textContent||''));
+          if(!trigger){return {ok:false,reason:'model_trigger_missing',triggers:triggerCandidates().map(x=>(x.innerText||x.textContent||'').trim()).slice(0,20)}}
+          const before=(trigger.innerText||trigger.textContent||'').trim();
+          if(isWanted(before))return {ok:true,already:true,before};
+          click(trigger);await sleep(900);
+          const optionCandidates=Array.from(document.querySelectorAll("[role='option'],[role='menuitem'],[role='menuitemradio'],[cmdk-item],button")).filter(visible);
+          let option=optionCandidates.find(el=>isWanted(el.innerText||el.textContent||''));
+          if(!option&&key==='veo3_lite_low_priority')option=optionCandidates.find(el=>{const n=norm(el.innerText||el.textContent||'');return n.includes('veo 3 1')&&n.includes('lite')&&n.includes('low priority')});
+          if(!option)return {ok:false,reason:'model_option_missing',before,options:optionCandidates.map(x=>(x.innerText||x.textContent||'').trim()).filter(Boolean).slice(-40)};
+          const clicked=(option.innerText||option.textContent||'').trim();click(option);await sleep(1600);
+          trigger=triggerCandidates().find(el=>/veo|banana|imagen|omni|fast|lite|quality/i.test(el.innerText||el.textContent||''));
+          const after=trigger?(trigger.innerText||trigger.textContent||'').trim():'';
+          return {ok:isWanted(after),before,clicked,after,wanted};
         }
-        """)
-        if opened:
-            time.sleep(0.35)
-
-        if key == "veo3_lite_low_priority":
-            clicked = page.evaluate(
-                """
-                (label) => {
-                  const norm=s=>String(s||'').normalize('NFKC').replace(/[–—]/g,'-').replace(/lower priority/gi,'low priority').replace(/\s+/g,' ').trim().toLowerCase();
-                  const target=norm(label);
-                  const visible=el=>{const st=getComputedStyle(el),r=el.getBoundingClientRect();return st.display!=='none'&&st.visibility!=='hidden'&&r.width>8&&r.height>8;};
-                  const candidates=Array.from(document.querySelectorAll("[role='menuitem'],[role='option'],button")).filter(visible);
-                  const exact=candidates.find(el=>{const t=norm(el.innerText||el.textContent);return t===target||t===target.replace(/[\[\]]/g,'').replace(/\s+/g,' ');});
-                  if(!exact)return false; exact.scrollIntoView({block:'center'}); exact.click(); return true;
-                }
-                """,
-                label,
-            )
-            if not clicked:
-                return False
-            time.sleep(0.8)
-            # Exact post-click verification. Never accept ordinary Lite.
-            verified = page.evaluate(
-                """
-                (label) => { const n=s=>String(s||'').normalize('NFKC').replace(/[–—]/g,'-').replace(/lower priority/gi,'low priority').replace(/[\[\]]/g,'').replace(/\s+/g,' ').trim().toLowerCase(); const wanted=n(label); return Array.from(document.querySelectorAll("button[aria-haspopup='menu'],[role='combobox']")).some(b=>n(b.innerText||b.textContent)===wanted); }
-                """,
-                label,
-            )
-            return bool(verified)
-        opt = page.locator("[role='menuitem'],button,[role='option']").filter(has_text=re.compile(re.escape(label), re.I))
-        if opt.count() > 0:
-            try:
-                opt.first.click(timeout=2500)
-            except Exception:
-                opt.first.click(timeout=2500, force=True)
-            time.sleep(0.25)
-            return True
-    except Exception:
-        pass
-
-    return False
-
+        """,{"key":key,"label":label})
+        log_line(f"[flow] exact model select result: {result}")
+        return bool(result and result.get("ok"))
+    except Exception as e:
+        log_line(f"[flow] exact model select exception: {e}")
+        return False
 
 def apply_aspect_ratio(page, ratio: str):
     ratio = (ratio or "").strip()
@@ -665,7 +632,8 @@ def apply_flow_settings(page, args):
             if not apply_video_sub_mode(page, args.video_sub_mode):
                 raise RuntimeError("video_sub_mode_not_exact")
             time.sleep(0.25)
-        apply_model(page, model_key)
+        if not apply_model(page, model_key):
+            raise RuntimeError(f"model_not_exact:{model_key}")
         time.sleep(0.35)
         apply_aspect_ratio(page, args.flow_aspect_ratio)
         time.sleep(0.25)
