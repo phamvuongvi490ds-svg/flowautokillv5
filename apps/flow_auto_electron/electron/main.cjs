@@ -920,25 +920,19 @@ function chromeCandidates(){
   return ['/usr/bin/google-chrome','/usr/bin/chromium-browser','/usr/bin/chromium','/snap/bin/chromium','/usr/bin/microsoft-edge'];
 }
 function wait(ms){return new Promise(r=>setTimeout(r,ms));}
-function setCdpWindowHidden(port,hidden){
-  if(process.platform!=='win32')return;
-  const show=hidden?0:5;
-  const script=`$sig='[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd,int nCmdShow);'; Add-Type -MemberDefinition $sig -Name Win32Show -Namespace FlowAuto -ErrorAction SilentlyContinue; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match '--remote-debugging-port=${port}(\s|$)' } | ForEach-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue | ForEach-Object { if($_.MainWindowHandle -ne 0){ [FlowAuto.Win32Show]::ShowWindowAsync($_.MainWindowHandle,${show}) | Out-Null } } }`;
-  try{spawnSync('powershell.exe',['-NoProfile','-WindowStyle','Hidden','-Command',script],{windowsHide:true,timeout:8000})}catch{}
-}
-async function ensureCdpOn(port=CDP_PORT, profile=CDP_PROFILE, hidden=false){
-  try{ const r=await fetch(`http://127.0.0.1:${port}/json/version`); if(r.ok){setCdpWindowHidden(port,hidden);return {ok:true, already:true, port,hidden};} }catch{}
+async function ensureCdpOn(port=CDP_PORT, profile=CDP_PROFILE){
+  try{ const r=await fetch(`http://127.0.0.1:${port}/json/version`); if(r.ok) return {ok:true, already:true, port}; }catch{}
   fs.mkdirSync(profile,{recursive:true});
   forceChromeLanguagePrefs();
   const exe=chromeCandidates().find(x=>x && fs.existsSync(x));
   if(!exe) return {ok:false,error:'chrome_not_found'};
-  const args=[`--remote-debugging-port=${port}`,`--user-data-dir=${profile}`,'--lang=vi-VN','--accept-lang=vi-VN,vi,en-US,en','--disable-features=Translate','--no-first-run','--no-default-browser-check'];if(hidden)args.push('--window-position=-32000,-32000','--window-size=1280,900');args.push('https://labs.google/fx/vi/tools/flow');
+  const args=[`--remote-debugging-port=${port}`,`--user-data-dir=${profile}`,'--lang=vi-VN','--accept-lang=vi-VN,vi,en-US,en','--disable-features=Translate','--no-first-run','--no-default-browser-check','https://labs.google/fx/vi/tools/flow'];
   const p=spawn(exe,args,{detached:true,stdio:'ignore',windowsHide:true}); p.unref();
-  for(let i=0;i<40;i++){ try{ const r=await fetch(`http://127.0.0.1:${port}/json/version`); if(r.ok){setCdpWindowHidden(port,hidden);return {ok:true, launched:true, port,hidden};} }catch{} await wait(500); }
+  for(let i=0;i<40;i++){ try{ const r=await fetch(`http://127.0.0.1:${port}/json/version`); if(r.ok) return {ok:true, launched:true, port}; }catch{} await wait(500); }
   return {ok:false,error:'cdp_not_ready',port};
 }
 async function ensureCdp(){ return ensureCdpOn(CDP_PORT, CDP_PROFILE); }
-async function ensureCdpThreads(n, profiles=[], hidden=false){ const out=[]; for(let i=0;i<n;i++){ const port=CDP_PORT+i; const profile=profiles&&profiles[i]?flowProfileDir(profiles[i],i):(i===0?CDP_PROFILE:path.join(BASE_DIR,`chrome-cdp-profile-${i+1}`)); const r=await ensureCdpOn(port,profile,hidden); out.push({...r,profileDir:profile,accountEmail:profiles?.[i]?.accountEmail||''}); if(!r.ok) return {ok:false,error:r.error,port}; } return {ok:true,threads:n,cdp:out}; }
+async function ensureCdpThreads(n, profiles=[]){ const out=[]; for(let i=0;i<n;i++){ const port=CDP_PORT+i; const profile=profiles&&profiles[i]?flowProfileDir(profiles[i],i):(i===0?CDP_PROFILE:path.join(BASE_DIR,`chrome-cdp-profile-${i+1}`)); const r=await ensureCdpOn(port,profile); out.push({...r,profileDir:profile,accountEmail:profiles?.[i]?.accountEmail||''}); if(!r.ok) return {ok:false,error:r.error,port}; } return {ok:true,threads:n,cdp:out}; }
 function writePromptFile(name, text){ ensureDirs(); const file=path.join(JOB_DIR,name); const blocks=(text||'').split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean); fs.writeFileSync(file, blocks.join('\n\n')+'\n','utf8'); return file; }
 function saveGeneratedPrompts(jsonPath, fallbackText, outName){
   let prompts=[]; try{ const obj=JSON.parse(fs.readFileSync(jsonPath,'utf8')); if(obj.results) prompts=obj.results.filter(r=>r.ok&&r.prompt).map(r=>String(r.prompt).replace(/\s+/g,' ').trim()); if(obj.script?.scenes) prompts=obj.script.scenes.sort((a,b)=>(a.sceneNumber||0)-(b.sceneNumber||0)).map(s=>String(s.prompt||'').replace(/\s+/g,' ').trim()).filter(Boolean); }catch{}
@@ -1056,7 +1050,7 @@ ipcMain.handle('prompt:saveGenerated', async(_e,file)=>{
     return {ok:true,file:r.filePath};
   }catch(e){ return {ok:false,error:String(e&&e.message||e)}; }
 });
-ipcMain.handle('flow:start', async(_e,payload)=>{ try{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; const reset=await resetRunnerWorkersAsync({killChrome:false}); const n=Math.max(1,Math.min(100,Array.isArray((payload||{}).profiles)&&payload.profiles.length?payload.profiles.length:Number((payload||{}).flowThreads||1)||1)); const c=await ensureCdpThreads(n,(payload||{}).profiles||[],(payload||{}).hiddenBrowser===true); if(!c.ok) return c; const r=startRunner(payload||{}); return {...r, reset}; }catch(e){ try{console.error('[flow:start]',e)}catch{} return {ok:false,error:'start_failed:'+String(e&&e.message||e)}; } });
+ipcMain.handle('flow:start', async(_e,payload)=>{ try{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; const reset=await resetRunnerWorkersAsync({killChrome:false}); const n=Math.max(1,Math.min(100,Array.isArray((payload||{}).profiles)&&payload.profiles.length?payload.profiles.length:Number((payload||{}).flowThreads||1)||1)); const c=await ensureCdpThreads(n,(payload||{}).profiles||[]); if(!c.ok) return c; const r=startRunner(payload||{}); return {...r, reset}; }catch(e){ try{console.error('[flow:start]',e)}catch{} return {ok:false,error:'start_failed:'+String(e&&e.message||e)}; } });
 ipcMain.handle('flow:pause', async()=>{ if(!anyRunnerRunning()) return {ok:false,error:'process_not_running'}; ensureDirs(); fs.writeFileSync(PAUSE_FILE,String(Date.now())); return {ok:true, paused:true}; });
 ipcMain.handle('flow:resume', async()=>{ if(!anyRunnerRunning() && !fs.existsSync(PAUSE_FILE)) return {ok:false,error:'process_not_running'}; try{fs.rmSync(PAUSE_FILE,{force:true})}catch{} return {ok:true, paused:false}; });
 ipcMain.handle('flow:stop', async()=>{ resetRunnerWorkersAsync({killChrome:false}).catch(()=>{}); return {ok:true, running:false, stopping:true}; });
