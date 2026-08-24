@@ -271,7 +271,7 @@ def find_input_box(page):
 
 MODEL_LABELS = {
     "default": "Veo 3.1 - Fast",
-    "veo3_lite_low_priority": "Veo 3.1 - Lite [Low Priority]",
+    "veo3_lite_low_priority": "Veo 3.1 - Lite [Lower Priority]",
     "veo3_lite": "Veo 3.1 - Lite",
     "veo3_fast": "Veo 3.1 - Fast",
     "veo3_quality": "Veo 3.1 - Quality",
@@ -372,38 +372,69 @@ def apply_output_count(page, count: str):
 
 
 def apply_model(page, model_key: str):
-    key=(model_key or "default").strip().lower()
-    if key=="custom": return True
-    label=MODEL_LABELS.get(key,MODEL_LABELS["default"])
+    key = (model_key or "default").strip().lower()
+    if key == "custom":
+        return True
+    label = MODEL_LABELS.get(key, MODEL_LABELS["default"])
+
     try:
-        result=page.evaluate("""
-        async ({key,label})=>{
-          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-          const visible=el=>{if(!el)return false;const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>8&&r.height>8};
-          const norm=x=>String(x||'').normalize('NFKC').toLowerCase().replace(/[–—]/g,'-').replace(/lower priority/g,'low priority').replace(/[\\[\\]]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
-          const wanted=norm(label), isWanted=x=>{const n=norm(x);return key==='veo3_lite_low_priority'?n==='veo 3 1 lite low priority':n===wanted};
-          const click=el=>{el.scrollIntoView({block:'center'});const r=el.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,b={bubbles:true,cancelable:true,clientX:x,clientY:y,button:0};el.dispatchEvent(new PointerEvent('pointerdown',{...b,pointerId:1,pointerType:'mouse',isPrimary:true,buttons:1}));el.dispatchEvent(new MouseEvent('mousedown',{...b,buttons:1}));el.dispatchEvent(new PointerEvent('pointerup',{...b,pointerId:1,pointerType:'mouse',isPrimary:true,buttons:0}));el.dispatchEvent(new MouseEvent('mouseup',b));el.dispatchEvent(new MouseEvent('click',b));};
-          const triggerCandidates=()=>Array.from(document.querySelectorAll("button[aria-haspopup='menu'],button[aria-haspopup='listbox'],[role='combobox']")).filter(visible);
-          let trigger=triggerCandidates().find(el=>/veo|banana|imagen|omni|fast|lite|quality/i.test(el.innerText||el.textContent||''));
-          if(!trigger){return {ok:false,reason:'model_trigger_missing',triggers:triggerCandidates().map(x=>(x.innerText||x.textContent||'').trim()).slice(0,20)}}
-          const before=(trigger.innerText||trigger.textContent||'').trim();
-          if(isWanted(before))return {ok:true,already:true,before};
-          click(trigger);await sleep(900);
-          const optionCandidates=Array.from(document.querySelectorAll("[role='option'],[role='menuitem'],[role='menuitemradio'],[cmdk-item],button")).filter(visible);
-          let option=optionCandidates.find(el=>isWanted(el.innerText||el.textContent||''));
-          if(!option&&key==='veo3_lite_low_priority')option=optionCandidates.find(el=>{const n=norm(el.innerText||el.textContent||'');return n.includes('veo 3 1')&&n.includes('lite')&&n.includes('low priority')});
-          if(!option)return {ok:false,reason:'model_option_missing',before,options:optionCandidates.map(x=>(x.innerText||x.textContent||'').trim()).filter(Boolean).slice(-40)};
-          const clicked=(option.innerText||option.textContent||'').trim();click(option);await sleep(1600);
-          trigger=triggerCandidates().find(el=>/veo|banana|imagen|omni|fast|lite|quality/i.test(el.innerText||el.textContent||''));
-          const after=trigger?(trigger.innerText||trigger.textContent||'').trim():'';
-          return {ok:isWanted(after),before,clicked,after,wanted};
+        # mở dropdown model bên trong settings panel giống extension
+        opened = page.evaluate("""
+        () => {
+          const visible = (el) => {
+            if (!el) return false;
+            const st = getComputedStyle(el);
+            const r = el.getBoundingClientRect();
+            return st.display !== 'none' && st.visibility !== 'hidden' && r.width > 8 && r.height > 8;
+          };
+          const menu = document.querySelector('div[role="menu"][data-state="open"], [role="menu"][data-state="open"]');
+          const scope = menu || document;
+          const triggers = Array.from(scope.querySelectorAll("button[aria-haspopup='menu']")).filter(visible);
+          const trigger = triggers.find(b => b.querySelector('div[data-type="button-overlay"]')) || triggers[triggers.length - 1];
+          if (!trigger) return false;
+          trigger.click();
+          return true;
         }
-        """,{"key":key,"label":label})
-        log_line(f"[flow] exact model select result: {result}")
-        return bool(result and result.get("ok"))
-    except Exception as e:
-        log_line(f"[flow] exact model select exception: {e}")
-        return False
+        """)
+        if opened:
+            time.sleep(0.35)
+
+        if key == "veo3_lite_low_priority":
+            clicked = page.evaluate(
+                """
+                (label) => {
+                  const norm=s=>String(s||'').replace(/\s+/g,' ').trim().toLowerCase();
+                  const visible=el=>{const st=getComputedStyle(el),r=el.getBoundingClientRect();return st.display!=='none'&&st.visibility!=='hidden'&&r.width>8&&r.height>8;};
+                  const exact=Array.from(document.querySelectorAll("[role='menuitem'],button,[role='option']")).filter(visible).find(el=>norm(el.innerText||el.textContent)===norm(label));
+                  if(!exact)return false; exact.click(); return true;
+                }
+                """,
+                label,
+            )
+            if not clicked:
+                return False
+            time.sleep(0.8)
+            # Exact post-click verification. Never accept ordinary Lite.
+            verified = page.evaluate(
+                """
+                (label) => { const n=s=>String(s||'').replace(/\s+/g,' ').trim().toLowerCase(); return Array.from(document.querySelectorAll("button[aria-haspopup='menu']")).some(b=>n(b.innerText||b.textContent)===n(label)); }
+                """,
+                label,
+            )
+            return bool(verified)
+        opt = page.locator("[role='menuitem'],button,[role='option']").filter(has_text=re.compile(re.escape(label), re.I))
+        if opt.count() > 0:
+            try:
+                opt.first.click(timeout=2500)
+            except Exception:
+                opt.first.click(timeout=2500, force=True)
+            time.sleep(0.25)
+            return True
+    except Exception:
+        pass
+
+    return False
+
 
 def apply_aspect_ratio(page, ratio: str):
     ratio = (ratio or "").strip()
@@ -571,14 +602,14 @@ def apply_flow_settings(page, args):
               const countRes = await clickGroup(groupBy([], ['x1','x2','x3','x4','1x','2x','3x','4x']), t => tabText(t) === `x${cfg.count}` || tabText(t) === `${cfg.count}x`, 'count');
               const models = {
                 default:['Veo 3.1 - Fast','Veo 3.1 Fast','Veo 3 Fast','Fast'],
-                veo3_lite_low_priority:['Veo 3.1 - Lite [Low Priority]','Veo 3.1 - Lite [Lower Priority]'],
+                veo3_lite_low_priority:['Veo 3.1 - Lite [Lower Priority]'],
                 veo3_lite:['Veo 3.1 - Lite','Veo 3.1 Lite','Veo 3 Lite','Lite'],
                 veo3_fast:['Veo 3.1 - Fast','Veo 3.1 Fast','Veo 3 Fast','Fast'],
                 veo3_quality:['Veo 3.1 - Quality','Veo 3.1 Quality','Veo 3 Quality','Quality'],
                 nano_banana_pro:['Nano Banana Pro'], nano_banana2:['Nano Banana 2'], nano_banana2_lite:['Nano Banana 2 Lite'], nano_banana:['Nano Banana 2','Nano Banana'], imagen4:['Imagen 4'], omni_flash:['Omni Flash','Omni']
               };
               const aliases = models[cfg.model] || (isImage ? models.nano_banana_pro : models.veo3_fast);
-              const matchAlias = (text) => aliases.some(a => { const t=norm(text).trim(), m=norm(a).trim(); if (!t || !m) return false; if (cfg.model === 'veo3_lite_low_priority') { const c=x=>norm(x).replace(/lower priority/g,'low priority').replace(/[\[\]]/g,'').trim(); return c(t)===c('Veo 3.1 - Lite [Low Priority]'); } if (cfg.model === 'omni_flash') return t === m || t.includes('omni flash') || t === 'omni'; if (cfg.model === 'nano_banana2') return t === 'nano banana 2' || t === 'banana 2'; if (cfg.model === 'nano_banana2_lite') return t === 'nano banana 2 lite' || t === 'banana 2 lite'; return t === m || (t.includes(m) && !(cfg.model === 'nano_banana2' && t.includes('lite'))); });
+              const matchAlias = (text) => aliases.some(a => { const t=norm(text).trim(), m=norm(a).trim(); if (!t || !m) return false; if (cfg.model === 'veo3_lite_low_priority') return t === norm('Veo 3.1 - Lite [Lower Priority]'); if (cfg.model === 'omni_flash') return t === m || t.includes('omni flash') || t === 'omni'; if (cfg.model === 'nano_banana2') return t === 'nano banana 2' || t === 'banana 2'; if (cfg.model === 'nano_banana2_lite') return t === 'nano banana 2 lite' || t === 'banana 2 lite'; return t === m || (t.includes(m) && !(cfg.model === 'nano_banana2' && t.includes('lite'))); });
               let modelRes = {ok:true, skipped: cfg.model === 'custom'};
               if (cfg.model !== 'custom') {
                 await openPanel();
@@ -632,8 +663,7 @@ def apply_flow_settings(page, args):
             if not apply_video_sub_mode(page, args.video_sub_mode):
                 raise RuntimeError("video_sub_mode_not_exact")
             time.sleep(0.25)
-        if not apply_model(page, model_key):
-            raise RuntimeError(f"model_not_exact:{model_key}")
+        apply_model(page, model_key)
         time.sleep(0.35)
         apply_aspect_ratio(page, args.flow_aspect_ratio)
         time.sleep(0.25)
@@ -704,33 +734,6 @@ def close_open_menus(page):
         pass
     time.sleep(0.2)
 
-
-def restore_prompt_composer_after_settings(page):
-    """Close settings overlays and wait until Flow's actual project composer accepts focus."""
-    close_open_menus(page)
-    try:
-        page.evaluate("""() => { document.querySelectorAll('[role="menu"][data-state="open"],[role="listbox"][data-state="open"]').forEach(x=>x.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))); }""")
-    except Exception:
-        pass
-    time.sleep(0.6)
-    box=find_input_box(page)
-    try:
-        box.scroll_into_view_if_needed(timeout=3000)
-        box.click(timeout=3000,force=True)
-    except Exception:
-        pass
-    log_line('[flow] prompt composer restored after settings')
-    return box
-
-def read_prompt_box_text(box):
-    try:
-        tag=str(box.evaluate("el=>el.tagName.toLowerCase()"))
-        if tag in ('input','textarea'):
-            return box.input_value() or ''
-        return box.inner_text() or box.text_content() or ''
-    except Exception:
-        try:return box.text_content() or ''
-        except Exception:return ''
 
 def clear_prompt_box(page, box):
     # Prompt input rule v1.0.2:
@@ -843,27 +846,18 @@ def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retr
             time.sleep(0.2)
             
             # Use Playwright's native fill() which handles events correctly for most editors
-            try:
-                box.fill(prompt)
-            except Exception:
-                box.focus()
-                page.keyboard.insert_text(prompt)
-            time.sleep(0.7)
-
-            # Verify without calling input_value() on contenteditable or inner_text() on input.
-            txt = read_prompt_box_text(box)
+            box.fill(prompt)
+            time.sleep(0.5)
+            
+            # Verify
+            txt = box.inner_text() or box.input_value() or ""
             if len(txt.strip()) >= min(5, len(prompt)):
-                log_line(f'[flow] prompt typed and verified on attempt {attempt}: chars={len(txt.strip())}')
                 return True
-
-            # Fallback 2: reacquire the composer because React may replace it after settings close.
-            box = restore_prompt_composer_after_settings(page)
-            clear_prompt_box(page,box)
-            box.focus()
+            
+            # Fallback 2: insert_text
             page.keyboard.insert_text(prompt)
-            time.sleep(0.7)
-            if read_prompt_box_text(box).strip():
-                log_line(f'[flow] prompt inserted and verified on attempt {attempt}')
+            time.sleep(0.5)
+            if (box.inner_text() or box.input_value() or "").strip():
                 return True
                 
             # Fallback 3: Strong JS injection with multiple events
@@ -883,8 +877,7 @@ def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retr
                 }
             """, {"el": box, "txt": prompt})
             time.sleep(0.5)
-            if read_prompt_box_text(box).strip():
-                log_line(f'[flow] prompt JS-injected and verified on attempt {attempt}')
+            if (box.inner_text() or box.input_value() or "").strip():
                 return True
 
         except Exception as e:
@@ -2205,8 +2198,7 @@ def run(args):
             log_line(f'[flow] settings applied once: {settings_applied}')
             if not settings_applied:
                 raise RuntimeError('settings_not_applied_exactly')
-            restore_prompt_composer_after_settings(page)
-            time.sleep(0.4)
+            time.sleep(0.7)
         except Exception as e:
             settings_applied = False
             log_line(f'[flow] apply settings after New Project failed: {e}')
@@ -2240,12 +2232,11 @@ def run(args):
                         log_line(f'[flow] settings applied once: {settings_applied}')
                         if not settings_applied:
                             raise RuntimeError('settings_not_applied_exactly')
-                        restore_prompt_composer_after_settings(page)
-                        time.sleep(0.3)
+                        time.sleep(0.5)
                     else:
                         log_line('[flow] skip settings: already applied once in this run')
 
-                    box = restore_prompt_composer_after_settings(page)
+                    box = find_input_box(page)
 
                     # Always clear before typing, especially for AI Studio/Continuous runs
                     clear_prompt_box(page, box)
