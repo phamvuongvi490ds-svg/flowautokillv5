@@ -1101,6 +1101,24 @@ ipcMain.handle('video:merge', async(_e,payload={})=>{
   if(r.status!==0){ const log=path.join(outDir,'ffmpeg-merge-error.log'); fs.writeFileSync(log,ffErr(r)); return {ok:false,error:'ffmpeg_merge_failed: '+ffErr(r),log}; }
   return {ok:true,out};
 });
+ipcMain.handle('flow:quickMerge', async(_e,payload={})=>{
+  const lic=await onlineLicenseGuard();if(!lic.ok)return lic;
+  const folder=String(payload.folder||'');if(!folder||!fs.existsSync(folder))return {ok:false,error:'missing_video_folder'};
+  const files=videoFiles(folder).map(file=>({file,n:Number((path.basename(file).match(/^(\d+)/)||[])[1]||999999)})).sort((a,b)=>a.n-b.n||a.file.localeCompare(b.file)).map(x=>x.file);
+  if(!files.length)return {ok:false,error:'missing_videos'};
+  const transition=safeTransitionName(payload.transition==='random'?['fade','fadeblack','smoothleft','smoothright'][Math.floor(Math.random()*4)]:payload.transition||'fade');
+  let subtitles=[];if(payload.autoSub){if(!payload.apiKey)return {ok:false,error:'missing_api_key_for_auto_sub'};try{subtitles=await transcribeTimelineVerbatim(files.map((file,i)=>({file,start:0,end:videoDurationSec(file),order:i+1})),payload.apiKey,payload.apiModel||'',payload.subLang||'vi',folder)}catch(e){return {ok:false,error:'quick_merge_sub_failed:'+String(e.message||e)}}}
+  const scenes=files.map((file,i)=>({file,start:0,end:videoDurationSec(file),keep:true,order:i+1,transition}));
+  const out=await new Promise(resolve=>{const event={};videoQuickMergeInternal({folder,scenes,transition,subtitles,autoSub:!!payload.autoSub,subStyle:{font:'Arial',color:'#FFFFFF',size:42}}).then(resolve).catch(e=>resolve({ok:false,error:String(e.message||e)}))});return out;
+});
+async function videoQuickMergeInternal(payload){
+  const folder=payload.folder,scenes=payload.scenes||[],outDir=path.join(folder,'flow_auto_quick_merge');fs.mkdirSync(outDir,{recursive:true});
+  const framePlan=targetVideoFrame(scenes.map(s=>s.file)),temp=[];
+  for(const [i,sc] of scenes.entries()){const out=path.join(outDir,`clip_${String(i+1).padStart(3,'0')}.mp4`),dur=Math.max(.5,videoDurationSec(sc.file)||8),vf=`scale=${framePlan.width}:${framePlan.height}:force_original_aspect_ratio=decrease,pad=${framePlan.width}:${framePlan.height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,${sceneTransitionFilter(sc.transition||'fade',dur)}`;const r=ffmpegRun(['-y','-i',sc.file,'-map','0:v:0?','-map','0:a:0?','-vf',vf,'-r','30','-pix_fmt','yuv420p','-c:v','libx264','-preset','veryfast','-crf','20','-c:a','aac','-ar','48000','-ac','2',out]);if(r.status!==0)return {ok:false,error:'quick_merge_clip_failed:'+ffErr(r)};temp.push(out)}
+  const list=path.join(outDir,'list.txt');fs.writeFileSync(list,temp.map(f=>`file '${concatPath(f)}'`).join('\n'));let out=path.join(outDir,`quick_merge_${Date.now()}.mp4`),r=ffmpegRun(['-y','-f','concat','-safe','0','-i',list,'-c','copy','-movflags','+faststart',out]);if(r.status!==0)return {ok:false,error:'quick_merge_failed:'+ffErr(r)};
+  const subs=validSubtitleRows(payload.subtitles||[]);if(payload.autoSub&&subs.length){const ass=writeAssSub(path.join(outDir,'quick_subtitles.ass'),subs,payload.subStyle||{}),final=path.join(outDir,`quick_merge_sub_${Date.now()}.mp4`),assPath=ass.replace(/\\/g,'/').replace(/:/g,'\\:').replace(/'/g,"\\'");const sr=ffmpegRun(['-y','-i',out,'-vf',`ass='${assPath}'`,'-c:v','libx264','-preset','veryfast','-crf','20','-c:a','copy',final]);if(sr.status!==0)return {ok:false,error:'quick_merge_sub_burn_failed:'+ffErr(sr)};out=final}return {ok:true,out,url:`file://${out.replace(/\\/g,'/')}`,count:scenes.length,subtitles:subs.length};
+}
+
 ipcMain.handle('video:extractAudio', async(_e,payload={})=>{
   const lic=await onlineLicenseGuard(); if(!lic.ok) return lic;
   const file=payload.file||''; if(!file)return {ok:false,error:'missing_video'}; const out=path.join(path.dirname(file),path.basename(file,path.extname(file))+'_audio.mp3');
