@@ -1315,6 +1315,34 @@ ipcMain.handle('video:postExport', async(_e,payload={})=>{
 });
 
 
+ipcMain.handle('dance:extractAudio', async(_e,payload={})=>{
+  const lic=await onlineLicenseGuard(); if(!lic.ok)return lic;
+  const file=resolveExistingVideoFile(payload.video||'');
+  const out=path.join(path.dirname(file),`${path.basename(file,path.extname(file))}_original_audio.mp3`);
+  const r=ffmpegRun(['-y','-i',file,'-vn','-c:a','libmp3lame','-q:a','2',out]);
+  return r.status===0?{ok:true,out}:{ok:false,error:'dance_audio_extract_failed:'+ffErr(r)};
+});
+
+ipcMain.handle('dance:generate', async(_e,payload={})=>{
+  const lic=await onlineLicenseGuard(); if(!lic.ok)return lic;
+  if(!payload.apiKey)return {ok:false,error:'missing_api_key'};
+  if(!payload.video||!fs.existsSync(payload.video))return {ok:false,error:'missing_dance_video'};
+  if(!payload.modelImage||!fs.existsSync(payload.modelImage))return {ok:false,error:'missing_model_image'};
+  const outfits=(payload.outfits||[]).filter(o=>Array.isArray(o.files)&&o.files.length).slice(0,100);
+  if(!outfits.length)return {ok:false,error:'missing_outfit_images'};
+  const work=path.join(app.getPath('temp'),'flow-dance-studio',String(Date.now()));fs.mkdirSync(work,{recursive:true});
+  const duration=videoDurationSec(payload.video)||8, frameCount=Math.min(40,Math.max(4,Math.ceil(duration/2)));
+  const pattern=path.join(work,'dance_%03d.jpg');
+  const er=ffmpegRun(['-y','-i',payload.video,'-vf','fps=1/2,scale=640:-1','-frames:v',String(frameCount),pattern]);
+  if(er.status!==0)return {ok:false,error:'dance_frame_extract_failed:'+ffErr(er)};
+  const frames=fs.readdirSync(work).filter(x=>x.endsWith('.jpg')).sort().map(x=>path.join(work,x));
+  const imgPart=f=>({inlineData:{mimeType:mimeFromFile(f),data:fs.readFileSync(f).toString('base64')}});
+  const parts=[{text:`Authorized media only. Dance duration ${duration.toFixed(2)} seconds. Analyze choreography timing, body poses, movement direction, weight transfer, hand/foot movement and observable facial expression from sequential frames. Create segments of at most 8 seconds whose timing joins continuously.`},imgPart(payload.modelImage),...frames.map(imgPart)];
+  outfits.forEach((o,i)=>{parts.push({text:`OUTFIT SET ${i+1}: classify every following item as top, bottom/skirt/dress, footwear, hat/headwear, glasses, jewelry, bag, or accessory.`});o.files.filter(fs.existsSync).forEach(f=>parts.push(imgPart(f)))})
+  const sys=`Create production-ready video prompts in ${langName(payload.promptLang)}. Preserve the model's observable face, hairstyle, body build, height impression and body proportions; change only wardrobe items supported by outfit images. Do not use biometric lock, exact identity replication, face cloning, or identity-copy terminology. For each outfit set, output every consecutive dance segment with exact start/end timing, starting pose, ordered choreography, expression, camera, motion continuity, and ending pose that becomes the next segment's starting pose. Avoid inventing missing garment details. Return JSON {"sets":[{"set":1,"classification":{},"segments":[{"start":0,"end":8,"prompt":"..."}]}]}.`;
+  try{const raw=await geminiText(payload.apiKey,parts,sys,true,payload.apiModel);const cleaned=String(raw||'').replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');const obj=JSON.parse(cleaned.slice(cleaned.indexOf('{'),cleaned.lastIndexOf('}')+1));const text=(obj.sets||[]).map(s=>`=== BỘ ${s.set} ===\nPhân loại: ${JSON.stringify(s.classification||{})}\n`+(s.segments||[]).map((x,i)=>`Prompt ${i+1} [${x.start}s-${x.end}s]\n${x.prompt}`).join('\n\n')).join('\n\n');return {ok:true,text,data:obj,duration};}catch(e){return {ok:false,error:'dance_analysis_failed:'+String(e.message||e)}}
+});
+
 ipcMain.handle('prompt:rewriteScriptDeep', async(_e,payload={})=>{
   const lic=await onlineLicenseGuard(); if(!lic.ok)return lic;
   const apiKey=payload.apiKey||''; const source=String(payload.script||'').trim();

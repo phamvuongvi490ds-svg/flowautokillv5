@@ -27,4 +27,6 @@ contextBridge.exposeInMainWorld('flowAPI', {
   videoAnalyzeSample: (payload) => ipcRenderer.invoke('video:analyzeSample', payload),
   videoPostPlan: (payload) => ipcRenderer.invoke('video:postPlan', payload),
   videoPostExport: (payload) => ipcRenderer.invoke('video:postExport', payload),
+  danceGenerate: (payload) => ipcRenderer.invoke('dance:generate', payload),
+  danceExtractAudio: (payload) => ipcRenderer.invoke('dance:extractAudio', payload),
 });
