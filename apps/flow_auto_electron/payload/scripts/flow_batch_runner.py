@@ -705,6 +705,33 @@ def close_open_menus(page):
     time.sleep(0.2)
 
 
+def restore_prompt_composer_after_settings(page):
+    """Close settings overlays and wait until Flow's actual project composer accepts focus."""
+    close_open_menus(page)
+    try:
+        page.evaluate("""() => { document.querySelectorAll('[role="menu"][data-state="open"],[role="listbox"][data-state="open"]').forEach(x=>x.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))); }""")
+    except Exception:
+        pass
+    time.sleep(0.6)
+    box=find_input_box(page)
+    try:
+        box.scroll_into_view_if_needed(timeout=3000)
+        box.click(timeout=3000,force=True)
+    except Exception:
+        pass
+    log_line('[flow] prompt composer restored after settings')
+    return box
+
+def read_prompt_box_text(box):
+    try:
+        tag=str(box.evaluate("el=>el.tagName.toLowerCase()"))
+        if tag in ('input','textarea'):
+            return box.input_value() or ''
+        return box.inner_text() or box.text_content() or ''
+    except Exception:
+        try:return box.text_content() or ''
+        except Exception:return ''
+
 def clear_prompt_box(page, box):
     # Prompt input rule v1.0.2:
     # - Exactly one clear pass: Ctrl+A -> Delete
@@ -816,18 +843,27 @@ def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retr
             time.sleep(0.2)
             
             # Use Playwright's native fill() which handles events correctly for most editors
-            box.fill(prompt)
-            time.sleep(0.5)
-            
-            # Verify
-            txt = box.inner_text() or box.input_value() or ""
+            try:
+                box.fill(prompt)
+            except Exception:
+                box.focus()
+                page.keyboard.insert_text(prompt)
+            time.sleep(0.7)
+
+            # Verify without calling input_value() on contenteditable or inner_text() on input.
+            txt = read_prompt_box_text(box)
             if len(txt.strip()) >= min(5, len(prompt)):
+                log_line(f'[flow] prompt typed and verified on attempt {attempt}: chars={len(txt.strip())}')
                 return True
-            
-            # Fallback 2: insert_text
+
+            # Fallback 2: reacquire the composer because React may replace it after settings close.
+            box = restore_prompt_composer_after_settings(page)
+            clear_prompt_box(page,box)
+            box.focus()
             page.keyboard.insert_text(prompt)
-            time.sleep(0.5)
-            if (box.inner_text() or box.input_value() or "").strip():
+            time.sleep(0.7)
+            if read_prompt_box_text(box).strip():
+                log_line(f'[flow] prompt inserted and verified on attempt {attempt}')
                 return True
                 
             # Fallback 3: Strong JS injection with multiple events
@@ -847,7 +883,8 @@ def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retr
                 }
             """, {"el": box, "txt": prompt})
             time.sleep(0.5)
-            if (box.inner_text() or box.input_value() or "").strip():
+            if read_prompt_box_text(box).strip():
+                log_line(f'[flow] prompt JS-injected and verified on attempt {attempt}')
                 return True
 
         except Exception as e:
@@ -2168,7 +2205,8 @@ def run(args):
             log_line(f'[flow] settings applied once: {settings_applied}')
             if not settings_applied:
                 raise RuntimeError('settings_not_applied_exactly')
-            time.sleep(0.7)
+            restore_prompt_composer_after_settings(page)
+            time.sleep(0.4)
         except Exception as e:
             settings_applied = False
             log_line(f'[flow] apply settings after New Project failed: {e}')
@@ -2202,11 +2240,12 @@ def run(args):
                         log_line(f'[flow] settings applied once: {settings_applied}')
                         if not settings_applied:
                             raise RuntimeError('settings_not_applied_exactly')
-                        time.sleep(0.5)
+                        restore_prompt_composer_after_settings(page)
+                        time.sleep(0.3)
                     else:
                         log_line('[flow] skip settings: already applied once in this run')
 
-                    box = find_input_box(page)
+                    box = restore_prompt_composer_after_settings(page)
 
                     # Always clear before typing, especially for AI Studio/Continuous runs
                     clear_prompt_box(page, box)
