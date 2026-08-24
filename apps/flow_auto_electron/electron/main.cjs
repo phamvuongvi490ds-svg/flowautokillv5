@@ -1024,6 +1024,21 @@ app.on('activate',()=>{ if(BrowserWindow.getAllWindows().length===0) createWindo
 ipcMain.handle('dialog:openFile', async (_e, opts={})=>{ const r=await dialog.showOpenDialog({properties:opts.properties||['openFile'], filters:opts.filters||[]}); return r.canceled?[]:r.filePaths; });
 ipcMain.handle('shell:openPath', (_e,p)=>shell.openPath(p));
 ipcMain.handle('flow:status', async()=>runState());
+ipcMain.handle('flow:outputTimeline', async(_e,dirs=[])=>{
+  const requested=(Array.isArray(dirs)?dirs:[dirs]).map(x=>String(x||'').trim()).filter(Boolean);
+  const candidates=[...requested,path.join(os.homedir(),'Downloads'),path.join(os.homedir(),'downloads')];
+  const dir=candidates.find(x=>{try{return fs.statSync(x).isDirectory()}catch{return false}})||'';
+  if(!dir)return {ok:true,dir:'',items:[],...runState()};
+  const mediaExts=new Set(['.png','.jpg','.jpeg','.webp','.mp4','.mov','.webm','.mkv']);
+  const byPrompt=new Map();
+  try{for(const ent of fs.readdirSync(dir,{withFileTypes:true})){
+    if(!ent.isFile())continue;const ext=path.extname(ent.name).toLowerCase();if(!mediaExts.has(ext))continue;
+    const m=ent.name.match(/^(\d+)(?:\D.*)?\.(png|jpe?g|webp|mp4|mov|webm|mkv)$/i);if(!m)continue;
+    const prompt=Number(m[1]),file=path.join(dir,ent.name),st=fs.statSync(file),kind=['.mp4','.mov','.webm','.mkv'].includes(ext)?'video':'image';
+    const prev=byPrompt.get(prompt);if(!prev||st.mtimeMs>prev.mtimeMs)byPrompt.set(prompt,{prompt,file,url:`file://${file.replace(/\\/g,'/')}`,kind,name:ent.name,mtimeMs:st.mtimeMs});
+  }}catch(e){return {ok:false,error:'timeline_scan_failed:'+String(e.message||e),dir,items:[]}}
+  return {ok:true,dir,items:[...byPrompt.values()].sort((a,b)=>a.prompt-b.prompt),...runState()};
+});
 ipcMain.handle('flow:ensureCdp', async()=>ensureCdp());
 ipcMain.handle('flow:openProfileLogin', async(_e,profile,idx=0)=>{ const port=CDP_PORT+Number(idx||0); const dir=flowProfileDir(profile||{},Number(idx||0)); return ensureCdpOn(port,dir); });
 ipcMain.handle('prompt:saveGenerated', async(_e,file)=>{
