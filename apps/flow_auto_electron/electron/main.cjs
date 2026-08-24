@@ -22,6 +22,17 @@ function makeCharacterRefsDir(images, runId) {
     });
     return dir;
 }
+function makeWardrobeRefsDir(modelImage, outfits, runId) {
+    const dir=path.join(REFS_DIR,runId); fs.mkdirSync(dir,{recursive:true});
+    outfits.filter(o=>Array.isArray(o.files)&&o.files.length).slice(0,100).forEach((outfit,index)=>{
+        const promptDir=path.join(dir,String(index+1)); fs.mkdirSync(promptDir,{recursive:true});
+        [modelImage,...outfit.files].filter(f=>f&&fs.existsSync(f)).forEach((file,fileIndex)=>{
+            const role=fileIndex===0?'MODEL':`OUTFIT_${String(fileIndex).padStart(2,'0')}`;
+            fs.copyFileSync(file,path.join(promptDir,`${role}${path.extname(file).toLowerCase()}`));
+        });
+    });
+    return dir;
+}
 const DEBUG_DIR = path.join(FLOW_DIR, 'debug');
 const SCRIPTS_DIR = path.join(BASE_DIR, 'scripts');
 const PYENV_DIR = path.join(BASE_DIR, 'electron-python');
@@ -1347,7 +1358,7 @@ ipcMain.handle('dance:generate', async(_e,payload={})=>{
   const sys=wardrobeOnly
     ?`Create production-ready still-image prompts in ${langName(payload.promptLang)}. Return exactly one prompt per outfit set. Replace only wardrobe and accessories shown in that set. Preserve the model's observable face, hairstyle, body build, height impression, body proportions, pose, framing, background and lighting. Do not mention dance, choreography, motion, timeline or sample video. Do not use biometric lock, face cloning or exact identity replication terminology. Avoid inventing missing garment details. Return JSON {"sets":[{"set":1,"classification":{},"segments":[{"start":0,"end":0,"prompt":"..."}]}]}.`
     :`Create production-ready video prompts in ${langName(payload.promptLang)}. Preserve the model's observable face, hairstyle, body build, height impression and body proportions; change only wardrobe items supported by outfit images. Do not use biometric lock, exact identity replication, face cloning, or identity-copy terminology. For each outfit set, output every consecutive dance segment with exact start/end timing, starting pose, ordered choreography, expression, camera, motion continuity, and ending pose that becomes the next segment's starting pose. Avoid inventing missing garment details. Return JSON {"sets":[{"set":1,"classification":{},"segments":[{"start":0,"end":8,"prompt":"..."}]}]}.`;
-  try{const raw=await geminiText(payload.apiKey,parts,sys,true,payload.apiModel);const cleaned=String(raw||'').replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');const obj=JSON.parse(cleaned.slice(cleaned.indexOf('{'),cleaned.lastIndexOf('}')+1));const text=(obj.sets||[]).map(s=>`=== BỘ ${s.set} ===\nPhân loại: ${JSON.stringify(s.classification||{})}\n`+(s.segments||[]).map((x,i)=>`${wardrobeOnly?'Prompt ảnh':`Prompt ${i+1} [${x.start}s-${x.end}s]`}\n${x.prompt}`).join('\n\n')).join('\n\n');const flowPrompts=(obj.sets||[]).flatMap(s=>(s.segments||[]).map(x=>String(x.prompt||'').trim())).filter(Boolean);const promptFile=writePromptFile(wardrobeOnly?'dance-wardrobe-prompts.txt':'dance-studio-prompts.txt',flowPrompts.join('\n\n'));return {ok:true,text,data:obj,duration,promptFile,promptCount:flowPrompts.length,wardrobeOnly};}catch(e){return {ok:false,error:'dance_analysis_failed:'+String(e.message||e)}}
+  try{const raw=await geminiText(payload.apiKey,parts,sys,true,payload.apiModel);const cleaned=String(raw||'').replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');const obj=JSON.parse(cleaned.slice(cleaned.indexOf('{'),cleaned.lastIndexOf('}')+1));const text=(obj.sets||[]).map(s=>`=== BỘ ${s.set} ===\nPhân loại: ${JSON.stringify(s.classification||{})}\n`+(s.segments||[]).map((x,i)=>`${wardrobeOnly?'Prompt ảnh':`Prompt ${i+1} [${x.start}s-${x.end}s]`}\n${x.prompt}`).join('\n\n')).join('\n\n');const flowPrompts=(obj.sets||[]).flatMap(s=>(s.segments||[]).map(x=>String(x.prompt||'').trim())).filter(Boolean);const promptFile=writePromptFile(wardrobeOnly?'dance-wardrobe-prompts.txt':'dance-studio-prompts.txt',flowPrompts.join('\n\n'));const refsDir=wardrobeOnly?makeWardrobeRefsDir(payload.modelImage,outfits,`wardrobe-${Date.now()}-${crypto.randomUUID()}`):'';return {ok:true,text,data:obj,duration,promptFile,promptCount:flowPrompts.length,wardrobeOnly,refsDir};}catch(e){return {ok:false,error:'dance_analysis_failed:'+String(e.message||e)}}
 });
 
 ipcMain.handle('prompt:rewriteScriptDeep', async(_e,payload={})=>{

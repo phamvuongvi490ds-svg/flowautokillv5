@@ -2247,9 +2247,16 @@ def run(args):
                     if refs_dir is not None:
                         if args.paired_mode:
                             # Normal Flow tabs: paired image mapping only (1.jpg -> prompt #1, 2.jpg -> prompt #2).
-                            ref_img = resolve_ref_image(refs_dir, prompt_no)
-                            if ref_img is not None:
-                                matched_refs.append(ref_img)
+                            # Dance wardrobe batches may provide one folder per prompt containing
+                            # the model image followed by every garment/accessory reference.
+                            prompt_ref_dir = refs_dir / str(prompt_no)
+                            if prompt_ref_dir.is_dir():
+                                exts = {".jpg", ".jpeg", ".png", ".webp"}
+                                matched_refs.extend([p for p in sorted(prompt_ref_dir.iterdir()) if p.is_file() and p.suffix.lower() in exts])
+                            else:
+                                ref_img = resolve_ref_image(refs_dir, prompt_no)
+                                if ref_img is not None:
+                                    matched_refs.append(ref_img)
                         else:
                             # AI Prompt Studio: upload every image in the selected character folder for every prompt.
                             exts = {".jpg", ".jpeg", ".png", ".webp"}
