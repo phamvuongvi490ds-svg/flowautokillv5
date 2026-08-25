@@ -22,6 +22,9 @@ import random
 import re
 import time
 
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 PROMPT_INPUT_RULE_VERSION = "v2.0-ref-image-map"
@@ -2011,146 +2014,68 @@ def auto_download_with_retry(page, resolution="720p", timeout_sec=480, before_id
     return False, last
 
 
-LICENSE_CONFIG_FILE = Path(os.environ.get("FLOW_LICENSE_ONLINE_CONFIG", str(Path(os.environ.get("FLOW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace"))) / "keys" / "license-online.json")))
-LICENSE_APP_VERSION = os.environ.get("FLOW_APP_VERSION", "3.4.5")
-LICENSE_TIMEOUT_SEC = int(os.environ.get("FLOW_LICENSE_TIMEOUT_SEC", "10"))
-LICENSE_STRICT_ONLINE = os.environ.get("FLOW_LICENSE_STRICT_ONLINE", "1").strip() == "1"
-_LICENSE_LAST_OK = 0.0
-_LICENSE_LAST_REASON = "never"
+LICENSE_APP_VERSION = os.environ.get("FLOW_APP_VERSION", "2.0.0")
 
-def _license_now_utc():
-    return datetime.now(timezone.utc)
+def _b64url_decode(value):
+    value = value + "=" * ((4 - len(value) % 4) % 4)
+    return base64.urlsafe_b64decode(value.encode("ascii"))
 
-def _license_iso_now():
-    return _license_now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
-
-def _license_read_machine_id():
-    for candidate in (Path("/etc/machine-id"), Path.home() / ".flow-machine-id"):
-        try:
-            if candidate.exists():
-                v = candidate.read_text(encoding="utf-8").strip()
-                if v:
-                    return v
-        except Exception:
-            pass
-    return socket.gethostname()
-
-def _license_load_cfg():
-    cfg = {}
+def _verify_run_ticket():
+    token = (os.environ.get("FLOW_RUN_TICKET", "") or "").strip()
+    session_id = (os.environ.get("FLOW_LICENSE_SESSION_ID", "") or "").strip()
+    job_hash = (os.environ.get("FLOW_JOB_HASH", "") or "").strip().lower()
+    machine_id = (os.environ.get("FLOW_MACHINE_ID", "") or "").strip()
+    public_key_path = (os.environ.get("FLOW_LICENSE_PUBLIC_KEY_PATH", "") or "").strip()
+    if not token or not session_id or len(job_hash) != 64 or not machine_id or not public_key_path:
+        raise RuntimeError("run_ticket_missing")
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise RuntimeError("run_ticket_format_invalid")
     try:
-        if LICENSE_CONFIG_FILE.exists():
-            cfg = json.loads(LICENSE_CONFIG_FILE.read_text(encoding="utf-8"))
+        header = json.loads(_b64url_decode(parts[0]).decode("utf-8"))
+        claims = json.loads(_b64url_decode(parts[1]).decode("utf-8"))
+        if header.get("alg") != "RS256":
+            raise RuntimeError("run_ticket_algorithm_invalid")
+        pub = serialization.load_pem_public_key(Path(public_key_path).read_bytes())
+        pub.verify(_b64url_decode(parts[2]), (parts[0] + "." + parts[1]).encode("ascii"), padding.PKCS1v15(), hashes.SHA256())
+    except RuntimeError:
+        raise
     except Exception:
-        cfg = {}
-    # Protected Electron passes decrypted values only in the child process environment.
-    # The on-disk config keeps DPAPI-protected blobs and no plaintext license key.
-    if os.environ.get("FLOW_LICENSE_KEY_RUNTIME"):
-        cfg["license_key"] = os.environ.get("FLOW_LICENSE_KEY_RUNTIME", "")
-    if os.environ.get("FLOW_LICENSE_API_BASE_RUNTIME"):
-        cfg["api_base"] = os.environ.get("FLOW_LICENSE_API_BASE_RUNTIME", "")
-    if os.environ.get("FLOW_LICENSE_SIGNED_TOKEN_RUNTIME"):
-        cfg["signed_token"] = os.environ.get("FLOW_LICENSE_SIGNED_TOKEN_RUNTIME", "")
-    return cfg
-
-def _license_save_cfg(cfg):
-    try:
-        LICENSE_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        LICENSE_CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
-
-def _license_normalize_base(base):
-    b = (base or "").strip().rstrip("/")
-    if b.endswith("/activate") or b.endswith("/verify"):
-        b = b.rsplit("/", 1)[0]
-    return b
-
-def _license_post_json(url, payload, timeout=LICENSE_TIMEOUT_SEC):
-    req = request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type":"application/json"}, method="POST")
-    try:
-        ctx = ssl.create_default_context()
-        with request.urlopen(req, timeout=timeout, context=ctx) as resp:
-            body = resp.read().decode("utf-8")
-            return resp.getcode(), json.loads(body) if body else {}
-    except error.HTTPError as e:
-        try:
-            body = e.read().decode("utf-8")
-            data = json.loads(body) if body else {}
-        except Exception:
-            data = {"reason": f"http_{e.code}"}
-        return e.code, data
-
-def _license_verify_online():
-    cfg = _license_load_cfg()
-    base = _license_normalize_base(cfg.get("api_base", ""))
-    key = (cfg.get("license_key", "") or "").strip()
-    if not base:
-        return False, "missing_api_base"
-    if not key:
-        return False, "missing_license_key"
-    machine_id = cfg.get("machine_id") or _license_read_machine_id()
-    cfg["machine_id"] = machine_id
-    payload = {
-        "license_key": key,
-        "machine_id": machine_id,
-        "app_version": LICENSE_APP_VERSION,
-        "nonce": uuid.uuid4().hex,
-        "timestamp": _license_iso_now(),
-    }
-    if cfg.get("signed_token"):
-        payload["signed_token"] = cfg.get("signed_token")
-    try:
-        code, data = _license_post_json(f"{base}/verify", payload)
-    except Exception as e:
-        return False, f"network_error_strict:{e}"
-    if code == 200 and isinstance(data, dict) and bool(data.get("valid", False)):
-        for k in ("signed_token", "expires_at", "grace_until", "next_check_at"):
-            if data.get(k):
-                cfg[k] = data[k]
-        cfg["last_verified_at"] = _license_iso_now()
-        if not os.environ.get("FLOW_LICENSE_KEY_RUNTIME"):
-            _license_save_cfg(cfg)
-        return True, "ok"
-    reason = data.get("reason") if isinstance(data, dict) else f"http_{code}"
-    return False, str(reason or f"http_{code}")
+        raise RuntimeError("run_ticket_signature_invalid")
+    if claims.get("type") != "run_ticket" or claims.get("session_id") != session_id:
+        raise RuntimeError("run_ticket_session_invalid")
+    if str(claims.get("machine_id", "")) != machine_id or str(claims.get("job_hash", "")).lower() != job_hash:
+        raise RuntimeError("run_ticket_binding_invalid")
+    if str(claims.get("app_version", "")) != LICENSE_APP_VERSION:
+        raise RuntimeError("run_ticket_version_invalid")
+    if int(claims.get("exp", 0) or 0) <= int(time.time()):
+        raise RuntimeError("run_ticket_expired")
+    if "flow.run" not in (claims.get("permissions") or []):
+        raise RuntimeError("run_ticket_permission_denied")
+    return claims
 
 def license_guard_or_raise(force=False):
-    global _LICENSE_LAST_OK, _LICENSE_LAST_REASON
-    # In protected runner, this online check is compiled into the binary. Do not
-    # depend on the external checker script, because protected payload ships no .py.
-    interval = int(os.environ.get("FLOW_LICENSE_RECHECK_SEC", "90"))
-    if not force and _LICENSE_LAST_OK and (time.time() - _LICENSE_LAST_OK) < interval:
-        return
-    ok, reason = _license_verify_online()
-    _LICENSE_LAST_REASON = reason
-    if ok:
-        _LICENSE_LAST_OK = time.time()
-        return
-    raise RuntimeError(f"license_invalid:{reason}")
-
+    _verify_run_ticket()
 
 def _runner_parent_guard():
-    if os.environ.get("FLOW_LICENSE_KEY_RUNTIME"):
-        parent = int(os.environ.get("FLOW_PARENT_PID", "0") or 0)
-        binding = (os.environ.get("FLOW_RUNNER_BINDING", "") or "").strip()
-        if parent <= 0 or len(binding) != 64:
-            raise RuntimeError("runner_parent_binding_invalid")
-        try:
-            if os.name == "nt":
-                # Never use os.kill(pid, 0) on Windows: Python maps it to
-                # TerminateProcess and can close the Electron parent immediately.
-                import ctypes
-                PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-                handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, parent)
-                if not handle:
-                    raise RuntimeError("runner_parent_not_running")
-                ctypes.windll.kernel32.CloseHandle(handle)
-            else:
-                os.kill(parent, 0)
-        except RuntimeError:
-            raise
-        except Exception:
-            raise RuntimeError("runner_parent_not_running")
+    parent = int(os.environ.get("FLOW_PARENT_PID", "0") or 0)
+    binding = (os.environ.get("FLOW_RUNNER_BINDING", "") or "").strip()
+    if parent <= 0 or len(binding) != 64:
+        raise RuntimeError("runner_parent_binding_invalid")
+    try:
+        if os.name == "nt":
+            import ctypes
+            handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, parent)
+            if not handle:
+                raise RuntimeError("runner_parent_not_running")
+            ctypes.windll.kernel32.CloseHandle(handle)
+        else:
+            os.kill(parent, 0)
+    except RuntimeError:
+        raise
+    except Exception:
+        raise RuntimeError("runner_parent_not_running")
+    _verify_run_ticket()
 
 def run(args):
     _runner_parent_guard()
