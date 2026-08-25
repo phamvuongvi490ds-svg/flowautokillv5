@@ -19,3 +19,18 @@ Keep all worker model aliases and exact checks on `Veo 3.1 - Lite [Lower Priorit
 - Source: user_feedback
 - Related Files: apps/flow_auto_electron/payload/scripts/flow_batch_runner.py
 - Tags: flow, model-selector, exact-label
+
+## [LRN-20260825-001] correction
+**Logged**: 2026-08-25T23:30:00+07:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+### Summary
+Exact Flow model label is `Veo 3.1 - Lite [Lower Priority]`, never `Low Priority`.
+### Details
+Corrected renderer display labels only. Model identifier and stable worker selection logic remain unchanged.
+### Metadata
+- Source: user_feedback
+- Related Files: apps/flow_auto_electron/src/main.tsx, apps/flow_auto_electron/payload/scripts/flow_batch_runner.py
+- Tags: flow-model, exact-label, correction
+---
