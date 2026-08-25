@@ -1110,17 +1110,52 @@ ipcMain.handle('flow:quickMerge', async(_e,payload={})=>{
   const transition=safeTransitionName(payload.transition==='random'?['fade','fadeblack','smoothleft','smoothright'][Math.floor(Math.random()*4)]:payload.transition||'fade');
   let subtitles=[];if(payload.autoSub){if(!payload.apiKey)return {ok:false,error:'missing_api_key_for_auto_sub'};try{subtitles=await transcribeTimelineVerbatim(files.map((file,i)=>({file,start:0,end:videoDurationSec(file),order:i+1})),payload.apiKey,payload.apiModel||'',payload.subLang||'vi',folder)}catch(e){return {ok:false,error:'quick_merge_sub_failed:'+String(e.message||e)}}}
   const scenes=files.map((file,i)=>({file,start:0,end:videoDurationSec(file),keep:true,order:i+1,transition}));
-  try{return await videoQuickMergeInternal({folder,scenes,transition,subtitles,autoSub:!!payload.autoSub,subStyle:{font:'Arial',color:'#FFFFFF',size:42}})}catch(e){return {ok:false,error:'quick_merge_internal_failed:'+String(e.message||e)}};
+  try{return await videoQuickMergeInternal({folder,scenes,transition,subtitles,autoSub:!!payload.autoSub,aspect:payload.aspect,zoom:payload.zoom,speed:payload.speed,subStyle:{font:'Arial',color:'#FFFFFF',size:42}})}catch(e){return {ok:false,error:'quick_merge_internal_failed:'+String(e.message||e)}};
 });
 function editFramePlan(files,aspect){if(aspect==='16:9')return {width:1920,height:1080};if(aspect==='9:16')return {width:1080,height:1920};if(aspect==='1:1')return {width:1080,height:1080};return targetVideoFrame(files)}
 function editVideoFilter(plan,zoom,speed){const scale=zoom==='fill'?`scale=${plan.width}:${plan.height}:force_original_aspect_ratio=increase,crop=${plan.width}:${plan.height}`:`scale=${plan.width}:${plan.height}:force_original_aspect_ratio=decrease,pad=${plan.width}:${plan.height}:(ow-iw)/2:(oh-ih)/2:color=black`;const sp=Math.max(.25,Math.min(4,Number(speed)||1));return `${scale},setsar=1,setpts=PTS/${sp}`}
 function audioTempoFilters(speed){let s=Math.max(.25,Math.min(4,Number(speed)||1)),out=[];while(s>2){out.push('atempo=2');s/=2}while(s<.5){out.push('atempo=0.5');s*=2}out.push(`atempo=${s}`);return out.join(',')}
 
+function xfadeMerge(files,durations,transitions,out){
+  if(files.length===1)return ffmpegRun(['-y','-i',files[0],'-c','copy','-movflags','+faststart',out]);
+  const args=['-y'];
+  files.forEach(file=>args.push('-i',file));
+  const transitionDuration=.45;
+  const filters=[];
+  for(let i=0;i<files.length;i++){
+    filters.push(`[${i}:v]settb=AVTB,fps=30,format=yuv420p[v${i}]`);
+    filters.push(`[${i}:a]aresample=48000,asetpts=PTS-STARTPTS[a${i}]`);
+  }
+  let videoLabel='v0';
+  let audioLabel='a0';
+  let offset=Math.max(.05,durations[0]-transitionDuration);
+  for(let i=1;i<files.length;i++){
+    const nextVideo=`vx${i}`;
+    const nextAudio=`ax${i}`;
+    const transition=safeTransitionName(transitions[i-1]||'fade');
+    filters.push(`[${videoLabel}][v${i}]xfade=transition=${transition}:duration=${transitionDuration}:offset=${offset.toFixed(3)}[${nextVideo}]`);
+    filters.push(`[${audioLabel}][a${i}]acrossfade=d=${transitionDuration}:c1=tri:c2=tri[${nextAudio}]`);
+    videoLabel=nextVideo;
+    audioLabel=nextAudio;
+    offset+=Math.max(.05,durations[i]-transitionDuration);
+  }
+  args.push('-filter_complex',filters.join(';'),'-map',`[${videoLabel}]`,'-map',`[${audioLabel}]`,'-c:v','libx264','-preset','veryfast','-crf','20','-pix_fmt','yuv420p','-c:a','aac','-b:a','192k','-movflags','+faststart',out);
+  return ffmpegRun(args);
+}
+
 async function videoQuickMergeInternal(payload){
   const folder=payload.folder,scenes=payload.scenes||[],outDir=path.join(folder,'flow_auto_quick_merge');fs.mkdirSync(outDir,{recursive:true});
-  const framePlan=editFramePlan(scenes.map(s=>s.file),payload.aspect),temp=[];
-  for(const [i,sc] of scenes.entries()){const out=path.join(outDir,`clip_${String(i+1).padStart(3,'0')}.mp4`),dur=Math.max(.5,videoDurationSec(sc.file)||8),vf=`${editVideoFilter(framePlan,payload.zoom,payload.speed)},${sceneTransitionFilter(sc.transition||'fade',dur/(Number(payload.speed)||1))}`;const r=ffmpegRun(['-y','-i',sc.file,'-map','0:v:0?','-map','0:a:0?','-vf',vf,'-r','30','-pix_fmt','yuv420p','-c:v','libx264','-preset','veryfast','-crf','20','-filter:a',audioTempoFilters(payload.speed),'-c:a','aac','-ar','48000','-ac','2',out]);if(r.status!==0)return {ok:false,error:'quick_merge_clip_failed:'+ffErr(r)};temp.push(out)}
-  const list=path.join(outDir,'list.txt');fs.writeFileSync(list,temp.map(f=>`file '${concatPath(f)}'`).join('\n'));let out=path.join(outDir,`quick_merge_${Date.now()}.mp4`),r=ffmpegRun(['-y','-f','concat','-safe','0','-i',list,'-c','copy','-movflags','+faststart',out]);if(r.status!==0)return {ok:false,error:'quick_merge_failed:'+ffErr(r)};
+  const framePlan=editFramePlan(scenes.map(s=>s.file),payload.aspect),temp=[],durations=[];
+  for(const [i,sc] of scenes.entries()){
+    const out=path.join(outDir,`clip_${String(i+1).padStart(3,'0')}.mp4`);
+    const duration=Math.max(.5,(videoDurationSec(sc.file)||8)/(Number(payload.speed)||1));
+    const r=ffmpegRun(['-y','-i',sc.file,'-map','0:v:0?','-map','0:a:0?','-vf',editVideoFilter(framePlan,payload.zoom,payload.speed),'-r','30','-pix_fmt','yuv420p','-c:v','libx264','-preset','veryfast','-crf','20','-filter:a',audioTempoFilters(payload.speed),'-c:a','aac','-ar','48000','-ac','2',out]);
+    if(r.status!==0)return {ok:false,error:'quick_merge_clip_failed:'+ffErr(r)};
+    temp.push(out);durations.push(duration);
+  }
+  let out=path.join(outDir,`quick_merge_${Date.now()}.mp4`);
+  const merged=xfadeMerge(temp,durations,scenes.map(x=>x.transition||payload.transition),out);
+  if(merged.status!==0)return {ok:false,error:'quick_merge_xfade_failed:'+ffErr(merged)};
   const subs=validSubtitleRows(payload.subtitles||[]);if(payload.autoSub&&subs.length){const ass=writeAssSub(path.join(outDir,'quick_subtitles.ass'),subs,payload.subStyle||{}),final=path.join(outDir,`quick_merge_sub_${Date.now()}.mp4`),assPath=ass.replace(/\\/g,'/').replace(/:/g,'\\:').replace(/'/g,"\\'");const sr=ffmpegRun(['-y','-i',out,'-vf',`ass='${assPath}'`,'-c:v','libx264','-preset','veryfast','-crf','20','-c:a','copy',final]);if(sr.status!==0)return {ok:false,error:'quick_merge_sub_burn_failed:'+ffErr(sr)};out=final}return {ok:true,out,url:`file://${out.replace(/\\/g,'/')}`,count:scenes.length,subtitles:subs.length};
 }
 
@@ -1247,7 +1282,13 @@ function targetVideoFrame(files){
   const probes=(files||[]).map(videoProbe); const portrait=probes.filter(x=>x.height>x.width).length>probes.length/2;
   return {width:portrait?1080:1920,height:portrait?1920:1080,orientation:portrait?'portrait':'landscape',probes};
 }
-function safeTransitionName(v){ const allowed=new Set(['fade','fadeblack','fadewhite','smoothleft','smoothright','smoothup','smoothdown']); return allowed.has(String(v||'').toLowerCase())?String(v).toLowerCase():'fade'; }
+function safeTransitionName(v){
+  const aliases={smoothleft:'slideleft',smoothright:'slideright',smoothup:'slideup',smoothdown:'slidedown'};
+  const raw=String(v||'').toLowerCase();
+  const name=aliases[raw]||raw;
+  const allowed=new Set(['fade','fadeblack','fadewhite','dissolve','circleopen','wipeleft','wiperight','pixelize','slideleft','slideright','slideup','slidedown']);
+  return allowed.has(name)?name:'fade';
+}
 function videoDurationSec(file){ const r=ffmpegRun(['-hide_banner','-i',file]); const txt=String(r.stderr||r.stdout||''); const m=txt.match(/Duration:\s*(\d+):(\d+):(\d+\.\d+)/); return m?Number(m[1])*3600+Number(m[2])*60+Number(m[3]):0; }
 
 ipcMain.handle('video:analyzeSample', async(_e,payload={})=>{
@@ -1318,22 +1359,22 @@ ipcMain.handle('video:postExport', async(_e,payload={})=>{
   const scenes=(payload.scenes||[]).filter(s=>s.keep!==false&&s.file);
   if(!folder||!scenes.length)return {ok:false,error:'missing_ai_timeline'};
   const outDir=path.join(folder,'flow_auto_post'); fs.mkdirSync(outDir,{recursive:true});
-  const list=path.join(outDir,'ai-post-list.txt'); const temp=[]; const framePlan=editFramePlan(scenes.map(s=>s.file),payload.aspect);
+  const list=path.join(outDir,'ai-post-list.txt'); const temp=[],durations=[]; const framePlan=editFramePlan(scenes.map(s=>s.file),payload.aspect);
   for(const [i,sc] of scenes.entries()){
     const out=path.join(outDir,`clip_${String(i+1).padStart(3,'0')}.mp4`);
     const args=['-y'];
     if(Number(sc.start)>0) args.push('-ss',String(sc.start));
     args.push('-i',sc.file);
     if(Number(sc.end)>Number(sc.start||0)) args.push('-t',String(Number(sc.end)-Number(sc.start||0)));
-    const clipDur=Math.max(.5,(Number(sc.end)>Number(sc.start||0)?Number(sc.end)-Number(sc.start||0):videoProbe(sc.file).duration)||8); const chosenTransition=sc.transition&&sc.transition!=='ai'?safeTransitionName(sc.transition):(payload.defaultTransition&&payload.defaultTransition!=='ai'?safeTransitionName(payload.defaultTransition):'fade'); const transitionFx=sceneTransitionFilter(chosenTransition,clipDur); const vf=`${editVideoFilter(framePlan,payload.zoom,payload.speed)},${transitionFx}`; args.push('-map','0:v:0?','-map','0:a:0?','-vf',vf,'-r','30','-pix_fmt','yuv420p','-c:v','libx264','-preset','veryfast','-crf','20','-filter:a',audioTempoFilters(payload.speed),'-c:a','aac','-ar','48000','-ac','2','-b:a','192k',out);
+    const clipDur=Math.max(.5,(Number(sc.end)>Number(sc.start||0)?Number(sc.end)-Number(sc.start||0):videoProbe(sc.file).duration)||8); const chosenTransition=sc.transition&&sc.transition!=='ai'?safeTransitionName(sc.transition):(payload.defaultTransition&&payload.defaultTransition!=='ai'?safeTransitionName(payload.defaultTransition):'fade'); const vf=editVideoFilter(framePlan,payload.zoom,payload.speed); args.push('-map','0:v:0?','-map','0:a:0?','-vf',vf,'-r','30','-pix_fmt','yuv420p','-c:v','libx264','-preset','veryfast','-crf','20','-filter:a',audioTempoFilters(payload.speed),'-c:a','aac','-ar','48000','-ac','2','-b:a','192k',out);
     const r=ffmpegRun(args); if(r.status!==0)return {ok:false,error:'ffmpeg_trim_failed:'+ffErr(r)};
-    temp.push(out);
+    temp.push(out);durations.push(clipDur/(Number(payload.speed)||1));
   }
   fs.writeFileSync(list,temp.map(f=>`file '${concatPath(f)}'`).join('\n'),'utf8');
   let merged=path.join(outDir,`ai_post_${Date.now()}.mp4`);
-  let r=ffmpegRun(['-y','-f','concat','-safe','0','-i',list,'-c','copy','-movflags','+faststart',merged]);
-  if(r.status!==0) r=ffmpegRun(['-y','-f','concat','-safe','0','-i',list,'-map','0:v:0?','-map','0:a:0?','-c:v','libx264','-preset','veryfast','-crf','20','-c:a','aac','-b:a','192k','-movflags','+faststart',merged]);
-  if(r.status!==0)return {ok:false,error:'ffmpeg_ai_merge_failed:'+ffErr(r)};
+  const transitions=scenes.map(sc=>sc.transition&&sc.transition!=='ai'?sc.transition:(payload.defaultTransition&&payload.defaultTransition!=='ai'?payload.defaultTransition:'fade'));
+  let r=xfadeMerge(temp,durations,transitions,merged);
+  if(r.status!==0)return {ok:false,error:'ffmpeg_ai_xfade_failed:'+ffErr(r)};
   let subs=validSubtitleRows(payload.subtitles||[]);
   if(!subs.length && payload.srtFile && fs.existsSync(payload.srtFile)){
     const raw=fs.readFileSync(payload.srtFile,'utf8');
