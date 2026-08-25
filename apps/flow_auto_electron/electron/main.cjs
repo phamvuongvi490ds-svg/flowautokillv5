@@ -1116,6 +1116,16 @@ function editFramePlan(files,aspect){if(aspect==='16:9')return {width:1920,heigh
 function editVideoFilter(plan,zoom,speed){const scale=zoom==='fill'?`scale=${plan.width}:${plan.height}:force_original_aspect_ratio=increase,crop=${plan.width}:${plan.height}`:`scale=${plan.width}:${plan.height}:force_original_aspect_ratio=decrease,pad=${plan.width}:${plan.height}:(ow-iw)/2:(oh-ih)/2:color=black`;const sp=Math.max(.25,Math.min(4,Number(speed)||1));return `${scale},setsar=1,setpts=PTS/${sp}`}
 function audioTempoFilters(speed){let s=Math.max(.25,Math.min(4,Number(speed)||1)),out=[];while(s>2){out.push('atempo=2');s/=2}while(s<.5){out.push('atempo=0.5');s*=2}out.push(`atempo=${s}`);return out.join(',')}
 
+function concatNormalizedMerge(files,out){
+  const list=path.join(path.dirname(out),`concat-fallback-${Date.now()}-${crypto.randomUUID()}.txt`);
+  try{
+    fs.writeFileSync(list,files.map(f=>`file '${concatPath(f)}'`).join('\n'),'utf8');
+    let r=ffmpegRun(['-y','-f','concat','-safe','0','-i',list,'-c','copy','-movflags','+faststart',out]);
+    if(r.status!==0)r=ffmpegRun(['-y','-f','concat','-safe','0','-i',list,'-map','0:v:0?','-map','0:a:0?','-c:v','libx264','-preset','veryfast','-crf','20','-pix_fmt','yuv420p','-c:a','aac','-b:a','192k','-movflags','+faststart',out]);
+    if(r.status===0)r.flowFallback='concat_no_xfade';
+    return r;
+  }finally{try{fs.rmSync(list,{force:true})}catch{}}
+}
 function xfadeMerge(files,durations,transitions,out){
   if(files.length===1)return ffmpegRun(['-y','-i',files[0],'-c','copy','-movflags','+faststart',out]);
   const args=['-y'];
@@ -1140,7 +1150,13 @@ function xfadeMerge(files,durations,transitions,out){
     offset+=Math.max(.05,durations[i]-transitionDuration);
   }
   args.push('-filter_complex',filters.join(';'),'-map',`[${videoLabel}]`,'-map',`[${audioLabel}]`,'-c:v','libx264','-preset','veryfast','-crf','20','-pix_fmt','yuv420p','-c:a','aac','-b:a','192k','-movflags','+faststart',out);
-  return ffmpegRun(args);
+  const result=ffmpegRun(args);
+  const err=String(result.stderr||result.stdout||'');
+  if(result.status!==0 && /No such filter:\s*['"]?(?:xfade|acrossfade)|Filter not found/i.test(err)){
+    try{fs.rmSync(out,{force:true})}catch{}
+    return concatNormalizedMerge(files,out);
+  }
+  return result;
 }
 
 async function videoQuickMergeInternal(payload){
