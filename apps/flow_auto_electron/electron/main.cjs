@@ -810,34 +810,6 @@ function anyRunnerRunning(){
 function runState(){ let progress=null; try{ const st=JSON.parse(fs.readFileSync(RUN_STATE,'utf8')); progress={done:st.done||0,total:st.total||0,current:Math.min((st.done||0)+1, st.total||0)}; }catch{} const pid=readPid(); const running=isRunningPid(pid); if(pid && !running){ try{fs.rmSync(PID_RUN,{force:true})}catch{} } return {pid: running?pid:0, running, paused:fs.existsSync(PAUSE_FILE), progress}; }
 function parseJsonMaybe(txt){ try{return JSON.parse(txt||'{}')}catch{return null} }
 function withTimeout(promise, ms, label='timeout'){ return Promise.race([promise, new Promise((_,rej)=>setTimeout(()=>rej(new Error(label)), ms))]); }
-const FLOW_APP_VERSION='2.0.0';
-let activeLicenseSession=null;
-function licensePublicKey(){ return fs.readFileSync(resourcePath('license-public.pem'),'utf8'); }
-function canonicalJobPayload(payload){
-  const p=payload||{}; const promptFile=String(p.promptFile||''); let promptHash='';
-  try{ if(promptFile&&fs.existsSync(promptFile)) promptHash=sha256File(promptFile); }catch{}
-  const profiles=(Array.isArray(p.profiles)?p.profiles:[]).map(x=>({promptFile:String(x?.promptFile||''),script:crypto.createHash('sha256').update(String(x?.script||x?.prompts||'')).digest('hex'),refsDir:String(x?.refsDir||'')}));
-  return {promptHash,manualHash:crypto.createHash('sha256').update(String(p.prompts||'')).digest('hex'),profiles,mode:String(p.mode||p.taskMode||'createvideo'),subMode:String(p.subMode||p.videoSubMode||'frames'),model:String(p.model||p.flowModel||'default'),ratio:String(p.ratio||p.aspectRatio||p.flowAspectRatio||'16:9'),count:Number(p.count||p.flowCount||1),threads:Number(p.flowThreads||1),runMode:String(p.runMode||''),autoDownload:p.autoDownload!==false,downloadDir:String(p.downloadDir||'')};
-}
-function jobHashForPayload(payload){ return crypto.createHash('sha256').update(JSON.stringify(canonicalJobPayload(payload))).digest('hex'); }
-function verifyRs256Jwt(token, expectedType){
-  const parts=String(token||'').split('.'); if(parts.length!==3) throw new Error('bad_signed_token');
-  const decode=x=>JSON.parse(Buffer.from(x.replace(/-/g,'+').replace(/_/g,'/'),'base64').toString('utf8'));
-  const header=decode(parts[0]), body=decode(parts[1]); if(header.alg!=='RS256') throw new Error('bad_signature_algorithm');
-  if(!crypto.verify('RSA-SHA256',Buffer.from(parts[0]+'.'+parts[1]),licensePublicKey(),Buffer.from(parts[2].replace(/-/g,'+').replace(/_/g,'/'),'base64'))) throw new Error('bad_server_signature');
-  if(body.exp && Date.now()>=Number(body.exp)*1000) throw new Error('signed_response_expired');
-  if(expectedType && body.type!==expectedType) throw new Error('bad_response_type'); return body;
-}
-async function endLicenseSession(session=activeLicenseSession){
-  if(!session)return; if(session.timer)clearInterval(session.timer); if(activeLicenseSession===session)activeLicenseSession=null;
-  try{await postJson(`${session.base}/session/end`,{session_id:session.sessionId,run_ticket:session.ticket});}catch{}
-}
-async function startLicenseSession(payload){
-  const cfg=loadLicenseCfg(),base=normalizeBase(cfg.api_base||''); if(!base||!cfg.license_key||!cfg.signed_token)return {ok:false,error:'license_session_missing_credentials'};
-  await endLicenseSession(); const jobHash=jobHashForPayload(payload),mid=cfg.machine_id||machineId();
-  const req={license_key:cfg.license_key,machine_id:mid,signed_token:cfg.signed_token,job_hash:jobHash,app_version:FLOW_APP_VERSION,nonce:crypto.randomUUID().replace(/-/g,''),timestamp:new Date().toISOString()};
-  try{const {status,data}=await postJson(`${base}/session/start`,req);if(status!==200||!data.valid)return {ok:false,error:data.error||`session_start_http_${status}`};const envelope=verifyRs256Jwt(data.response_token,'session_start');if(envelope.payload?.session_id!==data.session_id||envelope.payload?.run_ticket!==data.run_ticket)throw new Error('signed_response_payload_mismatch');const ticket=verifyRs256Jwt(data.run_ticket,'run_ticket');if(ticket.machine_id!==mid||ticket.job_hash!==jobHash||ticket.session_id!==data.session_id||ticket.app_version!==FLOW_APP_VERSION||!Array.isArray(ticket.permissions)||!ticket.permissions.includes('flow.run'))throw new Error('run_ticket_binding_invalid');const session={base,sessionId:data.session_id,ticket:data.run_ticket,jobHash,machineId:mid,appVersion:FLOW_APP_VERSION,timer:null};const ms=Math.max(15000,Math.min(60000,Number(data.heartbeat_interval_sec||45)*1000));session.timer=setInterval(async()=>{if(!anyRunnerRunning()){await endLicenseSession(session);return;}try{const r=await postJson(`${base}/session/heartbeat`,{session_id:session.sessionId,run_ticket:session.ticket});if(r.status!==200||!r.data.valid){await resetRunnerWorkersAsync({killChrome:false});await endLicenseSession(session);}}catch{await resetRunnerWorkersAsync({killChrome:false});await endLicenseSession(session);}},ms);activeLicenseSession=session;return {ok:true,session};}catch(e){return {ok:false,error:`license_session_failed:${e.message||e}`};}
-}
 async function onlineLicenseGuard(){ const r=await verifyLicenseJs(); if(r.ok) return {ok:true,license:r}; return {ok:false,error:r.reason||r.error||'license_invalid_or_revoked'}; }
 function killPidAsync(pid){
   if(!pid)return;
@@ -998,7 +970,7 @@ function runnerCommand(){
   throw new Error(`runner_not_found: checked ${[script,...exeCandidates].join(' | ')}`);
 }
 
-function startRunner(payload, licenseSession){
+function startRunner(payload){
   const integrity=enforceProtectedIntegrity(); if(!integrity.ok) return integrity;
   if(app.isPackaged && suspiciousRuntimeSignals().length) return {ok:false,error:'runtime_security_check_failed'};
   ensureDirs(); try{fs.rmSync(PAUSE_FILE,{force:true})}catch{}
@@ -1025,7 +997,7 @@ function startRunner(payload, licenseSession){
     try { if(fs.existsSync(stateFile)) fs.unlinkSync(stateFile); } catch(e) {}
     const args=['--run-id',runId,'--prompts',pf,'--state',stateFile,'--fresh-run','--start-from',String(payload.startFrom||1),'--cdp',`http://127.0.0.1:${CDP_PORT+idx}`,'--task-mode',payload.mode||payload.taskMode||'createvideo','--video-sub-mode',payload.subMode||payload.videoSubMode||'frames','--flow-model',payload.model||payload.flowModel||'default','--flow-aspect-ratio',payload.ratio||payload.aspectRatio||payload.flowAspectRatio||'16:9','--flow-count',String(payload.count||payload.flowCount||1),'--omni-duration',String(payload.omniDuration||''),'--download-resolution','720','--character-images', characterImages.join(','), '--between-prompts-sec', String(payload.spacing||10)];
     args.push(payload.pairedMode===false?'--no-paired-mode':'--paired-mode'); const wantAutoDownload = payload.autoDownload !== false; if(wantAutoDownload) args.push('--auto-download'); if(wantAutoDownload && payload.runMode==='continuous_submit_only') args.push('--download-delay-prompts','3'); if(!wantAutoDownload && payload.runMode==='continuous_submit_only') args.push('--submit-only'); const refDir=threadRefs[idx]||payload.refsDir; if(refDir) args.push('--refs-dir',refDir); if(payload.downloadDir) args.push('--output-dir',payload.downloadDir); try{ fs.appendFileSync(logFile, `[runner] path=${runner.path||runner.cmd} compiled=${!!runner.compiled}\n[runner] thread=${idx+1} mode=${payload.mode||payload.taskMode} model=${payload.model||payload.flowModel} ratio=${payload.ratio||payload.aspectRatio||payload.flowAspectRatio} count=${payload.count||payload.flowCount} autoDownload=${wantAutoDownload} runMode=${payload.runMode||''}\n`); }catch{}
-    if(!licenseSession) throw new Error('run_ticket_required'); const runnerBinding=crypto.createHash('sha256').update(`${process.pid}|${runId}|${licenseSession.machineId}|flow-runner`).digest('hex'); const runnerEnv={...process.env,FLOW_PARENT_PID:String(process.pid),FLOW_RUNNER_BINDING:runnerBinding,FLOW_WORKSPACE:BASE_DIR,FLOW_PAUSE_FILE:PAUSE_FILE,FLOW_RUN_TICKET:licenseSession.ticket,FLOW_LICENSE_SESSION_ID:licenseSession.sessionId,FLOW_JOB_HASH:licenseSession.jobHash,FLOW_MACHINE_ID:licenseSession.machineId,FLOW_APP_VERSION:licenseSession.appVersion,FLOW_LICENSE_PUBLIC_KEY_PATH:resourcePath('license-public.pem')};
+    const licenseCfg=loadLicenseCfg(); const runnerBinding=crypto.createHash('sha256').update(`${process.pid}|${runId}|${machineId()}|flow-runner`).digest('hex'); const runnerEnv={...process.env,FLOW_PARENT_PID:String(process.pid),FLOW_RUNNER_BINDING:runnerBinding,FLOW_WORKSPACE:BASE_DIR,FLOW_PAUSE_FILE:PAUSE_FILE,FLOW_LICENSE_KEY_RUNTIME:String(licenseCfg.license_key||''),FLOW_LICENSE_API_BASE_RUNTIME:String(licenseCfg.api_base||DEFAULT_API_BASE),FLOW_LICENSE_SIGNED_TOKEN_RUNTIME:String(licenseCfg.signed_token||'')};
     const p=spawn(runner.cmd, [...runner.prefix, ...args], spawnOpts({detached:true, stdio:['ignore',out,out], env:runnerEnv})); p.unref(); pids.push(p.pid); fs.writeFileSync(path.join(JOB_DIR,`electron-runner-${idx+1}-${workerId}.pid`),String(p.pid));
   });
   fs.writeFileSync(PID_RUN,String(pids[0]||'')); return {ok:true,workerId,pid:pids[0],pids,threads:threadFiles.length,promptFile,runner:runner.compiled?'nuitka-runner-hidden-multitab':'python-stable-hidden-multitab'};
@@ -1047,7 +1019,7 @@ function createWindow(){
 installRuntimeGuards();
 app.whenReady().then(()=>{ ensureDirs(); enforceRuntimeGuards(); enforceProtectedIntegrity(); const splash=createSplash(); const win=createWindow(); setTimeout(()=>{ try{ bootstrap(); }catch{} }, 300); win.once('ready-to-show',()=>{ setTimeout(()=>{ splash.webContents.executeJavaScript('window.finish&&window.finish()').catch(()=>{}); setTimeout(()=>{ if(!splash.isDestroyed()) splash.close(); win.show(); },120); },250); }); });
 app.on('window-all-closed',()=>{ if(process.platform!=='darwin') app.quit(); });
-app.on('before-quit', () => { endLicenseSession().catch(()=>{}); resetRunnerWorkers(); });
+app.on('before-quit', () => { resetRunnerWorkers(); });
 app.on('activate',()=>{ if(BrowserWindow.getAllWindows().length===0) createWindow(); });
 
 ipcMain.handle('dialog:openFile', async (_e, opts={})=>{ const r=await dialog.showOpenDialog({properties:opts.properties||['openFile'], filters:opts.filters||[]}); return r.canceled?[]:r.filePaths; });
@@ -1079,10 +1051,10 @@ ipcMain.handle('prompt:saveGenerated', async(_e,file)=>{
     return {ok:true,file:r.filePath};
   }catch(e){ return {ok:false,error:String(e&&e.message||e)}; }
 });
-ipcMain.handle('flow:start', async(_e,payload)=>{ try{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; const secured=await startLicenseSession(payload||{}); if(!secured.ok)return secured; const reset=await resetRunnerWorkersAsync({killChrome:false}); const n=Math.max(1,Math.min(100,Array.isArray((payload||{}).profiles)&&payload.profiles.length?payload.profiles.length:Number((payload||{}).flowThreads||1)||1)); const c=await ensureCdpThreads(n,(payload||{}).profiles||[]); if(!c.ok){await endLicenseSession(secured.session);return c;} const r=startRunner(payload||{},secured.session); if(!r.ok)await endLicenseSession(secured.session); return {...r, reset}; }catch(e){ try{console.error('[flow:start]',e)}catch{} return {ok:false,error:'start_failed:'+String(e&&e.message||e)}; } });
+ipcMain.handle('flow:start', async(_e,payload)=>{ try{ const lic=await onlineLicenseGuard(); if(!lic.ok) return lic; const reset=await resetRunnerWorkersAsync({killChrome:false}); const n=Math.max(1,Math.min(100,Array.isArray((payload||{}).profiles)&&payload.profiles.length?payload.profiles.length:Number((payload||{}).flowThreads||1)||1)); const c=await ensureCdpThreads(n,(payload||{}).profiles||[]); if(!c.ok) return c; const r=startRunner(payload||{}); return {...r, reset}; }catch(e){ try{console.error('[flow:start]',e)}catch{} return {ok:false,error:'start_failed:'+String(e&&e.message||e)}; } });
 ipcMain.handle('flow:pause', async()=>{ if(!anyRunnerRunning()) return {ok:false,error:'process_not_running'}; ensureDirs(); fs.writeFileSync(PAUSE_FILE,String(Date.now())); return {ok:true, paused:true}; });
 ipcMain.handle('flow:resume', async()=>{ if(!anyRunnerRunning() && !fs.existsSync(PAUSE_FILE)) return {ok:false,error:'process_not_running'}; try{fs.rmSync(PAUSE_FILE,{force:true})}catch{} return {ok:true, paused:false}; });
-ipcMain.handle('flow:stop', async()=>{ resetRunnerWorkersAsync({killChrome:false}).catch(()=>{}); endLicenseSession().catch(()=>{}); return {ok:true, running:false, stopping:true}; });
+ipcMain.handle('flow:stop', async()=>{ resetRunnerWorkersAsync({killChrome:false}).catch(()=>{}); return {ok:true, running:false, stopping:true}; });
 ipcMain.handle('license:machineId', async()=>({ok:true,machineId:machineId()}));
 ipcMain.handle('license:cached', async()=>cachedLicense() || {ok:false, reason:'missing_local_license'});
 ipcMain.handle('license:activate', async(_e,payload)=>activateLicenseJs(payload?.licenseKey, DEFAULT_API_BASE));

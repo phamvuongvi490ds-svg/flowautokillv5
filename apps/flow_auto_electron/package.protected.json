@@ -23,10 +23,6 @@
     {
       "from": "integrity-manifest.json",
       "to": "integrity-manifest.json"
-    },
-    {
-      "from": "build-tools/license-public.pem",
-      "to": "license-public.pem"
     }
   ],
   "win": {
