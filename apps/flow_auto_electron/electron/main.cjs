@@ -1441,8 +1441,27 @@ ipcMain.handle('seo:analyze', async(_e,payload={})=>{
     const raw=await geminiText(payload.apiKey,parts,system,true,payload.apiModel);
     const cleaned=String(raw||'').replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');
     const obj=JSON.parse(cleaned.slice(cleaned.indexOf('{'),cleaned.lastIndexOf('}')+1));
-    obj.keywords=Array.isArray(obj.keywords)?obj.keywords.map(String):[];
+    obj.keywords=Array.isArray(obj.keywords)?obj.keywords.map(x=>String(x).trim()).filter(Boolean):[];
+    obj.keywords=[...new Map(obj.keywords.map(x=>[x.toLocaleLowerCase(),x])).values()];
+    if(obj.keywords.join(', ').length<450){
+      const supplementSystem='You are a strict video SEO keyword editor. Based only on the supplied video frames and existing metadata, return JSON {"keywords":["..."]} with additional highly relevant broad, specific, semantic and long-tail search phrases. Do not repeat existing keywords, add unrelated trends, fabricate people/events, or use hashtags. The final combined comma-separated keyword text must approach 500 characters without exceeding it.';
+      const supplementText=`Existing title: ${obj.youtubeTitle||''}\nExisting description: ${obj.description||''}\nExisting keywords: ${obj.keywords.join(', ')}\nGenerate enough additional relevant keywords so the final combined list reaches 450-500 characters.`;
+      try{
+        const extraRaw=await geminiText(payload.apiKey,[...parts,{text:supplementText}],supplementSystem,true,payload.apiModel);
+        const extraClean=String(extraRaw||'').replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');
+        const extraObj=JSON.parse(extraClean.slice(extraClean.indexOf('{'),extraClean.lastIndexOf('}')+1));
+        for(const value of Array.isArray(extraObj.keywords)?extraObj.keywords:[]){
+          const keyword=String(value||'').trim();
+          if(!keyword||obj.keywords.some(x=>x.toLocaleLowerCase()===keyword.toLocaleLowerCase()))continue;
+          const candidate=[...obj.keywords,keyword].join(', ');
+          if(candidate.length>500)continue;
+          obj.keywords.push(keyword);
+          if(candidate.length>=490)break;
+        }
+      }catch{}
+    }
     while(obj.keywords.join(', ').length>500)obj.keywords.pop();
+    obj.keywordCharacters=obj.keywords.join(', ').length;
     obj.hashtags=Array.isArray(obj.hashtags)?obj.hashtags.map(String).slice(0,20):[];
     obj.viralScore=Math.max(0,Math.min(100,Number(obj.viralScore)||0));
     return {ok:true,result:obj,frameCount:frames.length,duration};
