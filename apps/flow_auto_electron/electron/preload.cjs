@@ -32,5 +32,4 @@ contextBridge.exposeInMainWorld('flowAPI', {
   danceGenerate: (payload) => ipcRenderer.invoke('dance:generate', payload),
   danceExtractAudio: (payload) => ipcRenderer.invoke('dance:extractAudio', payload),
   seoAnalyze: (payload) => ipcRenderer.invoke('seo:analyze', payload),
-  seoThumbnail: (payload) => ipcRenderer.invoke('seo:thumbnail', payload),
 });

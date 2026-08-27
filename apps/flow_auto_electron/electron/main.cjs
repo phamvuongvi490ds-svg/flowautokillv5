@@ -1437,7 +1437,7 @@ ipcMain.handle('seo:analyze', async(_e,payload={})=>{
     const frames=fs.readdirSync(work).filter(x=>x.endsWith('.jpg')).sort().map(x=>path.join(work,x));
     const parts=frames.map(f=>({inlineData:{mimeType:'image/jpeg',data:fs.readFileSync(f).toString('base64')}}));
     parts.push({text:`Analyze this ${duration.toFixed(1)} second video from sequential frames. Output language: ${payload.language||'Vietnamese'}. Target platforms: YouTube and TikTok. Return factual, relevant metadata. Do not claim guaranteed virality or invent search-volume data.`});
-    const system='You are a YouTube and TikTok SEO strategist. Analyze only observable video content. Return strict JSON with youtubeTitle (accurate, high-CTR, maximum 100 characters), tiktokTitle, description (search-first and factual), hashtags (15-20 relevant strings), keywords (relevant broad and long-tail strings with comma-joined total at most 500 characters), viralScore (integer 0-100 representing potential, never a guarantee), hook (first-three-second hook), thumbnailPrompt (English, cinematic 16:9 image prompt, no text), and optimalPostTimes (7 objects with day and 2-3 suggested local times). Avoid unrelated trends, keyword stuffing, fabricated facts, and guaranteed-result claims.';
+    const system='You are a YouTube and TikTok SEO strategist. Analyze only observable video content. Return strict JSON with youtubeTitle (accurate, high-CTR, maximum 100 characters), tiktokTitle, description (search-first and factual), hashtags (15-20 relevant strings), keywords (relevant broad and long-tail strings with comma-joined total at most 500 characters), viralScore (integer 0-100 representing potential, never a guarantee), hook (first-three-second hook), and optimalPostTimes (7 objects with day and 2-3 suggested local times). Avoid unrelated trends, keyword stuffing, fabricated facts, and guaranteed-result claims.';
     const raw=await geminiText(payload.apiKey,parts,system,true,payload.apiModel);
     const cleaned=String(raw||'').replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');
     const obj=JSON.parse(cleaned.slice(cleaned.indexOf('{'),cleaned.lastIndexOf('}')+1));
@@ -1467,25 +1467,6 @@ ipcMain.handle('seo:analyze', async(_e,payload={})=>{
     return {ok:true,result:obj,frameCount:frames.length,duration};
   }catch(e){return {ok:false,error:'seo_analysis_failed:'+String(e.message||e)}}
   finally{try{fs.rmSync(work,{recursive:true,force:true})}catch{}}
-});
-
-ipcMain.handle('seo:thumbnail', async(_e,payload={})=>{
-  const lic=await onlineLicenseGuard(); if(!lic.ok)return lic;
-  if(!payload.apiKey||!payload.prompt)return {ok:false,error:'missing_thumbnail_input'};
-  try{
-    const keys=String(payload.apiKey).split(/[\n,]+/).map(x=>x.trim()).filter(Boolean);
-    let last='thumbnail_failed';
-    for(const key of keys){
-      const body={contents:[{parts:[{text:`Create a 16:9 YouTube thumbnail image: ${payload.prompt}. Professional cinematic photography, vivid contrast, clear focal subject, no text, no watermark, no distorted anatomy.`}]}],generationConfig:{responseModalities:['TEXT','IMAGE'],imageConfig:{aspectRatio:'16:9'}}};
-      const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-      const data=await r.json().catch(()=>({}));
-      if(!r.ok){last=data.error?.message||`http_${r.status}`;continue}
-      const part=(data.candidates?.[0]?.content?.parts||[]).find(x=>x.inlineData?.data);
-      if(part)return {ok:true,dataUrl:`data:${part.inlineData.mimeType||'image/png'};base64,${part.inlineData.data}`};
-      last='no_image_data';
-    }
-    throw new Error(last);
-  }catch(e){return {ok:false,error:'thumbnail_generation_failed:'+String(e.message||e)}}
 });
 
 ipcMain.handle('dance:extractAudio', async(_e,payload={})=>{
