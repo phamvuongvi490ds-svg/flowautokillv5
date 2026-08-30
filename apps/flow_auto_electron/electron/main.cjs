@@ -1172,7 +1172,22 @@ async function videoQuickMergeInternal(payload){
   let out=path.join(outDir,`quick_merge_${Date.now()}.mp4`);
   const merged=xfadeMerge(temp,durations,scenes.map(x=>x.transition||payload.transition),out);
   if(merged.status!==0)return {ok:false,error:'quick_merge_xfade_failed:'+ffErr(merged)};
-  const subs=validSubtitleRows(payload.subtitles||[]);if(payload.autoSub&&subs.length){const ass=writeAssSub(path.join(outDir,'quick_subtitles.ass'),subs,payload.subStyle||{}),final=path.join(outDir,`quick_merge_sub_${Date.now()}.mp4`),assPath=ass.replace(/\\/g,'/').replace(/:/g,'\\:').replace(/'/g,"\\'");const sr=ffmpegRun(['-y','-i',out,'-vf',`ass='${assPath}'`,'-c:v','libx264','-preset','veryfast','-crf','20','-c:a','copy',final]);if(sr.status!==0)return {ok:false,error:'quick_merge_sub_burn_failed:'+ffErr(sr)};out=final}return {ok:true,out,url:`file://${out.replace(/\\/g,'/')}`,count:scenes.length,subtitles:subs.length};
+  const subs=validSubtitleRows(payload.subtitles||[]);
+  if(payload.autoSub&&subs.length){
+    // libass on Windows cannot reliably open Unicode source paths. Burn in an ASCII temp directory.
+    const safeDir=fs.mkdtempSync(path.join(os.tmpdir(),'flowauto-sub-'));
+    const safeAss=path.join(safeDir,'subtitles.ass'),safeInput=path.join(safeDir,'merged.mp4'),safeFinal=path.join(safeDir,'burned.mp4');
+    const final=path.join(outDir,`quick_merge_sub_${Date.now()}.mp4`);
+    try{
+      fs.copyFileSync(out,safeInput);
+      writeAssSub(safeAss,subs,payload.subStyle||{});
+      const assPath=safeAss.replace(/\\/g,'/').replace(/:/g,'\\:').replace(/'/g,"\\'");
+      const sr=ffmpegRun(['-y','-i',safeInput,'-vf',`ass='${assPath}'`,'-c:v','libx264','-preset','veryfast','-crf','20','-c:a','copy',safeFinal]);
+      if(sr.status!==0)return {ok:false,error:'quick_merge_sub_burn_failed:'+ffErr(sr)};
+      fs.copyFileSync(safeFinal,final);out=final;
+    }finally{try{fs.rmSync(safeDir,{recursive:true,force:true})}catch{}}
+  }
+  return {ok:true,out,url:`file://${out.replace(/\\/g,'/')}`,count:scenes.length,subtitles:subs.length};
 }
 
 ipcMain.handle('video:extractAudio', async(_e,payload={})=>{
