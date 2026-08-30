@@ -249,7 +249,7 @@ async function geminiTextFast(apiKey,parts,system,jsonMode=false,timeoutMs=60000
     try{
       const body={contents:[{role:'user',parts}],systemInstruction:{parts:[{text:system}]},generationConfig:{temperature:.55}};
       if(jsonMode) body.generationConfig.responseMimeType='application/json';
-      const modelName=String(preferredModel||'gemini-3.7-flash').trim()||'gemini-3.7-flash';
+      const modelName=String(preferredModel||'gemini-2.5-flash-lite').trim()||'gemini-2.5-flash-lite';
       const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal});
       const data=await r.json().catch(()=>({}));
       if(!r.ok){ lastErr=data.error?.message||`http_${r.status}`; continue; }
@@ -284,7 +284,7 @@ async function geminiText(apiKey,parts,system,jsonMode=false,preferredModel=''){
     }catch(e){ lastErr=`list_models_failed:${e.message||e}`; }
 
     // Fallback only if ListModels is unavailable; unavailable models are skipped silently.
-    if(!models.length) models=['gemini-3.7-flash','gemini-2.5-flash','gemini-2.0-flash','gemini-1.5-flash'];
+    if(!models.length) models=['gemini-3.7-flash','gemini-2.5-flash','gemini-2.5-flash-lite','gemini-3-flash','gemini-3.1-flash-lite','gemini-3.5-flash','gemini-2.0-flash','gemini-1.5-flash'];
 
     if(preferredModel){ models=[preferredModel, ...models.filter(x=>x!==preferredModel)]; }
     for(const m of models){

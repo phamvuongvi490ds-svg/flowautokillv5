@@ -33,7 +33,7 @@ function Field({label,children}:{label:string;children:React.ReactNode}){return 
 function App(){
   const [page,setPage]=useState('flow');
   const [apiKeys,setApiKeys]=useState(localStorage.getItem('gemini_api_keys')||'');
-  const [geminiApiModel,setGeminiApiModel]=useState(localStorage.getItem('gemini_api_model')||'gemini-3.7-flash');
+  const [geminiApiModel,setGeminiApiModel]=useState(localStorage.getItem('gemini_api_model')||'gemini-2.5-flash-lite');
   const [style,setStyle]=useState('CINEMATIC');
   const [mediaType,setMediaType]=useState('VIDEO');
   const [ideas,setIdeas]=useState('');
