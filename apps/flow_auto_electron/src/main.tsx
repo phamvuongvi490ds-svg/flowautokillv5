@@ -11,6 +11,7 @@ const imageModels = ['nano_banana_pro','nano_banana2','nano_banana2_lite','image
 const modelsForMode = (mode:string) => mode==='createimage' ? imageModels : videoModels;
 const ratios = ['16:9','9:16','square','landscape_4_3','portrait_3_4'];
 const geminiApiModels = [
+  {value:'gemini-3.7-flash', label:'Gemini Flash 3.7 API'},
   {value:'gemini-2.5-flash', label:'Gemini 2.5 Flash'},
   {value:'gemini-2.5-flash-lite', label:'Gemini 2.5 Flash Lite'},
   {value:'gemini-3-flash', label:'Gemini 3 Flash'},
@@ -32,7 +33,7 @@ function Field({label,children}:{label:string;children:React.ReactNode}){return 
 function App(){
   const [page,setPage]=useState('flow');
   const [apiKeys,setApiKeys]=useState(localStorage.getItem('gemini_api_keys')||'');
-  const [geminiApiModel,setGeminiApiModel]=useState(localStorage.getItem('gemini_api_model')||'gemini-2.5-flash-lite');
+  const [geminiApiModel,setGeminiApiModel]=useState(localStorage.getItem('gemini_api_model')||'gemini-3.7-flash');
   const [style,setStyle]=useState('CINEMATIC');
   const [mediaType,setMediaType]=useState('VIDEO');
   const [ideas,setIdeas]=useState('');

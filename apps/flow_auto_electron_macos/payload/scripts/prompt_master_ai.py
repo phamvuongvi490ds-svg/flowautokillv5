@@ -14,7 +14,7 @@ STYLE_CONFIG = {
     "STEAMPUNK": ("Steampunk", "steampunk style, brass gears, steam powered, victorian era, intricate machinery, sepia tones, retro-futuristic"),
     "NONE": ("Tự do", ""),
 }
-MODEL_CANDIDATES = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+MODEL_CANDIDATES = ["gemini-3.7-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
 
 
 def _is_retryable_model_error(e) -> bool:

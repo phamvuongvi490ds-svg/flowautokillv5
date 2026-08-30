@@ -107,7 +107,7 @@ async function geminiTextFast(apiKey,parts,system,jsonMode=false,timeoutMs=60000
     try{
       const body={contents:[{role:'user',parts}],systemInstruction:{parts:[{text:system}]},generationConfig:{temperature:.55}};
       if(jsonMode) body.generationConfig.responseMimeType='application/json';
-      const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal});
+      const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal});
       const data=await r.json().catch(()=>({}));
       if(!r.ok){ lastErr=data.error?.message||`http_${r.status}`; continue; }
       const text=(data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('\n').trim();
