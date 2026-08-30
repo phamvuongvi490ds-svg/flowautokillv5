@@ -1132,9 +1132,9 @@ ipcMain.handle('flow:quickMerge', async(_e,payload={})=>{
   const folder=String(payload.folder||'');if(!folder||!fs.existsSync(folder))return {ok:false,error:'missing_video_folder'};
   const allFiles=videoFiles(folder);const numbered=allFiles.filter(file=>/^\d+/.test(path.basename(file)));const files=(numbered.length?numbered:allFiles).map(file=>({file,n:Number((path.basename(file).match(/^(\d+)/)||[])[1]||999999)})).sort((a,b)=>a.n-b.n||a.file.localeCompare(b.file)).map(x=>x.file);
   if(!files.length)return {ok:false,error:'missing_videos'};
-  const transition=safeTransitionName(payload.transition==='random'?['fade','fadeblack','smoothleft','smoothright'][Math.floor(Math.random()*4)]:payload.transition||'fade');
+  const requestedTransition=String(payload.transition||'fade'),transition=safeTransitionName(requestedTransition==='random'?'fade':requestedTransition);
   let subtitles=[];if(payload.autoSub){if(!payload.apiKey)return {ok:false,error:'missing_api_key_for_auto_sub'};try{subtitles=await transcribeTimelineVerbatim(files.map((file,i)=>({file,start:0,end:videoDurationSec(file),order:i+1})),payload.apiKey,payload.apiModel||'',payload.subLang||'vi',folder)}catch(e){return {ok:false,error:'quick_merge_sub_failed:'+String(e.message||e)}}}
-  const scenes=files.map((file,i)=>({file,start:0,end:videoDurationSec(file),keep:true,order:i+1,transition}));
+  const randomPool=['fade','fadeblack','fadewhite','dissolve','circleopen','wipeleft','wiperight','pixelize','smoothleft','smoothright','smoothup','smoothdown'];const scenes=files.map((file,i)=>({file,start:0,end:videoDurationSec(file),keep:true,order:i+1,transition:requestedTransition==='random'?safeTransitionName(randomPool[Math.floor(Math.random()*randomPool.length)]):transition}));
   try{return await videoQuickMergeInternal({folder,scenes,transition,subtitles,autoSub:!!payload.autoSub,aspect:payload.aspect,zoom:payload.zoom,speed:payload.speed,subStyle:{font:'Arial',color:'#FFFFFF',size:42}})}catch(e){return {ok:false,error:'quick_merge_internal_failed:'+String(e.message||e)}};
 });
 function editFramePlan(files,aspect){if(aspect==='16:9')return {width:1920,height:1080};if(aspect==='9:16')return {width:1080,height:1920};if(aspect==='1:1')return {width:1080,height:1080};return targetVideoFrame(files)}
@@ -1150,6 +1150,19 @@ function concatNormalizedMerge(files,out){
     if(r.status===0)r.flowFallback='concat_no_xfade';
     return r;
   }finally{try{fs.rmSync(list,{force:true})}catch{}}
+}
+function fadeVisibleFallback(files,durations,out){
+  const faded=[];
+  try{
+    for(let i=0;i<files.length;i++){
+      const duration=Math.max(.5,Number(durations[i])||videoDurationSec(files[i])||8),d=Math.min(.4,duration/4),fo=Math.max(0,duration-d),dst=path.join(path.dirname(out),`fade-fallback-${i}-${Date.now()}.mp4`);
+      const vf=`fade=t=in:st=0:d=${d.toFixed(3)},fade=t=out:st=${fo.toFixed(3)}:d=${d.toFixed(3)}`;
+      let r=ffmpegRun(['-y','-i',files[i],'-vf',vf,'-c:v','libx264','-preset','veryfast','-crf','20','-pix_fmt','yuv420p','-c:a','copy',dst]);
+      if(r.status!==0)r=ffmpegRun(['-y','-i',files[i],'-vf',vf,'-c:v','libx264','-preset','veryfast','-crf','20','-pix_fmt','yuv420p','-c:a','aac','-b:a','192k',dst]);
+      if(r.status!==0)return r;faded.push(dst);
+    }
+    const r=concatNormalizedMerge(faded,out);if(r.status===0)r.flowFallback='visible_fade_concat';return r;
+  }finally{for(const f of faded)try{fs.rmSync(f,{force:true})}catch{}}
 }
 function xfadeMerge(files,durations,transitions,out){
   if(files.length===1)return ffmpegRun(['-y','-i',files[0],'-c','copy','-movflags','+faststart',out]);
@@ -1177,9 +1190,10 @@ function xfadeMerge(files,durations,transitions,out){
   args.push('-filter_complex',filters.join(';'),'-map',`[${videoLabel}]`,'-map',`[${audioLabel}]`,'-c:v','libx264','-preset','veryfast','-crf','20','-pix_fmt','yuv420p','-c:a','aac','-b:a','192k','-movflags','+faststart',out);
   const result=ffmpegRun(args);
   const err=String(result.stderr||result.stdout||'');
-  if(result.status!==0 && /No such filter:\s*['"]?(?:xfade|acrossfade)|Filter not found/i.test(err)){
+  if(result.status!==0){
     try{fs.rmSync(out,{force:true})}catch{}
-    return concatNormalizedMerge(files,out);
+    const fallback=fadeVisibleFallback(files,durations,out);
+    if(fallback.status===0){fallback.xfadeError=err.slice(-1200);return fallback}
   }
   return result;
 }
