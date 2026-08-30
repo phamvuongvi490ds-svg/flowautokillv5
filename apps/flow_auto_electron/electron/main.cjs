@@ -509,6 +509,31 @@ function policySafeInstruction(outLang='English'){
   if(outLang==='Vietnamese') return `YÊU CẦU AN TOÀN NỘI DUNG CHO GOOGLE/FLOW: Giữ nguyên cốt truyện, nhân vật, bối cảnh, cảm xúc và hành động chính của kịch bản. Chỉ thay đổi CÁCH DIỄN ĐẠT các chi tiết có rủi ro chính sách thành phiên bản điện ảnh an toàn, không làm lệch ý hoặc đổi nội dung chính. Không dùng hoặc mô tả trực diện các nội dung dễ bị chặn: khỏa thân, gợi dục, tình dục, trẻ em trong tình huống nhạy cảm, máu me, thương tích nặng, giết chóc, vũ khí thật, tự hại, ma túy, thù ghét, phân biệt chủng tộc, người nổi tiếng/người thật có danh tính, thương hiệu/logo/bản quyền, lừa đảo, hướng dẫn nguy hiểm hoặc hoạt động phạm pháp. Nếu ý tưởng gốc có yếu tố nhạy cảm, hãy giữ cùng vai trò trong cảnh nhưng chuyển thành phiên bản an toàn: hồi hộp nhưng không bạo lực, xung đột không máu me, trang phục kín đáo, nhân vật hư cấu trưởng thành, không logo/không thương hiệu, không nêu tên người nổi tiếng. Ưu tiên mô tả cảnh quay, ánh sáng, cảm xúc, chuyển động máy quay, môi trường, màu sắc, hành động đời thường an toàn. Không viết các từ khóa nhạy cảm nếu có thể thay bằng mô tả trung tính.`;
   return `GOOGLE/FLOW CONTENT-SAFE REQUIREMENT: Preserve the original script's plot, characters, setting, emotion, and main action. Only rewrite policy-risk wording into safe cinematic phrasing without changing the core meaning. Do not use or directly describe commonly blocked content: nudity, sexual content, minors in sensitive contexts, gore, severe injury, killing, real weapons, self-harm, drugs, hate, racism, identifiable real people/celebrities, brands/logos/copyrighted IP, scams, dangerous instructions, or illegal activity. If the source idea contains sensitive elements, preserve the same story function but rewrite it into a safe version: suspenseful but non-graphic, conflict without gore, modest clothing, fictional adult characters, no logos/brands, no celebrity names. Prioritize camera movement, lighting, emotion, environment, colors, and safe everyday actions. Avoid sensitive keywords when a neutral description works.`;
 }
+function normalizeScriptResult(value){
+  if(value==null)return '';
+  if(typeof value==='string')return value.trim();
+  if(Array.isArray(value))return value.map((scene,index)=>{
+    if(typeof scene==='string')return scene.trim();
+    if(!scene||typeof scene!=='object')return String(scene||'').trim();
+    const pick=(...keys)=>{for(const key of keys){if(scene[key]!=null&&String(scene[key]).trim())return String(scene[key]).trim()}return ''};
+    const number=pick('scene','sceneNumber','number','index','cảnh','canh')||String(index+1).padStart(2,'0');
+    const lines=[`Scene ${String(number).replace(/^scene\s*/i,'').padStart(2,'0')}:`,
+      ['Hình ảnh',pick('Hình ảnh','hình ảnh','hinhAnh','visual','visualDescription','image')],
+      ['Hành động',pick('Hành động','hành động','hanhDong','action','movement')],
+      ['Cảm xúc',pick('Cảm xúc','cảm xúc','camXuc','emotion','mood')],
+      ['Camera',pick('Camera','camera','shot','cameraMovement')],
+      ['Ánh sáng/Màu sắc',pick('Ánh sáng/Màu sắc','ánh sáng/màu sắc','anhSangMauSac','lighting','lightingColor')],
+      ['Voiceover',pick('Voiceover','voiceover','narration','lời thoại','loiThoai','dialogue')]
+    ];
+    return [lines[0],...lines.slice(1).filter(x=>x[1]).map(x=>`${x[0]}: ${x[1]}`)].join('\n');
+  }).filter(Boolean).join('\n\n');
+  if(typeof value==='object'){
+    for(const key of ['script','scenes','storyboard','content','result','data'])if(value[key]!=null){const out=normalizeScriptResult(value[key]);if(out)return out}
+    return Object.entries(value).map(([k,v])=>`${k}: ${typeof v==='object'?normalizeScriptResult(v):String(v)}`).join('\n');
+  }
+  return String(value).trim();
+}
+
 function policySafePostProcess(text,outLang='English'){
   let t=String(text||'').trim();
   const reps=[
@@ -1533,7 +1558,7 @@ ipcMain.handle('prompt:rewriteScriptDeep', async(_e,payload={})=>{
     const start=cleaned.indexOf('{'), end=cleaned.lastIndexOf('}');
     if(start<0||end<=start)throw new Error('invalid_rewrite_json_response');
     const obj=JSON.parse(cleaned.slice(start,end+1));
-    return {ok:true,script:policySafePostProcess(obj.script||'',outLang),rewriteMode:'deep_pasted_script'};
+    return {ok:true,script:policySafePostProcess(normalizeScriptResult(obj.script||obj.scenes||obj),outLang),rewriteMode:'deep_pasted_script'};
   }catch(e){return {ok:false,error:String(e.message||e)}}
 });
 
@@ -1565,7 +1590,7 @@ Voiceover: ...`;
   try{
     const out=await geminiText(apiKey,[...parts,{text:prompt}],sys,true,payload.apiModel);
     const obj=JSON.parse(String(out||'').replace(/^```json\s*|```$/g,''));
-    return {ok:true,script:policySafePostProcess(obj.script||'',outLang),sourceSummary:obj.sourceSummary||'',sceneAnalysis:obj.sceneAnalysis||'',rewriteMode:deepRewrite?'deep_article':'standard',page};
+    return {ok:true,script:policySafePostProcess(normalizeScriptResult(obj.script||obj.scenes||obj),outLang),sourceSummary:obj.sourceSummary||'',sceneAnalysis:obj.sceneAnalysis||'',rewriteMode:deepRewrite?'deep_article':'standard',page};
   }catch(e){ return {ok:false,error:'ai_url_analyze_failed:'+String(e.message||e),page}; }
 });
 
