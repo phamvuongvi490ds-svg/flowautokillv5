@@ -617,6 +617,30 @@ function writeScriptText(obj){
   return file;
 }
 function langName(code){ return ({vi:'Vietnamese',en:'English',zh:'Chinese',ko:'Korean',es:'Spanish'}[String(code||'en')]||'English'); }
+function googleSafePromptStructure(outLang='English'){
+  if(outLang==='Vietnamese')return `CHẾ ĐỘ CẤU TRÚC TRÁNH VI PHẠM GOOGLE — TUÂN THỦ, KHÔNG LÁCH KIỂM DUYỆT:
+- Nếu cảnh nhắc nhân vật lịch sử, chính trị gia, người nổi tiếng hoặc người thật: hình ảnh chỉ dùng một hình tượng hư cấu/biểu tượng ẩn danh phù hợp thời đại. Không tái tạo, bắt chước hoặc tuyên bố là khuôn mặt, diện mạo sinh trắc học hay chân dung chính xác của người thật.
+- Chi tiết khuôn mặt phải khái quát, không nhận dạng được. Narration giáo dục được phép nhắc tên nhân vật/sự kiện thật, nhưng hình ảnh không được là chân dung chính xác.
+- Mô tả CHARACTER SAFETY rõ ràng trước CHARACTER APPEARANCE. Trang phục, dân tộc, thời đại và bối cảnh phải chính xác về lịch sử, không biến thành hiện đại/phương Tây/fantasy nếu không được yêu cầu.
+- Không bắt chước/clone giọng của người thật, người nổi tiếng, chính trị gia hoặc nhân vật lịch sử. Chỉ dùng giọng narrator hư cấu chung theo giới tính/ngôn ngữ đã chọn.
+- Không photorealism khi cảnh có người thật nhạy cảm; ưu tiên historical graphic novel/comic-inspired illustration, bold ink outlines, halftone shading, strong contrast, cinematic composition.
+- Không máu me đồ họa, không mô tả thương tích chi tiết, không ca ngợi bạo lực. Giữ ngữ cảnh lịch sử/giáo dục.
+- Không hiển thị phụ đề, caption, chữ, logo, tiêu đề, ký hiệu hoặc typography trên màn hình trừ khi người dùng bật phụ đề.
+- Mỗi prompt cuối phải có các mục theo thứ tự: VISUAL STYLE; SCENE; IMPORTANT CHARACTER SAFETY; CHARACTER APPEARANCE; ENVIRONMENT; CAMERA; VISUAL MOOD; SUBTITLES; VOICEOVER; CHARACTER DIALOGUE; VOICE.
+- Không xóa nội dung lịch sử cốt lõi; chỉ chuyển phần nhận dạng thật sang biểu tượng hư cấu an toàn.`;
+  return `GOOGLE-SAFE COMPLIANCE STRUCTURE — POLICY COMPLIANCE, NOT FILTER EVASION:
+- For any historical figure, politician, celebrity, public figure, or real person, show only an anonymous fictionalized symbolic representation appropriate to the era. Never reproduce, reconstruct, imitate, or claim the exact face, likeness, biometric identity, recognizable appearance, or portrait of a real person.
+- Keep facial details generalized and non-identifiable. Educational narration may name the real person/event, while the visual remains symbolic and anonymous.
+- Put IMPORTANT CHARACTER SAFETY before CHARACTER APPEARANCE. Keep historically appropriate ethnicity, clothing, period, and environment; do not introduce modern, Western, fantasy, or unrelated traits.
+- Never imitate or clone the voice of any real person. Use only a generic fictional narrator with the selected language and gender.
+- For sensitive real-person history, avoid photorealism; prefer historical graphic novel/comic-inspired illustration, bold ink outlines, halftone shading, strong contrast, cinematic composition.
+- No graphic gore, detailed injury, or glorification of violence. Preserve educational historical context.
+- No subtitles, captions, text, letters, titles, logos, symbols, or on-screen typography unless subtitles are explicitly enabled.
+- Final prompt order: VISUAL STYLE; SCENE; IMPORTANT CHARACTER SAFETY; CHARACTER APPEARANCE; ENVIRONMENT; CAMERA; VISUAL MOOD; SUBTITLES; VOICEOVER; CHARACTER DIALOGUE; VOICE.
+- Preserve the core historical content; fictionalize only exact identity/likeness and real-person voice.`;
+}
+function promptSafetyInstruction(payload,outLang){return String(payload?.promptSafetyMode||'standard')==='google_safe'?googleSafePromptStructure(outLang):''}
+
 function voiceLangName(code){ const v=String(code||'vi_south'); if(v==='en')return 'English'; if(v==='vi_north')return 'Vietnamese Northern accent (giọng Bắc)'; return 'Vietnamese Southern accent (giọng Nam)'; }
 function hasReferenceImages(payload){
   const direct=Array.isArray(payload.characterImages)&&payload.characterImages.length>0;
@@ -635,7 +659,7 @@ async function generatePromptsJs(payload){
       : (outLang==='Vietnamese'
         ? `CHẾ ĐỘ KHÔNG CÓ ẢNH THAM CHIẾU: Không có ảnh nhân vật. Không tự tạo nhân vật chính cố định, không tạo Character Sheet, không thêm REF_ID, không khóa mặt, không thêm người nếu prompt không yêu cầu. Viết đúng chủ thể trong mô tả từng prompt. Nếu prompt là phong cảnh, sản phẩm, con vật, đồ vật, địa điểm hoặc ý tưởng trừu tượng thì giữ đúng chủ thể đó, không biến thành người.`
         : `NO REFERENCE IMAGE MODE: There are no uploaded character images. Do not invent a fixed main character, character sheet, REF_ID, face identity lock, or recurring identity unless the user's scene explicitly describes one. Write only what the scene/prompt describes. If the prompt is about landscape, product, animal, object, location, or abstract concept, keep that subject and do not add a human character.`);
-    const prompt=await geminiText(apiKey,[...imgs,{text:`${refInstruction}\n\nNội dung cảnh/prompt cần tạo: ${idea}\nYÊU CẦU NGÔN NGỮ BẮT BUỘC: ${finalPromptLanguageRule(outLang)} Toàn bộ prompt cuối cùng phải viết bằng ${outLang}. Nếu ${outLang} là Vietnamese, mọi mô tả, quy tắc, cảnh quay, ánh sáng, camera, cảm xúc và lời thoại phải viết bằng tiếng Việt; không dùng tiếng Anh trừ tên riêng bất khả kháng. Bám đúng nội dung, chủ thể, hành động, bối cảnh và cảm xúc của prompt gốc. Không thêm nhân vật, đạo cụ, tuyến truyện hoặc danh tính mới nếu đầu vào không có. Nếu đầu vào có dòng Voiceover, Lời dẫn/Voiceover, Lời thoại/Voice hoặc Lời thoại, BẮT BUỘC prompt cuối phải có nhãn rõ ràng: Lời dẫn/Voiceover: "..."; Lời thoại nhân vật: ...; Giọng đọc/Voice: ${voiceLang}. Không được chỉ mô tả hình ảnh mà bỏ phần lời. Nếu cảnh có lời thoại, nhân vật nói bằng ${voiceLang} và giữ đồng nhất. Chỉ đổi cách diễn đạt nhạy cảm thành cách nói an toàn. ${policySafeInstruction(outLang)}`}],sys,false);
+    const prompt=await geminiText(apiKey,[...imgs,{text:`${refInstruction}\n\nNội dung cảnh/prompt cần tạo: ${idea}\nYÊU CẦU NGÔN NGỮ BẮT BUỘC: ${finalPromptLanguageRule(outLang)} Toàn bộ prompt cuối cùng phải viết bằng ${outLang}. Nếu ${outLang} là Vietnamese, mọi mô tả, quy tắc, cảnh quay, ánh sáng, camera, cảm xúc và lời thoại phải viết bằng tiếng Việt; không dùng tiếng Anh trừ tên riêng bất khả kháng. Bám đúng nội dung, chủ thể, hành động, bối cảnh và cảm xúc của prompt gốc. Không thêm nhân vật, đạo cụ, tuyến truyện hoặc danh tính mới nếu đầu vào không có. Nếu đầu vào có dòng Voiceover, Lời dẫn/Voiceover, Lời thoại/Voice hoặc Lời thoại, BẮT BUỘC prompt cuối phải có nhãn rõ ràng: Lời dẫn/Voiceover: "..."; Lời thoại nhân vật: ...; Giọng đọc/Voice: ${voiceLang}. Không được chỉ mô tả hình ảnh mà bỏ phần lời. Nếu cảnh có lời thoại, nhân vật nói bằng ${voiceLang} và giữ đồng nhất. Chỉ đổi cách diễn đạt nhạy cảm thành cách nói an toàn. ${policySafeInstruction(outLang)} ${promptSafetyInstruction(payload,outLang)}`}],sys,false);
     const withVoice=enforceSubtitleInPrompt(enforceVoiceInPrompt(policySafePostProcess(lockPrompt(prompt,characterLock,outLang),outLang), idea, outLang, voiceLang),payload,outLang,voiceLang);
     results.push(await ensureOutputLanguageText(apiKey, withVoice, outLang, payload.apiModel));
   }
@@ -782,6 +806,7 @@ async function generateScriptJs(payload){
       8. NGÔN NGỮ GIỌNG NÓI NHÂN VẬT: ${silentSpeech?'CHẾ ĐỘ KHÔNG NÓI: mọi cảnh bắt buộc voice là Không có; không Voiceover, không lời thoại, không hát, không khẩu hình nói.':'Nếu cảnh có lời thoại/nhân vật nói,'} nhân vật bắt buộc nói bằng ${voiceLang}. Toàn bộ prompt trong cùng kịch bản phải đồng nhất đúng lựa chọn này, không được lúc giọng Nam lúc giọng Bắc hoặc đổi sang ngôn ngữ khác. Trong prompt video phải ghi rõ nhân vật dùng giọng ${speakerGenderLabel}, ${voiceLang}. ${silentSpeech?'Mọi prompt phải ghi rõ nhân vật không nói và không có lời thoại.':`MỌI cảnh trong toàn bộ kịch bản chỉ được dùng một giới tính giọng là ${speakerGenderLabel}; tuyệt đối không chuyển sang giới tính giọng khác, không xen kẽ nam/nữ.`}
       9. QUY TẮC PHỤ ĐỀ BẮT BUỘC CHO MỌI PROMPT: ${subtitlePromptRule(payload,outLang,voiceLang)}
       10. AN TOÀN CHÍNH SÁCH GOOGLE/FLOW: ${policySafeInstruction(outLang)}
+      10A. CẤU TRÚC AN TOÀN ĐƯỢC CHỌN: ${promptSafetyInstruction(payload,outLang)||'Dùng cấu trúc prompt hiện tại.'}
       11. Trả về kết quả dưới dạng JSON: {"title":"...","characterSheet":"...","scenes":[{"sceneNumber":...,"duration":"8 giây","visual":"...","action":"...","emotion":"...","cameraLighting":"...","voice":"...","description":"...","prompt":"..."}]}.`;
 
     const characterInstruction=characterSheet
