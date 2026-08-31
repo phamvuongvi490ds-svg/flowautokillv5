@@ -695,6 +695,41 @@ STYLE; CONTEXT; MAIN VISUAL; COSTUME; ENVIRONMENT; CAMERA; COLOR PALETTE; VISUAL
 - This is policy compliance, not filter evasion. Preserve core history while de-identifying real-person visuals and voices.`;
 }
 function promptSafetyInstruction(payload,outLang){return String(payload?.promptSafetyMode||'standard')==='google_safe'?googleSafePromptStructure(outLang):''}
+function isGoogleSafeMode(payload){return String(payload?.promptSafetyMode||'standard')==='google_safe'}
+function googleSafePromptIssues(text,outLang='English'){
+  const t=String(text||''),low=t.toLowerCase(),issues=[];
+  const vi=outLang==='Vietnamese';
+  const required=vi?['phong cách','bối cảnh','hình ảnh chính','trang phục','môi trường','góc quay','màu sắc','visual mood','phụ đề','lời dẫn','lưu ý về nhân vật','lời thoại nhân vật','giọng đọc']:['style','context','main visual','costume','environment','camera','color','visual mood','subtitles','voiceover','character safety','character dialogue','voice'];
+  for(const h of required)if(!low.includes(h))issues.push(`missing:${h}`);
+  if(/exact (face|likeness|portrait)|khuôn mặt (chính xác|giống hệt)|tái hiện (chính xác|y hệt)|recognizable (face|likeness)|clone (the )?voice|imitate (the )?voice/i.test(t))issues.push('real_identity_or_voice');
+  if(/photorealistic|photo-realistic|hyperrealistic|siêu thực như ảnh|chân dung chân thực/i.test(t)&&/(historical|lịch sử|politician|chính trị|celebrity|người nổi tiếng|public figure|nhân vật công chúng)/i.test(t))issues.push('photoreal_real_person');
+  if(/close-?up[^.\n]*(face|khuôn mặt)|cận cảnh[^.\n]*khuôn mặt/i.test(t)&&/(historical|lịch sử|real person|người thật|quang trung|ton si nghi|tôn sĩ nghị)/i.test(t))issues.push('identifiable_face_shot');
+  if(/graphic gore|detailed (wound|injury)|máu me (chi tiết|đồ họa)|nội tạng|decapitat/i.test(t))issues.push('graphic_violence');
+  return issues;
+}
+function hardenGoogleSafePrompt(text,outLang='English'){
+  const t=String(text||'').trim();
+  const safety=outLang==='Vietnamese'
+    ? `HÌNH ẢNH CHÍNH:\n${t}\n\nLƯU Ý VỀ NHÂN VẬT:\nMọi nhân vật lịch sử hoặc người thật trong hình ảnh chỉ là hình tượng biểu trưng hư cấu hóa, ẩn danh và không nhận diện được. Không tái tạo khuôn mặt, diện mạo sinh trắc học hoặc chân dung chính xác. Chỉ quay từ phía sau, silhouette hoặc góc rất xa; không cận cảnh khuôn mặt. Tên thật chỉ được nhắc trong lời dẫn giáo dục.\n\nPHỤ ĐỀ:\nKhông hiển thị chữ, caption, tiêu đề, logo hoặc typography nếu phụ đề đang tắt.\n\nGIỌNG ĐỌC / VOICE:\nChỉ dùng narrator hư cấu chung; không clone hoặc bắt chước giọng người thật.\n\nVISUAL MOOD:\nKhông bạo lực trực diện, không máu me, không thương tích đồ họa.`
+    : `MAIN VISUAL:\n${t}\n\nCHARACTER SAFETY NOTE:\nEvery historical or real person is an anonymous fictionalized symbolic representation with non-identifiable features. Never reproduce an exact face, likeness, biometric identity, or portrait. Use rear view, silhouette, or a very distant angle; no facial close-up. Real names may appear only in educational narration.\n\nSUBTITLES:\nNo text, captions, titles, logos, or typography when subtitles are disabled.\n\nVOICE:\nUse only a generic fictional narrator; never clone or imitate a real person's voice.\n\nVISUAL MOOD:\nNo direct graphic violence, gore, or detailed injury.`;
+  return safety;
+}
+async function enforceGoogleSafePrompt(apiKey,text,payload,outLang='English',context=''){
+  if(!isGoogleSafeMode(payload))return text;
+  const instruction=googleSafePromptStructure(outLang);
+  let current=String(text||'').trim(),issues=googleSafePromptIssues(current,outLang);
+  for(let pass=1;pass<=2;pass++){
+    const prompt=`You are a strict Google generative-media safety editor. Rewrite the candidate prompt, not merely comment on it. Preserve the educational/historical story and narration, but enforce every safety rule and exact section order below. Any historical figure or real person in visuals must become an anonymous fictionalized symbolic representation; never show a recognizable/exact face, likeness, biometric identity, or portrait; use rear view/silhouette/distant profile. Never clone a real voice. Remove graphic violence and unauthorized on-screen text. Output only the final rewritten prompt in ${outLang}, no JSON, no markdown fence.\n\nREQUIRED STRUCTURE:\n${instruction}\n\nSOURCE CONTEXT:\n${context}\n\nCANDIDATE PROMPT:\n${current}\n\nDETECTED ISSUES:\n${issues.join(', ')||'Perform full compliance rewrite anyway.'}`;
+    current=await geminiTextFast(apiKey,[{text:prompt}],'You are a strict compliance rewrite engine. Return only the final safe prompt.',false,90000,payload.apiModel);
+    issues=googleSafePromptIssues(current,outLang);
+    if(!issues.length)return current.trim();
+  }
+  // Deterministic final barrier: never send an unchecked candidate to Flow.
+  current=hardenGoogleSafePrompt(current,outLang);
+  issues=googleSafePromptIssues(current,outLang);
+  if(issues.length)throw new Error(`google_safe_prompt_rejected:${issues.join(',')}`);
+  return current.trim();
+}
 
 function voiceLangName(code){ const v=String(code||'vi_south'); if(v==='en')return 'English'; if(v==='vi_north')return 'Vietnamese Northern accent (giọng Bắc)'; return 'Vietnamese Southern accent (giọng Nam)'; }
 function hasReferenceImages(payload){
@@ -715,7 +750,8 @@ async function generatePromptsJs(payload){
         ? `CHẾ ĐỘ KHÔNG CÓ ẢNH THAM CHIẾU: Không có ảnh nhân vật. Không tự tạo nhân vật chính cố định, không tạo Character Sheet, không thêm REF_ID, không khóa mặt, không thêm người nếu prompt không yêu cầu. Viết đúng chủ thể trong mô tả từng prompt. Nếu prompt là phong cảnh, sản phẩm, con vật, đồ vật, địa điểm hoặc ý tưởng trừu tượng thì giữ đúng chủ thể đó, không biến thành người.`
         : `NO REFERENCE IMAGE MODE: There are no uploaded character images. Do not invent a fixed main character, character sheet, REF_ID, face identity lock, or recurring identity unless the user's scene explicitly describes one. Write only what the scene/prompt describes. If the prompt is about landscape, product, animal, object, location, or abstract concept, keep that subject and do not add a human character.`);
     const prompt=await geminiText(apiKey,[...imgs,{text:`${refInstruction}\n\nNội dung cảnh/prompt cần tạo: ${idea}\nYÊU CẦU NGÔN NGỮ BẮT BUỘC: ${finalPromptLanguageRule(outLang)} Toàn bộ prompt cuối cùng phải viết bằng ${outLang}. Nếu ${outLang} là Vietnamese, mọi mô tả, quy tắc, cảnh quay, ánh sáng, camera, cảm xúc và lời thoại phải viết bằng tiếng Việt; không dùng tiếng Anh trừ tên riêng bất khả kháng. Bám đúng nội dung, chủ thể, hành động, bối cảnh và cảm xúc của prompt gốc. Không thêm nhân vật, đạo cụ, tuyến truyện hoặc danh tính mới nếu đầu vào không có. Nếu đầu vào có dòng Voiceover, Lời dẫn/Voiceover, Lời thoại/Voice hoặc Lời thoại, BẮT BUỘC prompt cuối phải có nhãn rõ ràng: Lời dẫn/Voiceover: "..."; Lời thoại nhân vật: ...; Giọng đọc/Voice: ${voiceLang}. Không được chỉ mô tả hình ảnh mà bỏ phần lời. Nếu cảnh có lời thoại, nhân vật nói bằng ${voiceLang} và giữ đồng nhất. Chỉ đổi cách diễn đạt nhạy cảm thành cách nói an toàn. ${policySafeInstruction(outLang)} ${promptSafetyInstruction(payload,outLang)}`}],sys,false);
-    const withVoice=enforceSubtitleInPrompt(enforceVoiceInPrompt(policySafePostProcess(lockPrompt(prompt,characterLock,outLang),outLang), idea, outLang, voiceLang),payload,outLang,voiceLang);
+    let withVoice=enforceSubtitleInPrompt(enforceVoiceInPrompt(policySafePostProcess(lockPrompt(prompt,characterLock,outLang),outLang), idea, outLang, voiceLang),payload,outLang,voiceLang);
+    withVoice=await enforceGoogleSafePrompt(apiKey,withVoice,payload,outLang,idea);
     results.push(await ensureOutputLanguageText(apiKey, withVoice, outLang, payload.apiModel));
   }
   return {ok:true,characterLock,characterRoster,generated:writeGenerated('electron-ai-generated-prompts.txt',results)};
@@ -888,7 +924,7 @@ async function generateScriptJs(payload){
         emotion: sc.emotion||sc.camXuc||'',
         cameraLighting: sc.cameraLighting||sc.camera||sc.gocMayAnhSang||'',
         voice: sc.voice||sc.dialogue||sc.loiThoai||'',
-        prompt: await ensureOutputLanguageText(payload.apiKey, enforceSubtitleInPrompt(enforceVoiceInPrompt(policySafePostProcess(lockPrompt(sc.prompt,characterSheet,outLang),outLang), `${sc.voice||sc.dialogue||sc.loiThoai||''}`, outLang, voiceLang, speakerGender),payload,outLang,voiceLang), outLang, payload.apiModel)
+        prompt: await ensureOutputLanguageText(payload.apiKey, await enforceGoogleSafePrompt(payload.apiKey,enforceSubtitleInPrompt(enforceVoiceInPrompt(policySafePostProcess(lockPrompt(sc.prompt,characterSheet,outLang),outLang), `${sc.voice||sc.dialogue||sc.loiThoai||''}`, outLang, voiceLang, speakerGender),payload,outLang,voiceLang),payload,outLang,`${sc.description||sc.visual||''} ${sc.voice||sc.dialogue||''}`), outLang, payload.apiModel)
       });
     }
     allScenes.push(...scenes);
