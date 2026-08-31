@@ -618,26 +618,81 @@ function writeScriptText(obj){
 }
 function langName(code){ return ({vi:'Vietnamese',en:'English',zh:'Chinese',ko:'Korean',es:'Spanish'}[String(code||'en')]||'English'); }
 function googleSafePromptStructure(outLang='English'){
-  if(outLang==='Vietnamese')return `CHẾ ĐỘ CẤU TRÚC TRÁNH VI PHẠM GOOGLE — TUÂN THỦ, KHÔNG LÁCH KIỂM DUYỆT:
-- Nếu cảnh nhắc nhân vật lịch sử, chính trị gia, người nổi tiếng hoặc người thật: hình ảnh chỉ dùng một hình tượng hư cấu/biểu tượng ẩn danh phù hợp thời đại. Không tái tạo, bắt chước hoặc tuyên bố là khuôn mặt, diện mạo sinh trắc học hay chân dung chính xác của người thật.
-- Chi tiết khuôn mặt phải khái quát, không nhận dạng được. Narration giáo dục được phép nhắc tên nhân vật/sự kiện thật, nhưng hình ảnh không được là chân dung chính xác.
-- Mô tả CHARACTER SAFETY rõ ràng trước CHARACTER APPEARANCE. Trang phục, dân tộc, thời đại và bối cảnh phải chính xác về lịch sử, không biến thành hiện đại/phương Tây/fantasy nếu không được yêu cầu.
-- Không bắt chước/clone giọng của người thật, người nổi tiếng, chính trị gia hoặc nhân vật lịch sử. Chỉ dùng giọng narrator hư cấu chung theo giới tính/ngôn ngữ đã chọn.
-- Không photorealism khi cảnh có người thật nhạy cảm; ưu tiên historical graphic novel/comic-inspired illustration, bold ink outlines, halftone shading, strong contrast, cinematic composition.
-- Không máu me đồ họa, không mô tả thương tích chi tiết, không ca ngợi bạo lực. Giữ ngữ cảnh lịch sử/giáo dục.
-- Không hiển thị phụ đề, caption, chữ, logo, tiêu đề, ký hiệu hoặc typography trên màn hình trừ khi người dùng bật phụ đề.
-- Mỗi prompt cuối phải có các mục theo thứ tự: VISUAL STYLE; SCENE; IMPORTANT CHARACTER SAFETY; CHARACTER APPEARANCE; ENVIRONMENT; CAMERA; VISUAL MOOD; SUBTITLES; VOICEOVER; CHARACTER DIALOGUE; VOICE.
-- Không xóa nội dung lịch sử cốt lõi; chỉ chuyển phần nhận dạng thật sang biểu tượng hư cấu an toàn.`;
-  return `GOOGLE-SAFE COMPLIANCE STRUCTURE — POLICY COMPLIANCE, NOT FILTER EVASION:
-- For any historical figure, politician, celebrity, public figure, or real person, show only an anonymous fictionalized symbolic representation appropriate to the era. Never reproduce, reconstruct, imitate, or claim the exact face, likeness, biometric identity, recognizable appearance, or portrait of a real person.
-- Keep facial details generalized and non-identifiable. Educational narration may name the real person/event, while the visual remains symbolic and anonymous.
-- Put IMPORTANT CHARACTER SAFETY before CHARACTER APPEARANCE. Keep historically appropriate ethnicity, clothing, period, and environment; do not introduce modern, Western, fantasy, or unrelated traits.
-- Never imitate or clone the voice of any real person. Use only a generic fictional narrator with the selected language and gender.
-- For sensitive real-person history, avoid photorealism; prefer historical graphic novel/comic-inspired illustration, bold ink outlines, halftone shading, strong contrast, cinematic composition.
-- No graphic gore, detailed injury, or glorification of violence. Preserve educational historical context.
-- No subtitles, captions, text, letters, titles, logos, symbols, or on-screen typography unless subtitles are explicitly enabled.
-- Final prompt order: VISUAL STYLE; SCENE; IMPORTANT CHARACTER SAFETY; CHARACTER APPEARANCE; ENVIRONMENT; CAMERA; VISUAL MOOD; SUBTITLES; VOICEOVER; CHARACTER DIALOGUE; VOICE.
-- Preserve the core historical content; fictionalize only exact identity/likeness and real-person voice.`;
+  if(outLang==='Vietnamese')return `CHẾ ĐỘ PROMPT TRÁNH VI PHẠM GOOGLE — ÁP DỤNG ĐÚNG CẤU TRÚC NÀY CHO TỪNG CẢNH:
+
+PHONG CÁCH:
+- Mặc định ưu tiên phong cách truyện tranh lịch sử Việt Nam, graphic novel, nét viền đậm, đổ bóng halftone nhẹ, ánh sáng điện ảnh, chi tiết sắc nét, không khí trang nghiêm và hùng tráng.
+- Điều chỉnh phong cách theo nội dung người dùng nhưng không chuyển thành photorealistic portrait đối với nhân vật lịch sử/người thật nhạy cảm.
+
+BỐI CẢNH:
+- Nêu rõ địa điểm, quốc gia/vùng văn hóa, thời kỳ/năm, trạng thái lịch sử và thời điểm của cảnh.
+- Bám sát dữ kiện người dùng; không tự bịa sự kiện, nhân vật hoặc mốc thời gian.
+
+HÌNH ẢNH CHÍNH:
+- Mô tả góc nhìn, vị trí nhân vật, hành động và điểm nhìn chính.
+- Nhân vật lịch sử/người thật chỉ là HÌNH TƯỢNG BIỂU TRƯNG HƯ CẤU HÓA phù hợp thời đại.
+- Không tái hiện, mô phỏng, sao chép khuôn mặt, ngoại hình nhận diện, đặc điểm sinh trắc học hoặc chân dung chính xác của bất kỳ người thật nào.
+- Không cho thấy rõ khuôn mặt. Ưu tiên quay từ phía sau, silhouette, góc nghiêng rất xa hoặc khuôn mặt hoàn toàn không nhận diện được.
+
+TRANG PHỤC:
+- Mô tả cụ thể chất liệu, màu sắc, kiểu áo, đai, quần, khăn/mũ, vũ khí/phụ kiện đúng văn hóa và thời đại.
+- Nếu là lịch sử Việt Nam, phải mang rõ đặc trưng Việt Nam đúng thời kỳ.
+- Không giáp hiệp sĩ châu Âu, không samurai, không hiện đại, không áo vest, không quân phục hiện đại, không fantasy, trừ khi đầu vào yêu cầu rõ.
+
+MÔI TRƯỜNG:
+- Mô tả kiến trúc, địa hình, thời tiết, ánh sáng, cờ hiệu và cảnh quan đúng địa phương/thời đại.
+- Không đưa kiến trúc, biểu tượng hoặc thiết kế sai văn hóa.
+
+GÓC QUAY:
+- Nêu shot mở đầu, hướng nhìn, chuyển động camera và shot kết thúc.
+- Chuyển động chậm, mượt, điện ảnh, phù hợp phim tài liệu lịch sử nếu cảnh mang tính lịch sử.
+
+MÀU SẮC:
+- Nêu bảng màu chính và đặc điểm nguồn sáng, phù hợp cảm xúc cảnh.
+
+VISUAL MOOD:
+- Nêu rõ cảm xúc và tính biểu tượng.
+- Không bạo lực trực diện, không máu me, không mô tả thương tích đồ họa.
+
+PHỤ ĐỀ:
+- Nếu người dùng tắt phụ đề: Không hiển thị phụ đề, chữ, caption, văn bản, ký tự, tiêu đề, logo hoặc typography trên video.
+- Nếu người dùng bật phụ đề: chỉ hiển thị đúng nội dung phụ đề được cung cấp, không tự thêm chữ khác.
+
+LỜI DẪN / VOICEOVER:
+- Giữ nguyên nội dung lịch sử cốt lõi và lời dẫn người dùng cung cấp.
+- Tên người thật/nhân vật lịch sử chỉ được nhắc trong lời dẫn phục vụ kể chuyện giáo dục; hình ảnh vẫn là biểu tượng hư cấu không nhận diện được.
+
+LƯU Ý VỀ NHÂN VẬT:
+- Nêu rõ nhân vật hình ảnh không phải chân dung tái hiện chính xác của người thật mà chỉ là hình tượng biểu trưng, không nhận diện được.
+
+LỜI THOẠI NHÂN VẬT:
+- Ghi rõ Có hoặc Không có. Không tự thêm lời thoại khi đầu vào không yêu cầu.
+
+GIỌNG ĐỌC / VOICE:
+- Chỉ dùng một narrator hư cấu duy nhất theo ngôn ngữ, giới tính, vùng giọng và phong cách người dùng chọn.
+- Giữ cùng một giọng xuyên suốt, không tự đổi giới tính giữa các cảnh.
+- Không mô phỏng, sao chép, clone hoặc bắt chước giọng của bất kỳ người thật, người nổi tiếng, chính trị gia hay nhân vật công chúng nào.
+
+QUY TẮC BẮT BUỘC:
+- Mỗi prompt cuối phải có đúng thứ tự mục: PHONG CÁCH; BỐI CẢNH; HÌNH ẢNH CHÍNH; TRANG PHỤC; MÔI TRƯỜNG; GÓC QUAY; MÀU SẮC; VISUAL MOOD; PHỤ ĐỀ; LỜI DẪN / VOICEOVER; LƯU Ý VỀ NHÂN VẬT; LỜI THOẠI NHÂN VẬT; GIỌNG ĐỌC / VOICE.
+- Đây là cấu trúc tuân thủ chính sách, không phải lách kiểm duyệt. Không làm mất nội dung lịch sử cốt lõi; chỉ phi nhận dạng hóa hình ảnh và giọng người thật.`;
+  return `GOOGLE-SAFE PROMPT MODE — USE THIS EXACT SECTION ORDER FOR EVERY SCENE:
+STYLE; CONTEXT; MAIN VISUAL; COSTUME; ENVIRONMENT; CAMERA; COLOR PALETTE; VISUAL MOOD; SUBTITLES; NARRATION / VOICEOVER; CHARACTER SAFETY NOTE; CHARACTER DIALOGUE; VOICE.
+- Prefer a historical graphic novel aesthetic, bold ink outlines, light halftone shading, cinematic lighting, sharp detail, solemn and epic atmosphere for historical scenes.
+- State the exact place, culture, period/year, historical situation, and time of scene. Do not invent unsupported events or identities.
+- Any historical figure or real person must appear only as an anonymous fictionalized symbolic representation. Never reproduce, reconstruct, imitate, or claim an exact face, likeness, biometric identity, recognizable appearance, or portrait.
+- Do not clearly show the face. Prefer rear view, silhouette, very distant profile, or fully non-identifiable facial detail.
+- Describe historically and culturally accurate fabric, colors, garments, belts, trousers, headwear, weapons, and accessories. Reject European knight armor, samurai attire, modern uniforms, suits, or fantasy elements unless explicitly requested.
+- Keep architecture, landscape, weather, flags, lighting, and cultural details accurate to place and era.
+- Specify opening shot, viewing angle, camera movement, and ending shot. Use slow, smooth documentary-style cinematic movement for history.
+- Specify a coherent color palette and light source.
+- No direct graphic violence, gore, or detailed injury.
+- If subtitles are off: no subtitles, captions, text, letters, titles, logos, symbols, or typography. If enabled, show only supplied subtitle content.
+- Real names may appear only in educational narration; the visual remains anonymous and symbolic.
+- Explicitly state that the visual character is not an exact portrait of any real person.
+- Do not invent dialogue. State None when no dialogue is requested.
+- Use one generic fictional narrator matching the selected language, gender, regional accent, and tone. Never imitate, clone, or mimic any real person's voice. Never switch narrator gender between scenes.
+- This is policy compliance, not filter evasion. Preserve core history while de-identifying real-person visuals and voices.`;
 }
 function promptSafetyInstruction(payload,outLang){return String(payload?.promptSafetyMode||'standard')==='google_safe'?googleSafePromptStructure(outLang):''}
 
