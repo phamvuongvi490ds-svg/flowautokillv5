@@ -18,10 +18,7 @@ async function clickText(page, texts, timeout=1200){ for(const t of texts){ cons
 async function clickIcon(page, icon){ const loc=page.locator(`text=${icon}`).last(); try{ if(await loc.count()){ await loc.click({timeout:1200}); return true; }}catch{} return false; }
 async function ensureProjectPage(page){
   const url=page.url()||'';
-  if(!/labs\.google\/fx(?:\/[a-z]{2})?\/tools\/flow/.test(url)){
-    await page.goto('https://flow.google.com',{waitUntil:'domcontentloaded',timeout:30000}).catch(()=>{});
-    await sleep(1200);
-  }
+  if(!/^https:\/\/flow\.google\.com\//i.test(url)) throw new Error('flow_page_not_ready_without_reload');
   // Nếu đã có ô prompt thì đang ở editor/project rồi.
   try{ if(await page.locator('textarea,[contenteditable="true"],div[role="textbox"]').last().isVisible({timeout:1200})) return page; }catch{}
   const selectors=[
