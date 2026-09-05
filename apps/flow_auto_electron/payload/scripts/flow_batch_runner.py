@@ -130,70 +130,57 @@ def save_state(path: Path, data: dict):
 def find_flow_page(browser):
     for context in browser.contexts:
         for page in context.pages:
-            url = page.url or ""
-            # hỗ trợ cả URL locale: /fx/vi/tools/flow
-            if re.search(r"labs\.google/fx(?:/[a-z]{2})?/tools/flow(?:/project)?", url):
+            if "flow.google.com" in (page.url or ""):
                 return page
     return None
 
+_PROJECT_LAUNCH_ATTEMPTED = False
+
+def _prompt_ready(page, timeout=1200):
+    try:
+        return page.locator("flow-prompt-box.prompt-box-container, flow-prompt-box").first.is_visible(timeout=timeout)
+    except Exception:
+        return False
 
 def ensure_project_page(page):
+    global _PROJECT_LAUNCH_ATTEMPTED
+    if _prompt_ready(page):
+        return page
     url = page.url or ""
-
-    # Mặc định luôn vào /tools/flow (hỗ trợ locale /fx/vi/tools/flow)
-    if not re.search(r"labs\.google/fx(?:/[a-z]{2})?/tools/flow(?:/project)?", url):
+    if "flow.google.com" not in url:
+        page.goto("https://flow.google.com", wait_until="domcontentloaded", timeout=30000)
+        time.sleep(1.5)
+        url = page.url or ""
+    if re.search(r"https://flow\.google\.com/project/", url, re.I):
         try:
-            page.goto("https://flow.google.com", wait_until="domcontentloaded", timeout=30000)
-            time.sleep(1.0)
+            page.locator("flow-prompt-box.prompt-box-container, flow-prompt-box").first.wait_for(state="visible", timeout=20000)
         except Exception:
             pass
-
-    # Bấm New project với nhiều fallback
-    clicked = False
-    selectors = [
-        "button:has-text('New project')",
-        "button:has-text('Dự án mới')",
-        "button:has-text('Tạo dự án')",
-        "a:has-text('New project')",
-        "[role='button']:has-text('New project')",
-        "button[id*='new' i]",
-        "button[data-testid*='new' i]",
-    ]
-    for sel in selectors:
-        if clicked:
-            break
+        return page
+    if _PROJECT_LAUNCH_ATTEMPTED:
         try:
-            loc = page.locator(sel)
-            if loc.count() > 0 and loc.first.is_visible():
-                try:
-                    loc.first.click(timeout=4000)
-                except Exception:
-                    loc.first.click(timeout=4000, force=True)
-                time.sleep(1.2)
-                clicked = True
+            page.locator("flow-prompt-box.prompt-box-container, flow-prompt-box").first.wait_for(state="visible", timeout=20000)
         except Exception:
             pass
-
-    # Fallback: thử click theo text regex tổng quát
-    if not clicked:
-        try:
-            new_btn = page.locator("button,[role='button'],a,[role='link']").filter(
-                has_text=re.compile(r"new\s*project|dự\s*án\s*mới|tạo\s*dự\s*án|new", re.I)
-            )
-            if new_btn.count() > 0:
-                try:
-                    new_btn.first.click(timeout=4000)
-                except Exception:
-                    new_btn.first.click(timeout=4000, force=True)
-                time.sleep(1.2)
-                clicked = True
-        except Exception:
-            pass
-
-    # Không goto thẳng /project nữa.
-    # Bắt buộc đi qua /tools/flow rồi click New project để UI đúng trạng thái.
+        return page
+    launch = page.locator(
+        "button[aria-label='Dự án mới'],button[aria-label='New project'],"
+        "a[aria-label='Dự án mới'],a[aria-label='New project'],"
+        "button:has-text('Dự án mới'),button:has-text('New project'),"
+        "a:has-text('Dự án mới'),a:has-text('New project')"
+    ).first
+    if launch.count() <= 0 or not launch.is_visible():
+        raise RuntimeError("flow_new_project_button_not_found")
+    _PROJECT_LAUNCH_ATTEMPTED = True
+    try:
+        launch.click(timeout=5000)
+    except Exception:
+        launch.click(timeout=5000, force=True)
+    try:
+        page.locator("flow-prompt-box.prompt-box-container, flow-prompt-box").first.wait_for(state="visible", timeout=20000)
+    except Exception:
+        raise RuntimeError("flow_project_prompt_not_ready_after_single_click")
     return page
-
 
 def capture_startup_screenshot(page):
     try:
@@ -261,7 +248,7 @@ def find_input_box(page):
                 pass
 
         if not retried_new_project:
-            _try_click_new_project(page)
+            ensure_project_page(page)
             retried_new_project = True
 
         time.sleep(0.5)
@@ -548,27 +535,26 @@ def apply_flow_settings(page, args):
               };
               const closeMenus = () => document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',keyCode:27,bubbles:true,cancelable:true,composed:true}));
               const norm = (x) => String(x||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
-              const tabIcon = (tab) => (tab?.querySelector('i')?.textContent || '').trim();
+              const tabIcon = (tab) => (tab?.querySelector('mat-icon,i')?.textContent || '').trim();
               const tabText = (tab) => (tab?.innerText || tab?.textContent || '').trim();
               const isActive = (tab) => {
                 if (!tab) return false;
-                const state = (tab.getAttribute('data-state') || tab.getAttribute('aria-selected') || '').toLowerCase();
+                const state = (tab.getAttribute('aria-checked') || tab.getAttribute('data-state') || tab.getAttribute('aria-selected') || '').toLowerCase();
                 const cls = (tab.className || '').toString().toLowerCase();
                 return state === 'active' || state === 'true' || cls.includes('active');
               };
               const openPanel = async () => {
-                let panel = document.querySelector('[role="menu"][data-state="open"]');
-                if (panel) return panel;
-                const triggers = Array.from(document.querySelectorAll("button[aria-haspopup='menu']")).filter(visible);
-                const trigger = triggers.find(b => /veo|banana|imagen|fast|lite|quality|16:9|9:16|x1|x2|x3|x4/i.test(b.innerText||''))
-                  || v("//button[@aria-haspopup='menu' and .//div[@data-type='button-overlay'] and text()[normalize-space() != '']]");
-                if (!trigger) return null;
-                clickExt(trigger); await p(1200);
-                return document.querySelector('[role="menu"][data-state="open"]');
+                let panel = document.querySelector('.cdk-overlay-pane flow-prompt-box-settings.settings-content-overlay, .cdk-overlay-pane flow-prompt-box-settings');
+                if (panel && visible(panel)) return panel;
+                const trigger = document.querySelector('flow-prompt-box button.settings-trigger-button[aria-label="Điều kiện kích hoạt cài đặt"], flow-prompt-box button.settings-trigger-button');
+                if (!trigger || !visible(trigger)) return null;
+                clickExt(trigger); await p(900);
+                panel = document.querySelector('.cdk-overlay-pane flow-prompt-box-settings.settings-content-overlay, .cdk-overlay-pane flow-prompt-box-settings');
+                return panel && visible(panel) ? panel : null;
               };
               const panel = await openPanel();
               if (!panel) return {ok:false, step:'panel_missing'};
-              const allTabs = () => Array.from((document.querySelector('[role="menu"][data-state="open"]') || panel || document).querySelectorAll("button[role='tab'].flow_tab_slider_trigger, button[role='tab']")).filter(visible);
+              const allTabs = () => Array.from(panel.querySelectorAll("flow-toggles button[role='radio'], button[role='tab']")).filter(visible);
               const sameGroup = (a,b) => {
                 const pa = a.closest('[role="tablist"]') || a.parentElement;
                 const pb = b.closest('[role="tablist"]') || b.parentElement;
@@ -613,20 +599,19 @@ def apply_flow_settings(page, args):
               let modelRes = {ok:true, skipped: cfg.model === 'custom'};
               if (cfg.model !== 'custom') {
                 await openPanel();
-                const buttons = () => Array.from((document.querySelector('[role="menu"][data-state="open"]') || document).querySelectorAll('button')).filter(visible);
-                let trigger = buttons().find(b => (b.getAttribute('aria-haspopup')||'').includes('menu') && /veo|banana|imagen|omni|fast|lite|quality/i.test(b.innerText||b.textContent||''))
-                  || buttons().find(b => matchAlias(b.innerText||b.textContent||''));
+                const buttons = () => Array.from(panel.querySelectorAll('button')).filter(visible);
+                let trigger = panel.querySelector('button[aria-label="Chọn nhóm mô hình"][aria-haspopup="menu"]');
                 const before = trigger ? (trigger.innerText || trigger.textContent || '') : '';
                 if (trigger && matchAlias(before)) {
                   modelRes = {ok:true, already:true, before, aliases};
                 } else if (trigger) {
                   clickExt(trigger); await p(750);
-                  const opts = Array.from(document.querySelectorAll('[role="menuitem"] button, [role="option"], button')).filter(visible);
+                  const modelPanel=document.querySelector('.cdk-overlay-pane .flow-model-picker-panel'); const opts = Array.from((modelPanel||document.createElement('div')).querySelectorAll('[role="menuitem"], [role="option"], button')).filter(visible);
                   const exact = aliases[0];
                   const btn = cfg.model === 'omni_flash' ? (opts.find(b => norm(b.innerText||b.textContent||'').trim() === 'omni flash') || opts.find(b => norm(b.innerText||b.textContent||'').trim() === 'omni') || opts.find(b => norm(b.innerText||b.textContent||'').includes('omni flash'))) : (opts.find(b => norm(b.innerText||b.textContent||'').trim() === norm(exact).trim()) || opts.find(b => matchAlias(b.innerText||b.textContent||''))); 
                   if (btn) { clickExt(btn); await p(1500); }
                   await openPanel();
-                  const afterBtn = buttons().find(b => (b.getAttribute('aria-haspopup')||'').includes('menu') && /veo|banana|imagen|omni|fast|lite|quality/i.test(b.innerText||b.textContent||'')) || buttons().find(b => /veo|banana|imagen|omni|fast|lite|quality/i.test(b.innerText||b.textContent||''));
+                  const afterBtn = panel.querySelector('button[aria-label="Chọn nhóm mô hình"][aria-haspopup="menu"]');
                   const after = afterBtn ? (afterBtn.innerText || afterBtn.textContent || '') : '';
                   modelRes = {ok:!!btn && matchAlias(after), before, after, clicked:btn ? (btn.innerText||btn.textContent||'') : '', aliases};
                 } else {
@@ -652,38 +637,9 @@ def apply_flow_settings(page, args):
     except Exception as e:
         log_line(f"[flow] settings apply exception/fallback: {e}")
 
-    # One-time fallback only: force correct mode first, then sub-mode/model/ratio/count/duration.
-    fallback_ok = False
-    try:
-        log_line(f"[flow] one-time fallback force settings: task={task_mode}, model={model_key}")
-        if not apply_task_mode(page, task_mode):
-            raise RuntimeError("task_mode_not_exact")
-        time.sleep(0.45)
-        if task_mode == "createvideo":
-            if not apply_video_sub_mode(page, args.video_sub_mode):
-                raise RuntimeError("video_sub_mode_not_exact")
-            time.sleep(0.25)
-        apply_model(page, model_key)
-        time.sleep(0.35)
-        apply_aspect_ratio(page, args.flow_aspect_ratio)
-        time.sleep(0.25)
-        apply_output_count(page, args.flow_count)
-        time.sleep(0.25)
-        if model_key == "omni_flash" and getattr(args, "omni_duration", ""):
-            try:
-                page.locator("button[role='tab'],button").filter(has_text=re.compile(rf"^{re.escape(args.omni_duration)}$|^{re.escape(args.omni_duration.replace('s',' s'))}$", re.I)).first.click(timeout=1800)
-                time.sleep(0.2)
-            except Exception:
-                pass
-        # Verify again with JS result on next loop is unreliable; only accept fallback if no exception.
-        fallback_ok = True
-    except Exception as e:
-        log_line(f"[flow] settings one-time fallback failed: {e}")
-    close_open_menus(page)
-    if not fallback_ok:
-        return False
-    return True
-
+    # Không dùng fallback selector toàn trang: có thể bấm nhầm nút ba chấm header.
+    log_line("[flow] exact prompt settings mapping failed; stopping without ambiguous clicks")
+    return False
 
 def get_box_text(box):
     try:
