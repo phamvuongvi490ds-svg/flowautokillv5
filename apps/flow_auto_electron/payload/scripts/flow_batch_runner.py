@@ -275,9 +275,6 @@ def focus_prompt_box(page, box):
     return False
 
 MODEL_LABELS = {
-
-
-MODEL_LABELS = {
     "default": "Veo 3.1 - Fast",
     "veo3_lite_low_priority": "Veo 3.1 - Lite [Lower Priority]",
     "veo3_lite": "Veo 3.1 - Lite",
