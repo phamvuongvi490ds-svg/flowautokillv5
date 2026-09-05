@@ -40,7 +40,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cdp", default="http://127.0.0.1:18800")
     ap.add_argument("--accounts-url", default="https://accounts.google.com")
-    ap.add_argument("--flow-url", default="https://labs.google/fx/tools/flow")
+    ap.add_argument("--flow-url", default="https://flow.google.com")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 

@@ -143,7 +143,7 @@ def ensure_project_page(page):
     # Mặc định luôn vào /tools/flow (hỗ trợ locale /fx/vi/tools/flow)
     if not re.search(r"labs\.google/fx(?:/[a-z]{2})?/tools/flow(?:/project)?", url):
         try:
-            page.goto("https://labs.google/fx/vi/tools/flow", wait_until="domcontentloaded", timeout=30000)
+            page.goto("https://flow.google.com", wait_until="domcontentloaded", timeout=30000)
             time.sleep(1.0)
         except Exception:
             pass
@@ -2175,7 +2175,7 @@ def run(args):
         if not page:
             ctx = browser.contexts[0]
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
-            page.goto("https://labs.google/fx/vi/tools/flow", wait_until="domcontentloaded", timeout=30000)
+            page.goto("https://flow.google.com", wait_until="domcontentloaded", timeout=30000)
             time.sleep(1.0)
 
         page = ensure_project_page(page)

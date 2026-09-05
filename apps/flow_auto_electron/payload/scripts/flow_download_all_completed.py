@@ -9,7 +9,7 @@ from playwright.sync_api import sync_playwright
 def find_flow_page(browser):
     for ctx in browser.contexts:
         for page in ctx.pages:
-            if "labs.google/fx/tools/flow" in (page.url or ""):
+            if "flow.google.com" in (page.url or ""):
                 return page
     return None
 

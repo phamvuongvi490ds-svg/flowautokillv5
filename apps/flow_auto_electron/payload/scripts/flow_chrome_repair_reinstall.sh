@@ -7,7 +7,7 @@ set -euo pipefail
 
 WORKSPACE="${FLOW_WORKSPACE:-$HOME/.openclaw/workspace}"
 CHROME_USER_DATA="${FLOW_CHROME_USER_DATA:-$HOME/.config/google-chrome-flow}"
-FLOW_URL="${FLOW_START_URL:-https://labs.google/fx/tools/flow}"
+FLOW_URL="${FLOW_START_URL:-https://flow.google.com}"
 
 WINDOW_STATE="${FLOW_WINDOW_STATE:-normal}"
 WINDOW_W="${FLOW_WINDOW_WIDTH:-1280}"

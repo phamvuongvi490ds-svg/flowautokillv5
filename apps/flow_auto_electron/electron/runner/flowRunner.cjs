@@ -19,7 +19,7 @@ async function clickIcon(page, icon){ const loc=page.locator(`text=${icon}`).las
 async function ensureProjectPage(page){
   const url=page.url()||'';
   if(!/labs\.google\/fx(?:\/[a-z]{2})?\/tools\/flow/.test(url)){
-    await page.goto('https://labs.google/fx/vi/tools/flow',{waitUntil:'domcontentloaded',timeout:30000}).catch(()=>{});
+    await page.goto('https://flow.google.com',{waitUntil:'domcontentloaded',timeout:30000}).catch(()=>{});
     await sleep(1200);
   }
   // Nếu đã có ô prompt thì đang ở editor/project rồi.
