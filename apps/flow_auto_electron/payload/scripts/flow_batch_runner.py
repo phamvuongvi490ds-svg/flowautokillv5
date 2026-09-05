@@ -227,35 +227,54 @@ def _try_click_new_project(page):
 
 
 def find_input_box(page):
-    # Chờ editor sẵn sàng sau New project
+    """Return only the rendered ProseMirror inside Flow's prompt composer."""
     deadline = time.time() + 30
     retried_new_project = False
-    selectors = [
-        'div[role="textbox"][contenteditable="true"]',
-        'div[contenteditable="true"]',
-        'textarea',
-        'input[type="text"]',
-    ]
+    selector = 'flow-prompt-box.prompt-box-container div.ProseMirror[contenteditable="true"]'
 
     while time.time() < deadline:
-        for sel in selectors:
-            try:
-                boxes = page.locator(sel)
-                count = boxes.count()
-                for i in range(count - 1, -1, -1):
-                    b = boxes.nth(i)
-                    if b.is_visible():
-                        return b
-            except Exception:
-                pass
+        try:
+            boxes = page.locator(selector)
+            for i in range(boxes.count()):
+                box = boxes.nth(i)
+                if box.is_visible() and box.is_enabled():
+                    return box
+        except Exception:
+            pass
 
         if not retried_new_project:
             ensure_project_page(page)
             retried_new_project = True
-
         time.sleep(0.5)
 
-    raise RuntimeError("Không tìm thấy ô nhập prompt")
+    raise RuntimeError("flow_prompt_editor_not_found")
+
+def focus_prompt_box(page, box):
+    """Close settings overlays, click the exact editor and verify DOM focus."""
+    close_open_menus(page)
+    try:
+        page.locator('.cdk-overlay-pane flow-prompt-box-settings.settings-content-overlay').wait_for(
+            state='hidden', timeout=3000
+        )
+    except Exception:
+        pass
+
+    for _ in range(3):
+        try:
+            box.scroll_into_view_if_needed(timeout=3000)
+            box.click(timeout=4000, position={'x': 24, 'y': 20})
+            focused = box.evaluate(
+                "el => document.activeElement === el || el.contains(document.activeElement)"
+            )
+            if focused:
+                return True
+        except Exception:
+            pass
+        close_open_menus(page)
+        time.sleep(0.25)
+    return False
+
+MODEL_LABELS = {
 
 
 MODEL_LABELS = {
@@ -791,13 +810,11 @@ def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retr
             # Ưu tiên find_input_box đã có sẵn logic New Project
             box = find_input_box(page)
             
-            # Click vào tọa độ trung tâm để đảm bảo focus sâu vào editor
-            rect = box.bounding_box()
-            if rect:
-                page.mouse.click(rect['x'] + rect['width']/2, rect['y'] + rect['height']/2)
-            else:
-                box.click(force=True)
-            
+            if not focus_prompt_box(page, box):
+                log_line(f"[flow] prompt focus failed on attempt {attempt}")
+                time.sleep(0.4)
+                continue
+
             time.sleep(0.3)
             page.keyboard.press("Control+A")
             page.keyboard.press("Backspace")
