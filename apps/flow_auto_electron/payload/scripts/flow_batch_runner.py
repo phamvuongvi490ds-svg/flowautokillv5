@@ -127,11 +127,15 @@ def save_state(path: Path, data: dict):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def find_flow_page(browser):
-    for context in browser.contexts:
-        for page in context.pages:
-            if "flow.google.com" in (page.url or ""):
-                return page
+def find_flow_page(browser, timeout=25):
+    """Wait for the single Flow tab launched by Electron; never navigate/reload it."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for context in browser.contexts:
+            for page in context.pages:
+                if "flow.google.com" in (page.url or ""):
+                    return page
+        time.sleep(0.25)
     return None
 
 _PROJECT_LAUNCH_ATTEMPTED = False
@@ -148,9 +152,7 @@ def ensure_project_page(page):
         return page
     url = page.url or ""
     if "flow.google.com" not in url:
-        page.goto("https://flow.google.com", wait_until="domcontentloaded", timeout=30000)
-        time.sleep(1.5)
-        url = page.url or ""
+        raise RuntimeError("flow_page_not_ready_without_reload")
     if re.search(r"https://flow\.google\.com/project/", url, re.I):
         try:
             page.locator("flow-prompt-box.prompt-box-container, flow-prompt-box").first.wait_for(state="visible", timeout=20000)
@@ -2129,10 +2131,7 @@ def run(args):
         browser = p.chromium.connect_over_cdp(args.cdp)
         page = find_flow_page(browser)
         if not page:
-            ctx = browser.contexts[0]
-            page = ctx.pages[0] if ctx.pages else ctx.new_page()
-            page.goto("https://flow.google.com", wait_until="domcontentloaded", timeout=30000)
-            time.sleep(1.0)
+            raise RuntimeError("flow_tab_not_ready_after_electron_launch")
 
         page = ensure_project_page(page)
         # Do not force the Flow browser window to front. Users may intentionally keep it hidden/minimized.

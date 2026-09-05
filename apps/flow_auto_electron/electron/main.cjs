@@ -1063,15 +1063,21 @@ function chromeCandidates(){
 }
 function wait(ms){return new Promise(r=>setTimeout(r,ms));}
 async function ensureCdpOn(port=CDP_PORT, profile=CDP_PROFILE){
-  try{ const r=await fetch(`http://127.0.0.1:${port}/json/version`); if(r.ok) return {ok:true, already:true, port}; }catch{}
+  try{ const r=await fetch(`http://127.0.0.1:${port}/json`); if(r.ok){ const tabs=await r.json(); if(tabs.some(x=>x.type==='page'&&/flow\.google\.com/i.test(x.url||''))) return {ok:true,already:true,port}; } }catch{}
   fs.mkdirSync(profile,{recursive:true});
   forceChromeLanguagePrefs();
   const exe=chromeCandidates().find(x=>x && fs.existsSync(x));
   if(!exe) return {ok:false,error:'chrome_not_found'};
   const args=[`--remote-debugging-port=${port}`,`--user-data-dir=${profile}`,'--lang=vi-VN','--accept-lang=vi-VN,vi,en-US,en','--disable-features=Translate','--no-first-run','--no-default-browser-check','https://flow.google.com'];
   const p=spawn(exe,args,{detached:true,stdio:'ignore',windowsHide:true}); p.unref();
-  for(let i=0;i<40;i++){ try{ const r=await fetch(`http://127.0.0.1:${port}/json/version`); if(r.ok) return {ok:true, launched:true, port}; }catch{} await wait(500); }
-  return {ok:false,error:'cdp_not_ready',port};
+  for(let i=0;i<60;i++){
+    try{
+      const r=await fetch(`http://127.0.0.1:${port}/json`);
+      if(r.ok){ const tabs=await r.json(); if(tabs.some(x=>x.type==='page'&&/flow\.google\.com/i.test(x.url||''))) return {ok:true,launched:true,port}; }
+    }catch{}
+    await wait(500);
+  }
+  return {ok:false,error:'flow_tab_not_ready',port};
 }
 async function ensureCdp(){ return ensureCdpOn(CDP_PORT, CDP_PROFILE); }
 async function ensureCdpThreads(n, profiles=[]){ const out=[]; for(let i=0;i<n;i++){ const port=CDP_PORT+i; const profile=profiles&&profiles[i]?flowProfileDir(profiles[i],i):(i===0?CDP_PROFILE:path.join(BASE_DIR,`chrome-cdp-profile-${i+1}`)); const r=await ensureCdpOn(port,profile); out.push({...r,profileDir:profile,accountEmail:profiles?.[i]?.accountEmail||''}); if(!r.ok) return {ok:false,error:r.error,port}; } return {ok:true,threads:n,cdp:out}; }
