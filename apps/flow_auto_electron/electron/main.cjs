@@ -1075,6 +1075,35 @@ async function ensureCdpOn(port=CDP_PORT, profile=CDP_PROFILE){
 }
 async function ensureCdp(){ return ensureCdpOn(CDP_PORT, CDP_PROFILE); }
 async function ensureCdpThreads(n, profiles=[]){ const out=[]; for(let i=0;i<n;i++){ const port=CDP_PORT+i; const profile=profiles&&profiles[i]?flowProfileDir(profiles[i],i):(i===0?CDP_PROFILE:path.join(BASE_DIR,`chrome-cdp-profile-${i+1}`)); const r=await ensureCdpOn(port,profile); out.push({...r,profileDir:profile,accountEmail:profiles?.[i]?.accountEmail||''}); if(!r.ok) return {ok:false,error:r.error,port}; } return {ok:true,threads:n,cdp:out}; }
+
+// TEMPORARY Flow UI recorder. Remove after selectors are remapped and verified.
+let flowDebug={active:false,ws:null,timer:null,dir:'',seq:0,events:[]};
+async function cdpPageSocket(){
+  const tabs=await (await fetch(`http://127.0.0.1:${CDP_PORT}/json`)).json();
+  const tab=tabs.find(x=>x.type==='page'&&/flow\.google\.com/i.test(x.url||''));
+  if(!tab?.webSocketDebuggerUrl) throw new Error('flow_debug_page_not_found');
+  return tab.webSocketDebuggerUrl;
+}
+function cdpClient(url){
+  const ws=new WebSocket(url);let id=0;const pending=new Map();
+  ws.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.id&&pending.has(m.id)){const q=pending.get(m.id);pending.delete(m.id);m.error?q.reject(Error(m.error.message)):q.resolve(m.result)}}catch{}};
+  const ready=new Promise((ok,bad)=>{ws.onopen=ok;ws.onerror=()=>bad(Error('flow_debug_cdp_connect_failed'))});
+  return {ws,send:async(method,params={})=>{await ready;return new Promise((resolve,reject)=>{const n=++id;pending.set(n,{resolve,reject});ws.send(JSON.stringify({id:n,method,params}));setTimeout(()=>{if(pending.delete(n))reject(Error('flow_debug_cdp_timeout'))},10000)})}};
+}
+const FLOW_DEBUG_INSTALL=`(()=>{if(window.__flowDebugInstalled)return;window.__flowDebugInstalled=true;window.__flowDebugQueue=[];
+const clean=s=>String(s||'').replace(/[\\w.+-]+@[\\w.-]+\\.[A-Za-z]{2,}/g,'[email]').replace(/(?:token|authorization|cookie|password|access[_ -]?key)\\s*[:=]\\s*[^\\s]+/ig,'[redacted]').slice(0,180);
+const info=el=>{const icons=[...el.querySelectorAll('mat-icon,i')].map(x=>clean(x.textContent)).filter(Boolean).slice(0,3);const ancestors=[];for(let p=el.parentElement;p&&ancestors.length<8;p=p.parentElement){if(/^FLOW-/.test(p.tagName))ancestors.push(p.tagName.toLowerCase())}return {tag:el.tagName.toLowerCase(),role:el.getAttribute('role')||'',ariaLabel:clean(el.getAttribute('aria-label')),title:clean(el.getAttribute('title')),text:clean(el.innerText||el.textContent),icon:icons,classes:[...el.classList].filter(x=>!/ng-|mat-ripple|focus|hover/i.test(x)).slice(0,12),ancestors};};
+document.addEventListener('click',e=>{const el=e.target.closest('button,a,[role="button"],[role="menuitem"],[role="option"],[role="tab"],input,textarea,[contenteditable="true"]')||e.target;window.__flowDebugQueue.push({time:new Date().toISOString(),url:location.origin+location.pathname,target:info(el)});},true);})();`;
+const FLOW_DEBUG_DRAIN=`(()=>{const q=window.__flowDebugQueue||[];window.__flowDebugQueue=[];return q})()`;
+const FLOW_DEBUG_DOM=`(()=>{const c=document.body.cloneNode(true);c.querySelectorAll('script,style,link,meta,iframe,noscript,input,textarea,[contenteditable="true"]').forEach(e=>{if(/^(INPUT|TEXTAREA)$/.test(e.tagName)||e.hasAttribute('contenteditable')){e.removeAttribute('value');e.textContent='[input removed]'}else e.remove()});c.querySelectorAll('*').forEach(e=>[...e.attributes].forEach(a=>{if(/nonce|token|email|account|src|href|value|data-user/i.test(a.name))e.removeAttribute(a.name)}));let h=c.innerHTML.replace(/[\\w.+-]+@[\\w.-]+\\.[A-Za-z]{2,}/g,'[email]').replace(/(?:token|authorization|cookie|password|access[_ -]?key)\\s*[:=]\\s*[^<\\s]+/ig,'[redacted]');return '<!doctype html><html><body>'+h+'</body></html>'})()`;
+async function stopFlowDebug(){if(flowDebug.timer)clearInterval(flowDebug.timer);flowDebug.timer=null;flowDebug.active=false;try{flowDebug.ws?.close()}catch{}flowDebug.ws=null;return {ok:true,active:false,dir:flowDebug.dir,count:flowDebug.events.length};}
+async function startFlowDebug(){
+  await stopFlowDebug();const c=await cdpClient(await cdpPageSocket());flowDebug={active:true,ws:c.ws,timer:null,dir:path.join(DEBUG_DIR,`flow-interaction-${Date.now()}`),seq:0,events:[]};fs.mkdirSync(flowDebug.dir,{recursive:true});await c.send('Runtime.evaluate',{expression:FLOW_DEBUG_INSTALL});
+  flowDebug.timer=setInterval(async()=>{if(!flowDebug.active)return;try{await c.send('Runtime.evaluate',{expression:FLOW_DEBUG_INSTALL});const r=await c.send('Runtime.evaluate',{expression:FLOW_DEBUG_DRAIN,returnByValue:true});for(const ev of r.result?.value||[]){const n=String(++flowDebug.seq).padStart(3,'0');flowDebug.events.push(ev);fs.writeFileSync(path.join(flowDebug.dir,'events.json'),JSON.stringify(flowDebug.events,null,2));fs.writeFileSync(path.join(flowDebug.dir,'current-url.txt'),ev.url);const d=await c.send('Runtime.evaluate',{expression:FLOW_DEBUG_DOM,returnByValue:true});fs.writeFileSync(path.join(flowDebug.dir,`${n}-dom.html`),d.result?.value||'');const shot=await c.send('Page.captureScreenshot',{format:'jpeg',quality:65,captureBeyondViewport:false});fs.writeFileSync(path.join(flowDebug.dir,`${n}-screen.jpg`),Buffer.from(shot.data,'base64'));}}catch(e){fs.appendFileSync(path.join(flowDebug.dir,'recorder-errors.log'),String(e.message||e)+'\\n')}} ,400);
+  return {ok:true,active:true,dir:flowDebug.dir};
+}
+async function exportFlowDebug(){await stopFlowDebug();if(!flowDebug.dir||!fs.existsSync(flowDebug.dir))return {ok:false,error:'flow_debug_recording_missing'};const r=await dialog.showSaveDialog({title:'Xuất gói Debug Flow',defaultPath:`flow-interaction-debug-${Date.now()}.zip`,filters:[{name:'ZIP',extensions:['zip']}]});if(r.canceled||!r.filePath)return {ok:false,canceled:true};if(process.platform==='win32'){const q=x=>`'${String(x).replace(/'/g,"''")}'`;const z=spawnSync('powershell.exe',['-NoProfile','-Command',`Compress-Archive -Path ${q(path.join(flowDebug.dir,'*'))} -DestinationPath ${q(r.filePath)} -Force`],{encoding:'utf8',windowsHide:true});if(z.status!==0)return {ok:false,error:'flow_debug_zip_failed:'+z.stderr}}else{const z=spawnSync('zip',['-qr',r.filePath,'.'],{cwd:flowDebug.dir,encoding:'utf8'});if(z.status!==0)return {ok:false,error:'flow_debug_zip_failed:'+z.stderr}}return {ok:true,file:r.filePath,count:flowDebug.events.length};}
+
 function writePromptFile(name, text){ ensureDirs(); const file=path.join(JOB_DIR,name); const blocks=(text||'').split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean); fs.writeFileSync(file, blocks.join('\n\n')+'\n','utf8'); return file; }
 function saveGeneratedPrompts(jsonPath, fallbackText, outName){
   let prompts=[]; try{ const obj=JSON.parse(fs.readFileSync(jsonPath,'utf8')); if(obj.results) prompts=obj.results.filter(r=>r.ok&&r.prompt).map(r=>String(r.prompt).replace(/\s+/g,' ').trim()); if(obj.script?.scenes) prompts=obj.script.scenes.sort((a,b)=>(a.sceneNumber||0)-(b.sceneNumber||0)).map(s=>String(s.prompt||'').replace(/\s+/g,' ').trim()).filter(Boolean); }catch{}
@@ -1181,6 +1210,9 @@ ipcMain.handle('flow:outputTimeline', async(_e,dirs=[])=>{
   }}catch(e){return {ok:false,error:'timeline_scan_failed:'+String(e.message||e),dir,items:[]}}
   return {ok:true,dir,items:[...byPrompt.values()].sort((a,b)=>a.prompt-b.prompt),...runState()};
 });
+ipcMain.handle('flow:debugStart', async()=>{try{await ensureCdp();return await startFlowDebug()}catch(e){return {ok:false,error:String(e.message||e)}}});
+ipcMain.handle('flow:debugStop', async()=>stopFlowDebug());
+ipcMain.handle('flow:debugExport', async()=>{try{return await exportFlowDebug()}catch(e){return {ok:false,error:String(e.message||e)}}});
 ipcMain.handle('flow:ensureCdp', async()=>ensureCdp());
 ipcMain.handle('flow:openProfileLogin', async(_e,profile,idx=0)=>{ const port=CDP_PORT+Number(idx||0); const dir=flowProfileDir(profile||{},Number(idx||0)); return ensureCdpOn(port,dir); });
 ipcMain.handle('prompt:saveGenerated', async(_e,file)=>{
