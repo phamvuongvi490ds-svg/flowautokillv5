@@ -262,9 +262,12 @@ def focus_prompt_box(page, box):
     for _ in range(3):
         try:
             box.scroll_into_view_if_needed(timeout=3000)
+            # Recorded working sequence clicks ProseMirror twice before typing.
+            box.click(timeout=4000, position={'x': 24, 'y': 20})
+            time.sleep(0.35)
             box.click(timeout=4000, position={'x': 24, 'y': 20})
             focused = box.evaluate(
-                "el => document.activeElement === el || el.contains(document.activeElement)"
+                "el => (document.activeElement === el || el.contains(document.activeElement)) && el.classList.contains('ProseMirror-focused')"
             )
             if focused:
                 return True
@@ -1293,30 +1296,21 @@ def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=
 
 
 def find_create_button(page):
-    # Cách 1: ưu tiên selector ổn định (aria/id/data-testid)
-    stable_selectors = [
-        "button[data-testid*='create' i]",
-        "button[id*='create' i]",
-        "button[aria-label*='create' i]",
-        "button[aria-label*='generate' i]",
-        "button[aria-label*='tạo' i]",
-        # UI hiện tại thường hiển thị icon text + nhãn Tạo
-        "button:has-text('arrow_forward'):has-text('Tạo')",
-        "button:has-text('arrow_forward'):has-text('Create')",
-    ]
-
-    for sel in stable_selectors:
-        try:
-            loc = page.locator(sel)
-            cnt = loc.count()
-            for i in range(cnt - 1, -1, -1):
-                btn = loc.nth(i)
-                if btn.is_visible() and btn.is_enabled():
-                    return btn
-        except Exception:
-            continue
-
-    raise RuntimeError("Không tìm thấy nút Create/Tạo theo selector ổn định")
+    # Exact selector recorded on the current Flow prompt composer.
+    selector = (
+        'flow-prompt-box.prompt-box-container '
+        'flow-generate-icon-button button.generate-icon-button[type="submit"]'
+        '[aria-label="Bắt đầu tạo"]'
+    )
+    try:
+        buttons = page.locator(selector)
+        for i in range(buttons.count()):
+            btn = buttons.nth(i)
+            if btn.is_visible() and btn.is_enabled():
+                return btn
+    except Exception:
+        pass
+    raise RuntimeError("flow_generate_button_not_ready")
 
 
 def classify_flow_error(page):
