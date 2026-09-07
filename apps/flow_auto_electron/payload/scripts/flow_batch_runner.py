@@ -822,34 +822,67 @@ def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retr
     prompt = (prompt or "").strip()
     if not prompt:
         return True
+    expected = " ".join(prompt.split())
 
     for attempt in range(1, retries + 1):
         try:
             box = find_input_box(page)
-            if not focus_prompt_box(page, box):
-                log_line(f"[flow] prompt focus failed on attempt {attempt}")
-                continue
+            focused = focus_prompt_box(page, box)
+            if focused:
+                modifier = "Meta" if sys.platform == "darwin" else "Control"
+                page.keyboard.press(f"{modifier}+A")
+                page.keyboard.press("Backspace")
+                page.keyboard.type(prompt, delay=max(1, int(type_delay_ms or 12)))
+                time.sleep(0.4)
 
-            modifier = "Meta" if sys.platform == "darwin" else "Control"
-            page.keyboard.press(f"{modifier}+A")
-            page.keyboard.press("Backspace")
-            time.sleep(0.2)
-
-            # ProseMirror requires a live browser selection/caret. Keyboard
-            # insertText drives its beforeinput/input transaction correctly;
-            # locator.fill() and direct innerText assignment can be ignored.
-            page.keyboard.type(prompt, delay=max(1, int(type_delay_ms or 12)))
-            time.sleep(0.5)
             text = box.evaluate("el => (el.innerText || el.textContent || '').trim()") or ""
             normalized = " ".join(str(text).split())
-            expected = " ".join(prompt.split())
+            if normalized[:40] != expected[:40]:
+                # Focus-independent contenteditable fallback. execCommand emits
+                # the browser editing transaction that ProseMirror observes.
+                result = box.evaluate(
+                    """(el, text) => {
+                      el.focus({preventScroll:true});
+                      const sel=window.getSelection();
+                      const all=document.createRange(); all.selectNodeContents(el);
+                      sel.removeAllRanges(); sel.addRange(all);
+                      let deleted=false, inserted=false;
+                      try { deleted=document.execCommand('delete', false); } catch {}
+                      const caret=document.createRange(); caret.selectNodeContents(el); caret.collapse(false);
+                      sel.removeAllRanges(); sel.addRange(caret);
+                      try { inserted=document.execCommand('insertText', false, text); } catch {}
+                      if (!inserted) {
+                        el.replaceChildren(document.createTextNode(text));
+                        const end=document.createRange(); end.selectNodeContents(el); end.collapse(false);
+                        sel.removeAllRanges(); sel.addRange(end);
+                        el.dispatchEvent(new InputEvent('input', {bubbles:true, composed:true,
+                          inputType:'insertText', data:text}));
+                      }
+                      el.dispatchEvent(new Event('change', {bubbles:true, composed:true}));
+                      return {deleted,inserted,text:(el.innerText||el.textContent||'').trim(),active:document.activeElement===el};
+                    }""",
+                    prompt,
+                )
+                log_line(f"[flow] prompt DOM-edit fallback attempt {attempt}: {result}")
+                time.sleep(0.5)
+                normalized = " ".join(str(box.evaluate("el => (el.innerText || el.textContent || '').trim()") or "").split())
+
             if len(normalized) >= min(5, len(expected)) and normalized[:40] == expected[:40]:
-                log_line(f"[flow] prompt typed and verified on attempt {attempt}")
-                return True
-            log_line(f"[flow] prompt verify failed on attempt {attempt}: length={len(normalized)}")
+                # Flow must also enable its exact submit button; text in DOM
+                # alone is not enough to prove ProseMirror accepted the edit.
+                submit = page.locator(
+                    'flow-prompt-box.prompt-box-container flow-generate-icon-button '
+                    'button.generate-icon-button[type="submit"][aria-label="Bắt đầu tạo"]'
+                )
+                enabled = submit.count() == 1 and submit.is_visible() and submit.is_enabled()
+                log_line(f"[flow] prompt verified attempt {attempt}: enabled={enabled} length={len(normalized)}")
+                if enabled:
+                    return True
+            else:
+                log_line(f"[flow] prompt verify failed attempt {attempt}: length={len(normalized)}")
         except Exception as e:
             log_line(f"[flow] prompt input attempt {attempt} failed: {e}")
-        time.sleep(0.5)
+        time.sleep(0.6)
     return False
 
 def _open_plus_menu(page, prompt_box=None):
