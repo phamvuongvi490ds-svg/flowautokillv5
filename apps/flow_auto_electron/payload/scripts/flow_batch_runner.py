@@ -267,7 +267,16 @@ def focus_prompt_box(page, box):
             time.sleep(0.35)
             box.click(timeout=4000, position={'x': 24, 'y': 20})
             focused = box.evaluate(
-                "el => (document.activeElement === el || el.contains(document.activeElement)) && el.classList.contains('ProseMirror-focused')"
+                """el => {
+                  el.focus();
+                  const range=document.createRange();
+                  range.selectNodeContents(el);
+                  range.collapse(false);
+                  const sel=window.getSelection();
+                  sel.removeAllRanges();
+                  sel.addRange(range);
+                  return (document.activeElement === el || el.contains(document.activeElement)) && sel.rangeCount === 1;
+                }"""
             )
             if focused:
                 return True
@@ -803,62 +812,38 @@ def human_type_text(page, text: str, base_delay_ms: float = 12.0):
 
 def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retries: int = 3):
     prompt = (prompt or "").strip()
-    if not prompt: return True
+    if not prompt:
+        return True
 
     for attempt in range(1, retries + 1):
         try:
-            # Ưu tiên find_input_box đã có sẵn logic New Project
             box = find_input_box(page)
-            
             if not focus_prompt_box(page, box):
                 log_line(f"[flow] prompt focus failed on attempt {attempt}")
-                time.sleep(0.4)
                 continue
 
-            time.sleep(0.3)
-            page.keyboard.press("Control+A")
+            modifier = "Meta" if sys.platform == "darwin" else "Control"
+            page.keyboard.press(f"{modifier}+A")
             page.keyboard.press("Backspace")
             time.sleep(0.2)
-            
-            # Use Playwright's native fill() which handles events correctly for most editors
-            box.fill(prompt)
-            time.sleep(0.5)
-            
-            # Verify
-            txt = box.inner_text() or box.input_value() or ""
-            if len(txt.strip()) >= min(5, len(prompt)):
-                return True
-            
-            # Fallback 2: insert_text
+
+            # ProseMirror requires a live browser selection/caret. Keyboard
+            # insertText drives its beforeinput/input transaction correctly;
+            # locator.fill() and direct innerText assignment can be ignored.
             page.keyboard.insert_text(prompt)
             time.sleep(0.5)
-            if (box.inner_text() or box.input_value() or "").strip():
+            text = box.evaluate("el => (el.innerText || el.textContent || '').trim()") or ""
+            normalized = " ".join(str(text).split())
+            expected = " ".join(prompt.split())
+            if len(normalized) >= min(5, len(expected)) and normalized[:40] == expected[:40]:
+                log_line(f"[flow] prompt typed and verified on attempt {attempt}")
                 return True
-                
-            # Fallback 3: Strong JS injection with multiple events
-            page.evaluate("""
-                (args) => {
-                    const el = args.el;
-                    const val = args.txt;
-                    el.focus();
-                    if ('value' in el) {
-                        el.value = val;
-                    } else {
-                        el.innerText = val;
-                        el.textContent = val;
-                    }
-                    const evts = ['input', 'change', 'beforeinput', 'keydown', 'keyup'];
-                    evts.forEach(n => el.dispatchEvent(new Event(n, { bubbles: true, composed: true })));
-                }
-            """, {"el": box, "txt": prompt})
-            time.sleep(0.5)
-            if (box.inner_text() or box.input_value() or "").strip():
-                return True
-
+            log_line(f"[flow] prompt verify failed on attempt {attempt}: length={len(normalized)}")
         except Exception as e:
-            log_line(f"[flow] attempt {attempt} input error: {e}")
-        time.sleep(1.0)
+            log_line(f"[flow] prompt input attempt {attempt} failed: {e}")
+        time.sleep(0.5)
     return False
+
 def _open_plus_menu(page, prompt_box=None):
     # Ưu tiên click đúng dấu cộng nằm cạnh ô prompt (tránh click nhầm dấu cộng khu khác)
     try:
