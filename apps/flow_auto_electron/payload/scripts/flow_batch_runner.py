@@ -250,40 +250,48 @@ def find_input_box(page):
     raise RuntimeError("flow_prompt_editor_not_found")
 
 def focus_prompt_box(page, box):
-    """Close settings overlays, click the exact editor and verify DOM focus."""
+    """Reproduce the recorded physical click sequence on Flow's editor."""
     close_open_menus(page)
     try:
-        page.locator('.cdk-overlay-pane flow-prompt-box-settings.settings-content-overlay').wait_for(
-            state='hidden', timeout=3000
-        )
+        page.locator('.cdk-overlay-pane').wait_for(state='hidden', timeout=5000)
     except Exception:
         pass
 
-    for _ in range(3):
+    wrapper = page.locator(
+        'flow-prompt-box.prompt-box-container flow-rich-text-editor.prompt-input .prosemirror-editor'
+    )
+    for attempt in range(1, 4):
         try:
             box.scroll_into_view_if_needed(timeout=3000)
-            # Recorded working sequence clicks ProseMirror twice before typing.
-            box.click(timeout=4000, position={'x': 24, 'y': 20})
+            if wrapper.count() == 1 and wrapper.is_visible():
+                wrapper.click(timeout=4000, position={'x': 30, 'y': 24})
+                time.sleep(0.25)
+            rect = box.bounding_box()
+            if not rect:
+                raise RuntimeError('prompt_editor_has_no_box')
+            x = rect['x'] + min(36, max(12, rect['width'] / 4))
+            y = rect['y'] + min(26, max(10, rect['height'] / 2))
+            page.mouse.move(x, y, steps=8)
+            page.mouse.click(x, y)
             time.sleep(0.35)
-            box.click(timeout=4000, position={'x': 24, 'y': 20})
-            focused = box.evaluate(
+            page.mouse.click(x, y)
+            state = box.evaluate(
                 """el => {
-                  el.focus();
+                  el.focus({preventScroll:true});
                   const range=document.createRange();
-                  range.selectNodeContents(el);
-                  range.collapse(false);
-                  const sel=window.getSelection();
-                  sel.removeAllRanges();
-                  sel.addRange(range);
-                  return (document.activeElement === el || el.contains(document.activeElement)) && sel.rangeCount === 1;
+                  range.selectNodeContents(el); range.collapse(false);
+                  const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+                  return {active:document.activeElement===el, range:sel.rangeCount,
+                    editable:el.isContentEditable, cls:el.className};
                 }"""
             )
-            if focused:
+            log_line(f"[flow] prompt focus state attempt {attempt}: {state}")
+            if state and state.get('active') and state.get('range') == 1 and state.get('editable'):
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            log_line(f"[flow] prompt physical focus attempt {attempt} failed: {e}")
         close_open_menus(page)
-        time.sleep(0.25)
+        time.sleep(0.4)
     return False
 
 MODEL_LABELS = {
@@ -830,7 +838,7 @@ def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retr
             # ProseMirror requires a live browser selection/caret. Keyboard
             # insertText drives its beforeinput/input transaction correctly;
             # locator.fill() and direct innerText assignment can be ignored.
-            page.keyboard.insert_text(prompt)
+            page.keyboard.type(prompt, delay=max(1, int(type_delay_ms or 12)))
             time.sleep(0.5)
             text = box.evaluate("el => (el.innerText || el.textContent || '').trim()") or ""
             normalized = " ".join(str(text).split())
