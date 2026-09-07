@@ -845,7 +845,22 @@ def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retr
     return False
 
 def _open_plus_menu(page, prompt_box=None):
-    # Ưu tiên click đúng dấu cộng nằm cạnh ô prompt (tránh click nhầm dấu cộng khu khác)
+    # Exact add button recorded inside the current Flow prompt composer.
+    try:
+        button = page.locator(
+            'flow-prompt-box.prompt-box-container flow-add-menu '
+            'button.add-menu-trigger[aria-label="Thêm thành phần vào ô nhập câu lệnh"]'
+        )
+        if button.count() == 1 and button.is_visible():
+            button.click(timeout=4000)
+            page.locator('.cdk-overlay-pane flow-add-menu-popover-content').wait_for(
+                state='visible', timeout=5000
+            )
+            return True
+    except Exception:
+        pass
+
+    # Legacy fallback retained only inside the prompt composer.
     try:
         ok = page.evaluate(
             """
@@ -1099,65 +1114,37 @@ def _choose_uploaded_image_from_menu(page, image_path: Path):
 
 
 def _click_upload_image_item(page):
-    upload_item_selectors = [
-        "button:has-text('Upload image')",
-        "button:has-text('Upload an image')",
-        "button:has-text('Tải hình ảnh lên')",
-        "button:has-text('Tải ảnh lên')",
-        "[role='menuitem']:has-text('Upload image')",
-        "[role='menuitem']:has-text('Upload an image')",
-        "[role='menuitem']:has-text('Tải hình ảnh lên')",
-        "[role='option']:has-text('Upload image')",
-        "[role='option']:has-text('Upload an image')",
-    ]
-
-    for sel in upload_item_selectors:
-        try:
-            loc = page.locator(sel)
-            if loc.count() > 0 and loc.first.is_visible():
-                try:
-                    loc.first.click(timeout=3500)
-                except Exception:
-                    loc.first.click(timeout=3500, force=True)
-                time.sleep(0.35)
-                return True
-        except Exception:
-            pass
-
-    # fallback mạnh: click theo text trên mọi phần tử menu/list
+    """Click the exact upload action recorded in Flow's add-menu popover."""
+    selector = (
+        '.cdk-overlay-pane flow-add-menu-popover-content '
+        'button.sidebar-upload-btn:has-text("Tải nội dung nghe nhìn lên")'
+    )
     try:
-        ok = page.evaluate(
-            """
-            () => {
-              const visible = (el) => {
-                if (!el) return false;
-                const st = getComputedStyle(el);
-                if (!st || st.display === 'none' || st.visibility === 'hidden') return false;
-                const r = el.getBoundingClientRect();
-                return r.width > 6 && r.height > 6;
-              };
-              const texts = ['upload image','upload an image','tải hình ảnh lên','tải ảnh lên'];
-              const els = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"], button, div, span')).filter(visible);
-              for (const el of els) {
-                const t = (el.innerText || el.textContent || '').trim().toLowerCase();
-                if (!t) continue;
-                if (texts.some(x => t.includes(x))) {
-                  el.click();
-                  return true;
-                }
-              }
-              return false;
-            }
-            """
-        )
-        if ok:
-            time.sleep(0.35)
+        button = page.locator(selector)
+        if button.count() == 1 and button.is_visible():
+            button.click(timeout=4000)
             return True
     except Exception:
         pass
-
     return False
 
+def _add_uploaded_media_to_prompt(page, timeout_sec=60):
+    """Wait for Flow's uploaded-media detail pane, then attach it to prompt."""
+    selector = (
+        '.cdk-overlay-pane flow-add-menu-popover-content '
+        'flow-add-menu-detail-pane button.detail-add-to-prompt-btn:has-text("Thêm vào câu lệnh")'
+    )
+    try:
+        button = page.locator(selector)
+        button.wait_for(state='visible', timeout=int(timeout_sec * 1000))
+        button.click(timeout=5000)
+        page.locator('.cdk-overlay-pane flow-add-menu-popover-content').wait_for(
+            state='hidden', timeout=10000
+        )
+        return True
+    except Exception as e:
+        log_line(f"[flow] add uploaded media to prompt failed: {e}")
+        return False
 
 def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=True):
     """Extension-style image pipeline: upload to Flow library, then search by filename and attach.
@@ -1191,11 +1178,15 @@ def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=
             raise RuntimeError(f"extension_upload:cannot_inject_file:{fname}")
 
         log_line(f"[flow] extension-upload injected file: {fname}")
-        time.sleep(3.0)
+        if not _add_uploaded_media_to_prompt(page, timeout_sec=60):
+            raise RuntimeError(f"extension_upload:add_to_prompt_failed:{fname}")
+        log_line(f"[flow] uploaded media added to prompt: {fname}")
+        time.sleep(1.0)
+        return
     else:
         log_line(f"[flow] reuse uploaded ref from library: {fname}")
 
-    # Phase 2: attach by reopening picker and searching filename (extension-style)
+    # Reuse path only: reopen the library and attach an already uploaded file.
     attached = False
     for attempt in range(1, 6):
         try:
