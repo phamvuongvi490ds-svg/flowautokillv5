@@ -2309,17 +2309,21 @@ def run(args):
                     submitted = True
                     last_submit_at = time.monotonic()
                     log_line(f"[flow] prompt #{prompt_no} submitted; spacing clock started")
+                    continuous_batch = int(args.download_delay_prompts or 0) > 0 or bool(args.continuous_download)
                     submitted_tile_ids = capture_submitted_tile_ids(
                         page,
                         before_ids=pre_submit_tiles,
                         expected_count=1,
-                        timeout_sec=180,
+                        timeout_sec=1 if continuous_batch else 180,
                     )
                     log_line(f"[flow] prompt #{prompt_no} locked tile IDs: {submitted_tile_ids}")
-                    if not submitted_tile_ids:
+                    if not submitted_tile_ids and not continuous_batch:
                         raise RuntimeError("submitted_job_tile_not_created")
+                    if not submitted_tile_ids:
+                        log_line(f"[flow] prompt #{prompt_no} tile pending; continuous mode will resolve it from pre-submit baseline during FIFO download")
 
-                    time.sleep(2)
+                    if not continuous_batch:
+                        time.sleep(2)
                     fail_reason = classify_flow_error(page)
                     if fail_reason:
                         flow_rejected = True
