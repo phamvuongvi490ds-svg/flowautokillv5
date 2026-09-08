@@ -655,15 +655,17 @@ def apply_flow_settings(page, args):
               const ratioRes = await clickGroup(groupBy(['crop_16_9','crop_9_16','crop_square','crop_landscape','crop_portrait']), t => tabIcon(t) === ratioIcon, 'ratio');
               const countRes = await clickGroup(groupBy([], ['x1','x2','x3','x4','1x','2x','3x','4x']), t => tabText(t) === `x${cfg.count}` || tabText(t) === `${cfg.count}x`, 'count');
               const models = {
-                default:['Veo 3.1 - Fast','Veo 3.1 Fast','Veo 3 Fast','Fast'],
-                veo3_lite_low_priority:['Veo 3.1 - Lite [Lower Priority]'],
-                veo3_lite:['Veo 3.1 - Lite','Veo 3.1 Lite','Veo 3 Lite','Lite'],
-                veo3_fast:['Veo 3.1 - Fast','Veo 3.1 Fast','Veo 3 Fast','Fast'],
-                veo3_quality:['Veo 3.1 - Quality','Veo 3.1 Quality','Veo 3 Quality','Quality'],
-                nano_banana_pro:['Nano Banana Pro'], nano_banana2:['Nano Banana 2'], nano_banana2_lite:['Nano Banana 2 Lite'], nano_banana:['Nano Banana 2','Nano Banana'], imagen4:['Imagen 4'], omni_flash:['Omni 1.1 Flash']
+                default:'Veo 3.1 - Fast',
+                omni_flash:'Omni 1.1 Flash',
+                veo3_lite:'Veo 3.1 - Lite',
+                veo3_fast:'Veo 3.1 - Fast',
+                veo3_quality:'Veo 3.1 - Quality',
+                veo3_lite_low_priority:'Veo 3.1 - Lite [Lower Priority]',
+                nano_banana_pro:'Nano Banana Pro', nano_banana2:'Nano Banana 2', nano_banana2_lite:'Nano Banana 2 Lite', nano_banana:'Nano Banana 2', imagen4:'Imagen 4'
               };
-              const aliases = models[cfg.model] || (isImage ? models.nano_banana_pro : models.veo3_fast);
-              const matchAlias = (text) => aliases.some(a => { const t=norm(text).trim(), m=norm(a).trim(); if (!t || !m) return false; if (cfg.model === 'veo3_lite_low_priority') return t === norm('Veo 3.1 - Lite [Lower Priority]'); if (cfg.model === 'omni_flash') return t === m; if (cfg.model === 'nano_banana2') return t === 'nano banana 2' || t === 'banana 2'; if (cfg.model === 'nano_banana2_lite') return t === 'nano banana 2 lite' || t === 'banana 2 lite'; return t === m || (t.includes(m) && !(cfg.model === 'nano_banana2' && t.includes('lite'))); });
+              const exactModel = models[cfg.model] || (isImage ? models.nano_banana_pro : models.veo3_fast);
+              const matchAlias = (text) => norm(text).trim() === norm(exactModel).trim();
+              const aliases = [exactModel];
               let modelRes = {ok:true, skipped: cfg.model === 'custom'};
               if (cfg.model !== 'custom') {
                 await openPanel();
@@ -675,8 +677,7 @@ def apply_flow_settings(page, args):
                 } else if (trigger) {
                   clickExt(trigger); await p(750);
                   const modelPanel=document.querySelector('.cdk-overlay-pane .flow-model-picker-panel'); const opts = Array.from((modelPanel||document.createElement('div')).querySelectorAll('[role="menuitem"], [role="option"], button')).filter(visible);
-                  const exact = aliases[0];
-                  const btn = cfg.model === 'omni_flash' ? (opts.find(b => norm(b.innerText||b.textContent||'').trim() === 'omni 1 1 flash')) : (opts.find(b => norm(b.innerText||b.textContent||'').trim() === norm(exact).trim()) || opts.find(b => matchAlias(b.innerText||b.textContent||''))); 
+                  const btn = opts.find(b => matchAlias(b.innerText||b.textContent||''));
                   if (btn) { clickExt(btn); await p(1500); }
                   await openPanel();
                   const afterBtn = panel.querySelector('button[aria-label="Chọn nhóm mô hình"][aria-haspopup="menu"]');

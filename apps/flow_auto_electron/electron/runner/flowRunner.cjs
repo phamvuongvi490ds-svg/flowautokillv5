@@ -118,7 +118,7 @@ async function applyTaskMode(page){
 }
 async function applyOutputCount(page){ const c=String(count||'1'); return await clickText(page,[`x${c}`],800); }
 async function applyModel(page){
-  const labels={default:'Veo 3.1 - Fast',veo3_lite:'Veo 3.1 - Lite',veo3_fast:'Veo 3.1 - Fast',veo3_quality:'Veo 3.1 - Quality',nano_banana_pro:'Nano Banana Pro',nano_banana2:'Nano Banana 2',nano_banana:'Nano Banana 2',imagen4:'Imagen 4',omni_flash:'Omni Flash'};
+  const labels={default:'Veo 3.1 - Fast',veo3_lite_low_priority:'Veo 3.1 - Lite [Lower Priority]',veo3_lite:'Veo 3.1 - Lite',veo3_fast:'Veo 3.1 - Fast',veo3_quality:'Veo 3.1 - Quality',nano_banana_pro:'Nano Banana Pro',nano_banana2:'Nano Banana 2',nano_banana:'Nano Banana 2',imagen4:'Imagen 4',omni_flash:'Omni 1.1 Flash'};
   const label=labels[String(model||'default').toLowerCase()]||model; if(!label||model==='custom') return true;
   await page.evaluate(()=>{const visible=el=>{if(!el)return false;const st=getComputedStyle(el);const r=el.getBoundingClientRect();return st.display!=='none'&&st.visibility!=='hidden'&&r.width>8&&r.height>8}; const menu=document.querySelector('div[role="menu"][data-state="open"],[role="menu"][data-state="open"]'); const scope=menu||document; const triggers=Array.from(scope.querySelectorAll("button[aria-haspopup='menu']")).filter(visible); const t=triggers.find(b=>b.querySelector('div[data-type="button-overlay"]'))||triggers[triggers.length-1]; if(t)t.click();}).catch(()=>{});
   await sleep(350); return await clickText(page,[label,String(label).replaceAll('_',' ')],1800);

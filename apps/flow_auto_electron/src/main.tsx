@@ -6,7 +6,7 @@ import './style.css';
 declare global { interface Window { flowAPI: any } }
 
 const styles = ['CINEMATIC','ANIME','PAINTING','RENDER_3D','COMIC_BOOK','PIXEL_ART','WATERCOLOR','CYBERPUNK','STEAMPUNK','NONE'];
-const videoModels = ['default','veo3_lite_low_priority','veo3_lite','veo3_fast','veo3_quality','omni_flash'];
+const videoModels = ['omni_flash','veo3_lite','veo3_fast','veo3_quality','veo3_lite_low_priority'];
 const imageModels = ['nano_banana_pro','nano_banana2','nano_banana2_lite','imagen4'];
 const modelsForMode = (mode:string) => mode==='createimage' ? imageModels : videoModels;
 const flowModelLabels:Record<string,string> = {
