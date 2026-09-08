@@ -2219,7 +2219,16 @@ def run(args):
         refs_dir = args.refs_dir
         delayed_downloads = []
         claimed_media_ids = set()
+        last_submit_at = None
         for idx in range(done, total):
+            # "Giãn cách prompt" is measured between Generate clicks, not
+            # added after housekeeping/DOM checks. Wait only the remainder.
+            if last_submit_at is not None:
+                spacing_sec = max(0.0, float(args.between_prompts_sec or 0))
+                remaining = spacing_sec - (time.monotonic() - last_submit_at)
+                if remaining > 0:
+                    log_line(f"[flow] prompt spacing: wait remaining {remaining:.2f}s of configured {spacing_sec:.2f}s")
+                    time.sleep(remaining)
             while PAUSE_FILE_DEFAULT.exists():
                 log_line("[flow] paused")
                 time.sleep(2.0)
@@ -2298,7 +2307,8 @@ def run(args):
                     btn = find_create_button(page)
                     btn.click(timeout=5000)
                     submitted = True
-                    log_line(f"[flow] prompt #{prompt_no} submitted")
+                    last_submit_at = time.monotonic()
+                    log_line(f"[flow] prompt #{prompt_no} submitted; spacing clock started")
                     submitted_tile_ids = capture_submitted_tile_ids(
                         page,
                         before_ids=pre_submit_tiles,
@@ -2440,8 +2450,6 @@ def run(args):
                     "ts": int(time.time()),
                 }
                 save_state(args.state, state)
-                if prompt_no < total:
-                    time.sleep(args.between_prompts_sec)
                 continue
 
             prior_failed = state.get("failed_prompts", []) if isinstance(state, dict) else []
@@ -2456,9 +2464,6 @@ def run(args):
 
             if prompt_no % args.batch_size == 0 or prompt_no == total:
                 log_line(f"[flow] progress: {prompt_no}/{total}")
-
-            if prompt_no < total:
-                time.sleep(args.between_prompts_sec)
 
         if args.auto_download and (args.continuous_download or int(args.download_delay_prompts or 0) > 0):
             # Final prompts have no later submissions providing a natural delay.
