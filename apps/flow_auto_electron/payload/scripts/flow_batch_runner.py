@@ -594,8 +594,10 @@ def apply_flow_settings(page, args):
               if (!panel) return {ok:false, step:'panel_missing'};
               const allTabs = () => Array.from(panel.querySelectorAll("flow-toggles button[role='radio'], button[role='tab']")).filter(visible);
               const sameGroup = (a,b) => {
-                const pa = a.closest('[role="tablist"]') || a.parentElement;
-                const pb = b.closest('[role="tablist"]') || b.parentElement;
+                // Current Flow wraps every radio button in its own element.
+                // The functional group boundary is flow-toggles, not parentElement.
+                const pa = a.closest('flow-toggles,[role="radiogroup"],[role="tablist"]');
+                const pb = b.closest('flow-toggles,[role="radiogroup"],[role="tablist"]');
                 return pa && pa === pb;
               };
               const groupBy = (icons=[], texts=[]) => {
