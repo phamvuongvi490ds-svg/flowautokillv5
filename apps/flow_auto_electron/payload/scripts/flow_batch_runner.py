@@ -250,49 +250,49 @@ def find_input_box(page):
     raise RuntimeError("flow_prompt_editor_not_found")
 
 def focus_prompt_box(page, box):
-    """Reproduce the recorded physical click sequence on Flow's editor."""
+    """Click the exact editor once and preserve Flow's native blue caret."""
     close_open_menus(page)
     try:
         page.locator('.cdk-overlay-pane').wait_for(state='hidden', timeout=5000)
     except Exception:
         pass
 
-    wrapper = page.locator(
-        'flow-prompt-box.prompt-box-container flow-rich-text-editor.prompt-input .prosemirror-editor'
-    )
-    for attempt in range(1, 4):
+    try:
+        # Avoid scroll and wrapper clicks: both caused the composer to jump.
+        box.click(timeout=5000, position={'x': 20, 'y': 18})
         try:
-            box.scroll_into_view_if_needed(timeout=3000)
-            if wrapper.count() == 1 and wrapper.is_visible():
-                wrapper.click(timeout=4000, position={'x': 30, 'y': 24})
-                time.sleep(0.25)
-            rect = box.bounding_box()
-            if not rect:
-                raise RuntimeError('prompt_editor_has_no_box')
-            x = rect['x'] + min(36, max(12, rect['width'] / 4))
-            y = rect['y'] + min(26, max(10, rect['height'] / 2))
-            page.mouse.move(x, y, steps=8)
-            page.mouse.click(x, y)
-            time.sleep(0.35)
-            page.mouse.click(x, y)
-            state = box.evaluate(
-                """el => {
-                  el.focus({preventScroll:true});
-                  const range=document.createRange();
-                  range.selectNodeContents(el); range.collapse(false);
-                  const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
-                  return {active:document.activeElement===el, range:sel.rangeCount,
-                    editable:el.isContentEditable, cls:el.className};
-                }"""
+            page.wait_for_function(
+                "el => document.activeElement === el && el.classList.contains('ProseMirror-focused')",
+                arg=box.element_handle(), timeout=1800,
             )
-            log_line(f"[flow] prompt focus state attempt {attempt}: {state}")
-            if state and state.get('active') and state.get('range') == 1 and state.get('editable'):
-                return True
-        except Exception as e:
-            log_line(f"[flow] prompt physical focus attempt {attempt} failed: {e}")
-        close_open_menus(page)
-        time.sleep(0.4)
-    return False
+        except Exception:
+            pass
+        state = box.evaluate(
+            """el => ({active:document.activeElement===el,
+              focused:el.classList.contains('ProseMirror-focused'),
+              editable:el.isContentEditable})"""
+        )
+        log_line(f"[flow] native prompt focus state: {state}")
+        if state and state.get('active') and state.get('focused') and state.get('editable'):
+            return True
+    except Exception as e:
+        log_line(f"[flow] native prompt click failed: {e}")
+
+    # One non-visual fallback only. Do not click/scroll repeatedly.
+    try:
+        state = box.evaluate(
+            """el => {
+              el.focus({preventScroll:true});
+              const range=document.createRange(); range.selectNodeContents(el); range.collapse(false);
+              const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+              return {active:document.activeElement===el,range:sel.rangeCount,editable:el.isContentEditable};
+            }"""
+        )
+        log_line(f"[flow] prompt focus fallback state: {state}")
+        return bool(state and state.get('active') and state.get('range') == 1 and state.get('editable'))
+    except Exception as e:
+        log_line(f"[flow] prompt focus fallback failed: {e}")
+        return False
 
 MODEL_LABELS = {
     "default": "Veo 3.1 - Fast",
