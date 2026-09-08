@@ -534,7 +534,35 @@ def apply_aspect_ratio(page, ratio: str):
         pass
 
 
+def settings_summary_matches(page, args):
+    """Accept the current composer configuration when its rendered summary is exact."""
+    model_key = (args.flow_model or "default").strip().lower()
+    task_mode = (args.task_mode or "createvideo").strip().lower()
+    if model_key == "default":
+        model_key = "nano_banana_pro" if task_mode == "createimage" else "veo3_fast"
+    model = MODEL_LABELS.get(model_key, "")
+    ratio_icon = "crop_9_16" if args.flow_aspect_ratio == "9:16" else "crop_16_9"
+    count = f"x{str(args.flow_count or '1').strip()}"
+    try:
+        summary = page.locator(
+            'flow-prompt-box.prompt-box-container button.settings-trigger-button '
+            '.settings-summary'
+        )
+        if summary.count() != 1 or not summary.is_visible():
+            return False
+        raw = summary.inner_text(timeout=3000) or ""
+        normalized = " ".join(raw.split()).lower()
+        ok = model.lower() in normalized and ratio_icon.lower() in normalized and count.lower() in normalized
+        log_line(f"[flow] settings summary check: ok={ok} model={model_key} ratio={ratio_icon} count={count}")
+        return ok
+    except Exception as e:
+        log_line(f"[flow] settings summary check failed: {e}")
+        return False
+
 def apply_flow_settings(page, args):
+    if settings_summary_matches(page, args):
+        log_line("[flow] settings already exact in composer summary; skip panel")
+        return True
     task_mode = (args.task_mode or "createvideo").strip().lower()
     model_key = (args.flow_model or "default").strip().lower()
     if task_mode == "createimage" and model_key == "default":
