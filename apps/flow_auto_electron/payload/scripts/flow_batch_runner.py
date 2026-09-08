@@ -2334,13 +2334,12 @@ def run(args):
                                 "output_prefix": prompt_file_prefix(prompt, prompt_no),
                             })
                             batch_size = max(1, int(args.download_delay_prompts or 0))
-                            if len(delayed_downloads) > batch_size:
-                                # Prompt N+1 acts as the trigger, then drain the
-                                # complete previous batch in FIFO order. Keep the
-                                # newly submitted trigger prompt queued for the
-                                # next batch.
+                            if len(delayed_downloads) >= batch_size:
+                                # Submit exactly one batch, then pause submissions
+                                # and download that complete batch in FIFO order.
+                                # For delay=3: submit 1,2,3; download 1,2,3; then 4.
                                 batch = delayed_downloads[:batch_size]
-                                log_line(f"[flow] prompt #{prompt_no} triggered FIFO batch download: {[x['prompt_no'] for x in batch]}")
+                                log_line(f"[flow] completed submit batch of {batch_size}; FIFO download now: {[x['prompt_no'] for x in batch]}")
                                 for item in batch:
                                     license_guard_or_raise(force=True)
                                     log_line(f"[flow] batch download prompt #{item['prompt_no']} of {batch_size}")
