@@ -664,25 +664,32 @@ def apply_flow_settings(page, args):
                 nano_banana_pro:'Nano Banana Pro', nano_banana2:'Nano Banana 2', nano_banana2_lite:'Nano Banana 2 Lite', nano_banana:'Nano Banana 2', imagen4:'Imagen 4'
               };
               const exactModel = models[cfg.model] || (isImage ? models.nano_banana_pro : models.veo3_fast);
-              const matchAlias = (text) => norm(text).trim() === norm(exactModel).trim();
+              const modelText = (el) => {
+                if (!el) return '';
+                const clone=el.cloneNode(true);
+                clone.querySelectorAll('mat-icon,i,.mat-icon').forEach(x=>x.remove());
+                return (clone.innerText || clone.textContent || '').trim();
+              };
+              const matchAlias = (value) => norm(value).trim() === norm(exactModel).trim();
+              const matchesModelButton = (el) => matchAlias(modelText(el));
               const aliases = [exactModel];
               let modelRes = {ok:true, skipped: cfg.model === 'custom'};
               if (cfg.model !== 'custom') {
                 await openPanel();
                 const buttons = () => Array.from(panel.querySelectorAll('button')).filter(visible);
                 let trigger = panel.querySelector('button[aria-label="Chọn nhóm mô hình"][aria-haspopup="menu"]');
-                const before = trigger ? (trigger.innerText || trigger.textContent || '') : '';
-                if (trigger && matchAlias(before)) {
+                const before = trigger ? modelText(trigger) : '';
+                if (trigger && matchesModelButton(trigger)) {
                   modelRes = {ok:true, already:true, before, aliases};
                 } else if (trigger) {
                   clickExt(trigger); await p(750);
                   const modelPanel=document.querySelector('.cdk-overlay-pane .flow-model-picker-panel'); const opts = Array.from((modelPanel||document.createElement('div')).querySelectorAll('[role="menuitem"], [role="option"], button')).filter(visible);
-                  const btn = opts.find(b => matchAlias(b.innerText||b.textContent||''));
+                  const btn = opts.find(b => matchesModelButton(b));
                   if (btn) { clickExt(btn); await p(1500); }
                   await openPanel();
                   const afterBtn = panel.querySelector('button[aria-label="Chọn nhóm mô hình"][aria-haspopup="menu"]');
-                  const after = afterBtn ? (afterBtn.innerText || afterBtn.textContent || '') : '';
-                  modelRes = {ok:!!btn && matchAlias(after), before, after, clicked:btn ? (btn.innerText||btn.textContent||'') : '', aliases};
+                  const after = afterBtn ? modelText(afterBtn) : '';
+                  modelRes = {ok:!!btn && !!afterBtn && matchesModelButton(afterBtn), before, after, clicked:btn ? modelText(btn) : '', aliases};
                 } else {
                   modelRes = {ok:false, reason:'model_trigger_missing', aliases};
                 }
