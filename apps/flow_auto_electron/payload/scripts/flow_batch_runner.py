@@ -1454,7 +1454,7 @@ def snapshot_media_tiles(page):
                 const hasResult=!!tile.querySelector('video,canvas,img[src*="media.getMediaUrlRedirect"],button,[role="button"]');
                 return hasResult && r.width>120 && r.height>80;
               };
-              return Array.from(document.querySelectorAll('[data-tile-id]')).filter(isOutput).map(t=>t.getAttribute('data-tile-id')).filter(Boolean);
+              return Array.from(document.querySelectorAll('flow-grid-tile-container')).filter(isOutput).map(t=>t.querySelector('[data-media-id]')?.getAttribute('data-media-id')).filter(Boolean);
             }
             """
         ) or [])
@@ -1474,8 +1474,8 @@ def capture_submitted_tile_ids(page, before_ids=None, expected_count=1, timeout_
                   const old = new Set(before || []);
                   const out=[];
                   const visible=el=>{if(!el)return false;const st=getComputedStyle(el),r=el.getBoundingClientRect();return st.display!=='none'&&st.visibility!=='hidden'&&r.width>40&&r.height>30;};
-                  for (const tile of document.querySelectorAll('[data-tile-id]')) {
-                    const id=tile.getAttribute('data-tile-id');
+                  for (const tile of document.querySelectorAll('flow-grid-tile-container')) {
+                    const id=tile.querySelector('[data-media-id]')?.getAttribute('data-media-id');
                     if(tile.closest('[role="dialog"],[data-radix-popper-content-wrapper],form')) continue;
                     if(!visible(tile)) continue;
                     if(id && !old.has(id) && !out.includes(id)) out.push(id);
@@ -1510,12 +1510,12 @@ def wait_new_completed_media(page, before_ids=None, expected_count=1, timeout_se
                     return r.width > 20 && r.height > 20;
                   };
                   const beforeSet = new Set(before || []);
-                  const nodes = Array.from(document.querySelectorAll('[data-tile-id], video, img[src*="media.getMediaUrlRedirect"], video[src*="media.getMediaUrlRedirect"], img[src^="blob:"], img[src^="https://"], canvas')).filter(visible);
+                  const nodes = Array.from(document.querySelectorAll('flow-grid-tile-container')).filter(visible);
                   const ready = [];
-                  for (let i=0;i<nodes.length;i++) {
-                    const el = nodes[i];
-                    const id = el.getAttribute('data-tile-id') || el.currentSrc || el.src || el.getAttribute('src') || `media-${i}`;
-                    const hasMedia = !!(el.querySelector?.('video[src*="media.getMediaUrlRedirect"],img[src*="media.getMediaUrlRedirect"],video,video source[src],img[src^="blob:"],canvas') || el.matches?.('video,img,canvas'));
+                  for (const el of nodes) {
+                    const media=el.querySelector('[data-media-id]');
+                    const id=media?.getAttribute('data-media-id');
+                    const hasMedia=!!media && !el.querySelector('flow-pending-tile');
                     if (id && !beforeSet.has(id) && hasMedia) ready.push(id);
                   }
                   const txt = (document.body?.innerText || '').toLowerCase();
@@ -1556,11 +1556,11 @@ def ordered_new_media_ids(page, before_ids=None):
               };
               const beforeSet = new Set(before || []);
               const out=[];
-              const nodes = Array.from(document.querySelectorAll('[data-tile-id]')).filter(visible);
+              const nodes = Array.from(document.querySelectorAll('flow-grid-tile-container')).filter(visible);
               for (let i=0;i<nodes.length;i++){
                 const tile=nodes[i];
-                const id=tile.getAttribute('data-tile-id') || `tile-${i}`;
-                const media=tile.querySelector('video[src],img[src],canvas');
+                const media=tile.querySelector('[data-media-id]');
+                const id=media?.getAttribute('data-media-id');
                 if(id && !beforeSet.has(id) && media){
                   const r=tile.getBoundingClientRect();
                   out.push({id, top:r.top, left:r.left, idx:i});
@@ -1611,7 +1611,7 @@ def download_prompt_queue_item(page, item, args, expected_count=1, claimed_ids=N
     kind_ok = page.evaluate(
         """
         ({ids,kind}) => ids.every(id => {
-          const tile=Array.from(document.querySelectorAll('[data-tile-id]')).find(t=>t.getAttribute('data-tile-id')===id);
+          const tile=Array.from(document.querySelectorAll('flow-grid-tile-container')).find(t=>t.querySelector('[data-media-id]')?.getAttribute('data-media-id')===id);
           if(!tile)return false;
           if(kind==='video'){
             const v=tile.querySelector('video');
@@ -1845,13 +1845,13 @@ def current_flow_download_tile_via_ui(page, resolution="720p", before_ids=None, 
         tile_id = page.evaluate(
             """before => {
               const old=new Set(before||[]), visible=el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>80&&r.height>60&&s.display!=='none'&&s.visibility!=='hidden'};
-              const tiles=[...document.querySelectorAll('flow-image-tile[data-tile-id],flow-video-tile[data-tile-id],[data-tile-id]')]
-                .filter(t=>{const id=t.getAttribute('data-tile-id');return id&&!old.has(id)&&visible(t)&&(t.querySelector('flow-image-hotbar,flow-video-hotbar')||t.matches('flow-image-tile,flow-video-tile'))});
+              const tiles=[...document.querySelectorAll('flow-grid-tile-container')]
+                .filter(t=>{const id=t.querySelector('[data-media-id]')?.getAttribute('data-media-id');return id&&!old.has(id)&&visible(t)&&(t.querySelector('flow-image-hotbar,flow-video-hotbar')||t.matches('flow-image-tile,flow-video-tile'))});
               tiles.sort((a,b)=>b.getBoundingClientRect().top-a.getBoundingClientRect().top);
-              return tiles[0]?.getAttribute('data-tile-id')||null;
+              return tiles[0]?.querySelector('[data-media-id]')?.getAttribute('data-media-id')||null;
             }""", before)
         if not tile_id: return False, 'current_no_target_tile'
-        tile = page.locator(f'[data-tile-id="{tile_id}"]').first
+        tile = page.locator(f'flow-grid-tile-container:has([data-media-id="{tile_id}"])').first
         tile.hover(timeout=5000)
         menu = tile.locator('flow-image-hotbar button[aria-label="Tuỳ chọn khác"],flow-video-hotbar button[aria-label="Tuỳ chọn khác"],button[aria-label="Tuỳ chọn khác"]')
         if menu.count() < 1: return False, 'current_more_options_missing'
