@@ -1800,10 +1800,10 @@ def direct_download_media_from_tile(page, before_ids=None, output_prefix="flow-a
                 return btoa(bin);
               };
               const tiles = [];
-              document.querySelectorAll('[data-tile-id]').forEach(tile => {
-                const id = tile.getAttribute('data-tile-id');
-                if (before.size && before.has(id)) return;
-                const media = tile.querySelector('video,video source[src],img[src],canvas');
+              document.querySelectorAll('flow-grid-tile-container').forEach(tile => {
+                const media = tile.querySelector('[data-media-id],video,video source[src],img,canvas');
+                const id = media?.getAttribute?.('data-media-id');
+                if (!id || (before.size && before.has(id))) return;
                 if (media && visible(tile)) tiles.push({tile, media, top: tile.getBoundingClientRect().top});
               });
               if (!tiles.length) return null;
@@ -1898,9 +1898,9 @@ def extension_download_tile_via_ui(page, resolution="720p", before_ids=None, out
               const Dn = (tile) => !!tile.querySelector('video');
               const collectNewTiles = (snapshot) => {
                 const out = [], seen = new Set();
-                document.querySelectorAll('[data-tile-id]').forEach(tile => {
-                  const id = tile.getAttribute('data-tile-id');
-                  if (!id || seen.has(id)) return;
+                document.querySelectorAll('flow-grid-tile-container').forEach(tile => {
+                  const id = tile.querySelector('[data-media-id]')?.getAttribute('data-media-id');
+                  if (!id || seen.has(id) || tile.querySelector('flow-pending-tile')) return;
                   seen.add(id);
                   if (snapshot && snapshot.has(id)) return;
                   if (On(tile) && visible(tile)) out.push({tileId:id, tileEl:tile, isVideo:Dn(tile)});
@@ -2075,23 +2075,19 @@ def auto_download_with_retry(page, resolution="720p", timeout_sec=480, before_id
     if res == "720":
         res = "720p"
     while time.time() < deadline:
+        # Preserve the proven legacy download flow as the primary path:
+        # target result tile -> context menu -> Download -> quality -> expect_download.
+        ok, step = extension_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
+        last = step
+        if ok:
+            return True, step
+        # Current hotbar mapping is fallback only.
         ok, step = current_flow_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
         last = step
         if ok:
             return True, step
-        # Direct media bytes are a fallback when the current Flow hotbar is unavailable.
+        # Direct media bytes are the final fallback.
         ok, step = direct_download_media_from_tile(page, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
-        last = step
-        if ok:
-            return True, step
-        # If direct media is unavailable, use Flow's own UI download after the page is idle.
-        # Validate actual bytes after download; bad preview/placeholder files are deleted by
-        # extension_download_tile_via_ui() and retried instead of being kept.
-        try:
-            page.wait_for_timeout(1200)
-        except Exception:
-            pass
-        ok, step = extension_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
         last = step
         if ok:
             return True, step
