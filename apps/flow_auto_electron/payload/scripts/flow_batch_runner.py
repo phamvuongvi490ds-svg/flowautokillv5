@@ -2102,13 +2102,6 @@ LICENSE_STRICT_ONLINE = os.environ.get("FLOW_LICENSE_STRICT_ONLINE", "1").strip(
 _LICENSE_LAST_OK = 0.0
 _LICENSE_LAST_REASON = "never"
 
-LICENSE_CONFIG_FILE = Path(os.environ.get("FLOW_LICENSE_ONLINE_CONFIG", str(Path(os.environ.get("FLOW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace"))) / "keys" / "license-online.json")))
-LICENSE_APP_VERSION = os.environ.get("FLOW_APP_VERSION", "3.4.5")
-LICENSE_TIMEOUT_SEC = int(os.environ.get("FLOW_LICENSE_TIMEOUT_SEC", "10"))
-LICENSE_STRICT_ONLINE = os.environ.get("FLOW_LICENSE_STRICT_ONLINE", "1").strip() == "1"
-_LICENSE_LAST_OK = 0.0
-_LICENSE_LAST_REASON = "never"
-
 def _license_now_utc():
     return datetime.now(timezone.utc)
 
