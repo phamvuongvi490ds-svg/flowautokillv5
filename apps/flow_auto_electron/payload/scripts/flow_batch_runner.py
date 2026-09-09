@@ -1753,6 +1753,19 @@ def _next_numbered_media_target(output_dir=None, ext=".mp4"):
         target = out_dir / f"{n}{ext}"
     return target
 
+def _prompt_numbered_target(output_dir, output_prefix, ext):
+    out_dir = Path(output_dir).expanduser() if output_dir else Path.home() / "Downloads"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    raw = str(output_prefix or "1")
+    m = re.match(r"^(\d+)(?:_(\d+))?$", raw)
+    stem = raw if m else "1"
+    target = out_dir / f"{stem}{ext}"
+    if not target.exists():
+        return target
+    n = 2
+    while (out_dir / f"{stem}_{n}{ext}").exists(): n += 1
+    return out_dir / f"{stem}_{n}{ext}"
+
 def _save_media_bytes(data: bytes, output_prefix="flow-auto", output_dir=None):
     ext = _detect_ext_from_bytes(data[:64])
     if not ext:
@@ -1760,7 +1773,7 @@ def _save_media_bytes(data: bytes, output_prefix="flow-auto", output_dir=None):
     dup, h, item = _is_duplicate_media(data, output_dir=output_dir)
     if dup:
         return True, f"duplicate_skipped:{item.get('file','existing')}"
-    target = _next_numbered_media_target(output_dir=output_dir, ext=ext)
+    target = _prompt_numbered_target(output_dir, output_prefix, ext)
     target.write_bytes(data)
     _remember_media_hash(data, target.name, output_dir=output_dir)
     return True, f"direct_saved:{target.name}"
@@ -1824,6 +1837,39 @@ def direct_download_media_from_tile(page, before_ids=None, output_prefix="flow-a
     except Exception as e:
         return False, f"direct_exception:{e}"
 
+
+def current_flow_download_tile_via_ui(page, resolution="720p", before_ids=None, output_prefix="1", output_dir=None):
+    """Download through current Flow tile hotbar mapping."""
+    before = list(before_ids or [])
+    try:
+        tile_id = page.evaluate(
+            """before => {
+              const old=new Set(before||[]), visible=el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>80&&r.height>60&&s.display!=='none'&&s.visibility!=='hidden'};
+              const tiles=[...document.querySelectorAll('flow-image-tile[data-tile-id],flow-video-tile[data-tile-id],[data-tile-id]')]
+                .filter(t=>{const id=t.getAttribute('data-tile-id');return id&&!old.has(id)&&visible(t)&&(t.querySelector('flow-image-hotbar,flow-video-hotbar')||t.matches('flow-image-tile,flow-video-tile'))});
+              tiles.sort((a,b)=>b.getBoundingClientRect().top-a.getBoundingClientRect().top);
+              return tiles[0]?.getAttribute('data-tile-id')||null;
+            }""", before)
+        if not tile_id: return False, 'current_no_target_tile'
+        tile = page.locator(f'[data-tile-id="{tile_id}"]').first
+        tile.hover(timeout=5000)
+        menu = tile.locator('flow-image-hotbar button[aria-label="Tuỳ chọn khác"],flow-video-hotbar button[aria-label="Tuỳ chọn khác"],button[aria-label="Tuỳ chọn khác"]')
+        if menu.count() < 1: return False, 'current_more_options_missing'
+        menu.first.click(timeout=5000)
+        quality = '1K' if str(resolution).upper() == '1K' else ('720p' if str(resolution) in ('720','720p') else str(resolution))
+        option = page.locator('.cdk-overlay-pane button,.cdk-overlay-pane [role="menuitem"]').filter(has_text=quality)
+        option.first.wait_for(state='visible', timeout=5000)
+        with page.expect_download(timeout=30000) as info:
+            option.first.click(timeout=5000)
+        dl=info.value
+        tmp=Path(dl.path())
+        data=tmp.read_bytes(); ext=_detect_ext_from_bytes(data[:64])
+        if not ext: return False, 'current_invalid_download_bytes'
+        target=_prompt_numbered_target(output_dir, output_prefix, ext)
+        dl.save_as(str(target)); _remember_media_hash(data,target.name,output_dir=output_dir)
+        return True, f'current_saved_as:{target.name}'
+    except Exception as e:
+        return False, f'current_exception:{e}'
 
 def extension_download_tile_via_ui(page, resolution="720p", before_ids=None, output_prefix="flow-auto", output_dir=None):
     """Downloader ported from extension 2.0.6 (yr + Un): tile media -> context menu -> download -> quality."""
@@ -1995,7 +2041,7 @@ def extension_download_tile_via_ui(page, resolution="720p", before_ids=None, out
                 except Exception:
                     pass
                 return True, f"duplicate_skipped:{item.get('file','existing')}"
-            target = _next_numbered_media_target(output_dir=out_dir, ext=detected_ext)
+            target = _prompt_numbered_target(out_dir, output_prefix, detected_ext)
             try:
                 download_obj.save_as(str(target))
             except Exception:
@@ -2029,7 +2075,11 @@ def auto_download_with_retry(page, resolution="720p", timeout_sec=480, before_id
     if res == "720":
         res = "720p"
     while time.time() < deadline:
-        # Prefer direct media bytes while browser is busy; UI download can sometimes save an HTML/redirect placeholder.
+        ok, step = current_flow_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
+        last = step
+        if ok:
+            return True, step
+        # Direct media bytes are a fallback when the current Flow hotbar is unavailable.
         ok, step = direct_download_media_from_tile(page, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
         last = step
         if ok:
