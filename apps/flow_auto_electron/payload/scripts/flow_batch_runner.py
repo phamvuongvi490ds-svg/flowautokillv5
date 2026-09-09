@@ -1209,38 +1209,49 @@ def _choose_uploaded_image_from_menu(page, image_path: Path):
     return False
 
 
-def _click_upload_image_item(page):
-    """Click the exact upload action recorded in Flow's add-menu popover."""
+def _upload_media_without_native_dialog(page, image_path: Path):
+    """Intercept Flow's chooser so Windows never opens a second window."""
     selector = (
         '.cdk-overlay-pane flow-add-menu-popover-content '
         'button.sidebar-upload-btn:has-text("Tải nội dung nghe nhìn lên")'
     )
     try:
         button = page.locator(selector)
-        if button.count() == 1 and button.is_visible():
-            button.click(timeout=4000)
-            return True
-    except Exception:
-        pass
-    return False
-
-def _add_uploaded_media_to_prompt(page, timeout_sec=60):
-    """Wait for Flow's uploaded-media detail pane, then attach it to prompt."""
-    selector = (
-        '.cdk-overlay-pane flow-add-menu-popover-content '
-        'flow-add-menu-detail-pane button.detail-add-to-prompt-btn:has-text("Thêm vào câu lệnh")'
-    )
-    try:
-        button = page.locator(selector)
-        button.wait_for(state='visible', timeout=int(timeout_sec * 1000))
-        button.click(timeout=5000)
-        page.locator('.cdk-overlay-pane flow-add-menu-popover-content').wait_for(
-            state='hidden', timeout=10000
-        )
+        button.wait_for(state='visible', timeout=5000)
+        with page.expect_file_chooser(timeout=5000) as chooser_info:
+            button.click(timeout=5000)
+        chooser_info.value.set_files(str(image_path))
         return True
     except Exception as e:
-        log_line(f"[flow] add uploaded media to prompt failed: {e}")
+        log_line(f"[flow] intercepted reference upload failed: {e}")
         return False
+
+def _add_uploaded_media_to_prompt(page, timeout_sec=90):
+    """Attach uploaded media and verify it appears inside the composer."""
+    selector = (
+        'flow-add-menu-detail-pane button.detail-add-to-prompt-btn:has-text("Thêm vào câu lệnh"),'
+        'flow-add-menu-detail-pane button[aria-label="Thêm vào câu lệnh"]'
+    )
+    try:
+        button = page.locator(selector).first
+        button.wait_for(state='visible', timeout=int(timeout_sec * 1000))
+        button.click(timeout=7000)
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            attached = page.locator(
+                'flow-prompt-box.prompt-box-container img,'
+                'flow-prompt-box.prompt-box-container video,'
+                'flow-prompt-box.prompt-box-container [data-media-id]'
+            )
+            if attached.count() > 0:
+                close_open_menus(page)
+                return True
+            time.sleep(0.4)
+        log_line('[flow] add-to-prompt clicked but composer media was not confirmed')
+    except Exception as e:
+        log_line(f"[flow] add uploaded media to prompt failed: {e}")
+    close_open_menus(page)
+    return False
 
 def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=True):
     """Extension-style image pipeline: upload to Flow library, then search by filename and attach.
@@ -1257,21 +1268,12 @@ def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=
     if upload_file:
         # Phase 1: open add/upload picker beside prompt composer, then inject file.
         plus_opened = _open_plus_menu(page, prompt_box=prompt_box)
-        if plus_opened:
-            log_line("[flow] plus menu opened for reference upload")
-            _click_upload_image_item(page)
-        else:
-            log_line("[flow] plus menu not found; trying direct file input fallback")
-
-        file_set = set_upload_file_input(page, image_path)
-        if not file_set and not plus_opened:
-            plus_opened = _open_plus_menu(page, prompt_box=None)
-            if plus_opened:
-                log_line("[flow] plus menu opened on fallback attempt")
-                _click_upload_image_item(page)
-                file_set = set_upload_file_input(page, image_path)
+        if not plus_opened:
+            raise RuntimeError(f"extension_upload:add_menu_not_opened:{fname}")
+        log_line("[flow] plus menu opened for reference upload")
+        file_set = _upload_media_without_native_dialog(page, image_path)
         if not file_set:
-            raise RuntimeError(f"extension_upload:cannot_inject_file:{fname}")
+            raise RuntimeError(f"extension_upload:filechooser_not_intercepted:{fname}")
 
         log_line(f"[flow] extension-upload injected file: {fname}")
         if not _add_uploaded_media_to_prompt(page, timeout_sec=60):
