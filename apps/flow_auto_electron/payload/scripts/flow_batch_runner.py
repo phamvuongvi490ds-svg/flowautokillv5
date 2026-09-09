@@ -1898,9 +1898,9 @@ def extension_download_tile_via_ui(page, resolution="720p", before_ids=None, out
               const Dn = (tile) => !!tile.querySelector('video');
               const collectNewTiles = (snapshot) => {
                 const out = [], seen = new Set();
-                document.querySelectorAll('flow-grid-tile-container').forEach(tile => {
-                  const id = tile.querySelector('[data-media-id]')?.getAttribute('data-media-id');
-                  if (!id || seen.has(id) || tile.querySelector('flow-pending-tile')) return;
+                document.querySelectorAll('[data-tile-id]').forEach(tile => {
+                  const id = tile.getAttribute('data-tile-id');
+                  if (!id || seen.has(id)) return;
                   seen.add(id);
                   if (snapshot && snapshot.has(id)) return;
                   if (On(tile) && visible(tile)) out.push({tileId:id, tileEl:tile, isVideo:Dn(tile)});
@@ -2041,7 +2041,7 @@ def extension_download_tile_via_ui(page, resolution="720p", before_ids=None, out
                 except Exception:
                     pass
                 return True, f"duplicate_skipped:{item.get('file','existing')}"
-            target = _prompt_numbered_target(out_dir, output_prefix, detected_ext)
+            target = _next_numbered_media_target(output_dir=out_dir, ext=detected_ext)
             try:
                 download_obj.save_as(str(target))
             except Exception:
@@ -2075,25 +2075,32 @@ def auto_download_with_retry(page, resolution="720p", timeout_sec=480, before_id
     if res == "720":
         res = "720p"
     while time.time() < deadline:
-        # Preserve the proven legacy download flow as the primary path:
-        # target result tile -> context menu -> Download -> quality -> expect_download.
-        ok, step = extension_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
-        last = step
-        if ok:
-            return True, step
-        # Current hotbar mapping is fallback only.
-        ok, step = current_flow_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
-        last = step
-        if ok:
-            return True, step
-        # Direct media bytes are the final fallback.
+        # Prefer direct media bytes while browser is busy; UI download can sometimes save an HTML/redirect placeholder.
         ok, step = direct_download_media_from_tile(page, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
+        last = step
+        if ok:
+            return True, step
+        # If direct media is unavailable, use Flow's own UI download after the page is idle.
+        # Validate actual bytes after download; bad preview/placeholder files are deleted by
+        # extension_download_tile_via_ui() and retried instead of being kept.
+        try:
+            page.wait_for_timeout(1200)
+        except Exception:
+            pass
+        ok, step = extension_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
         last = step
         if ok:
             return True, step
         time.sleep(4.0)
     return False, last
 
+
+LICENSE_CONFIG_FILE = Path(os.environ.get("FLOW_LICENSE_ONLINE_CONFIG", str(Path(os.environ.get("FLOW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace"))) / "keys" / "license-online.json")))
+LICENSE_APP_VERSION = os.environ.get("FLOW_APP_VERSION", "3.4.5")
+LICENSE_TIMEOUT_SEC = int(os.environ.get("FLOW_LICENSE_TIMEOUT_SEC", "10"))
+LICENSE_STRICT_ONLINE = os.environ.get("FLOW_LICENSE_STRICT_ONLINE", "1").strip() == "1"
+_LICENSE_LAST_OK = 0.0
+_LICENSE_LAST_REASON = "never"
 
 LICENSE_CONFIG_FILE = Path(os.environ.get("FLOW_LICENSE_ONLINE_CONFIG", str(Path(os.environ.get("FLOW_WORKSPACE", str(Path.home() / ".openclaw" / "workspace"))) / "keys" / "license-online.json")))
 LICENSE_APP_VERSION = os.environ.get("FLOW_APP_VERSION", "3.4.5")
