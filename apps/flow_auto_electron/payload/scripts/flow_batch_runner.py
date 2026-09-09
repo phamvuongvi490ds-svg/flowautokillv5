@@ -1773,7 +1773,7 @@ def _save_media_bytes(data: bytes, output_prefix="flow-auto", output_dir=None):
     dup, h, item = _is_duplicate_media(data, output_dir=output_dir)
     if dup:
         return True, f"duplicate_skipped:{item.get('file','existing')}"
-    target = _prompt_numbered_target(output_dir, output_prefix, ext)
+    target = _next_numbered_media_target(output_dir=output_dir, ext=ext)
     target.write_bytes(data)
     _remember_media_hash(data, target.name, output_dir=output_dir)
     return True, f"direct_saved:{target.name}"
@@ -1865,7 +1865,7 @@ def current_flow_download_tile_via_ui(page, resolution="720p", before_ids=None, 
         tmp=Path(dl.path())
         data=tmp.read_bytes(); ext=_detect_ext_from_bytes(data[:64])
         if not ext: return False, 'current_invalid_download_bytes'
-        target=_prompt_numbered_target(output_dir, output_prefix, ext)
+        target=_next_numbered_media_target(output_dir=output_dir, ext=ext)
         dl.save_as(str(target)); _remember_media_hash(data,target.name,output_dir=output_dir)
         return True, f'current_saved_as:{target.name}'
     except Exception as e:
