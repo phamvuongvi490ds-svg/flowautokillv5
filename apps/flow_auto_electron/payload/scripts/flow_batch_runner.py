@@ -870,8 +870,25 @@ def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retr
                 modifier = "Meta" if sys.platform == "darwin" else "Control"
                 page.keyboard.press(f"{modifier}+A")
                 page.keyboard.press("Backspace")
-                page.keyboard.type(prompt, delay=max(1, int(type_delay_ms or 12)))
-                time.sleep(0.4)
+                # Paste the complete prompt in one ProseMirror transaction.
+                # This behaves like Ctrl+V without replacing the user's OS clipboard.
+                pasted = box.evaluate(
+                    """(el, text) => {
+                      try {
+                        const dt=new DataTransfer(); dt.setData('text/plain', text);
+                        return el.dispatchEvent(new ClipboardEvent('paste', {
+                          bubbles:true, cancelable:true, composed:true, clipboardData:dt
+                        }));
+                      } catch { return false; }
+                    }""",
+                    prompt,
+                )
+                time.sleep(0.25)
+                current = box.evaluate("el => (el.innerText || el.textContent || '').trim()") or ""
+                if " ".join(str(current).split())[:40] != expected[:40]:
+                    page.keyboard.insert_text(prompt)
+                log_line(f"[flow] prompt pasted in one operation: event={pasted} length={len(prompt)}")
+                time.sleep(0.25)
 
             text = box.evaluate("el => (el.innerText || el.textContent || '').trim()") or ""
             normalized = " ".join(str(text).split())
