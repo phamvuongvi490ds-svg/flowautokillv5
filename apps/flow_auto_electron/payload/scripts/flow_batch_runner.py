@@ -2348,16 +2348,21 @@ def run(args):
                                 ref_img = resolve_ref_image(refs_dir, prompt_no)
                                 if ref_img is not None:
                                     matched_refs.append(ref_img)
+                        elif args.ref_mode == "all":
+                            # Explicit all-reference mode: upload every image for every prompt.
+                            exts = {".jpg", ".jpeg", ".png", ".webp"}
+                            matched_refs.extend([
+                                p for p in sorted(refs_dir.iterdir(), key=natural_file_key)
+                                if p.is_file() and p.suffix.lower() in exts
+                            ])
                         else:
-                            # One prompt gets exactly one numbered local image.
-                            # Never attach every file in the folder to one prompt.
                             ref_img = resolve_ref_image(refs_dir, prompt_no)
                             if ref_img is not None:
                                 matched_refs.append(ref_img)
 
-                    # Hard guard: the normal prompt pipeline may upload at most one image.
-                    # Multi-reference wardrobe jobs use a numbered subfolder explicitly.
-                    if not (args.paired_mode and (refs_dir / str(prompt_no)).is_dir()):
+                    # Only paired mode is limited to one numbered image. Explicit
+                    # all mode and wardrobe subfolders intentionally keep all refs.
+                    if args.ref_mode != "all" and not (args.paired_mode and (refs_dir / str(prompt_no)).is_dir()):
                         matched_refs = matched_refs[:1]
 
                     for ref_file in matched_refs:
@@ -2610,6 +2615,7 @@ def main():
     ap.add_argument("--flow-count", default="1", help="Số lượng output x1/x2/x3/x4")
     ap.add_argument("--omni-duration", default="", choices=["", "4s", "6s", "8s", "10s"], help="Thời lượng chỉ áp dụng cho omni_flash")
     ap.add_argument("--video-sub-mode", default="frames", choices=["frames", "ingredients"], help="Video sub mode")
+    ap.add_argument("--ref-mode", choices=["paired", "all"], default="paired", help="paired: N.jpg cho prompt N; all: toàn bộ ảnh cho mỗi prompt")
     ap.add_argument("--paired-mode", dest="paired_mode", action="store_true", help="Map ảnh theo số prompt (1.jpg->prompt1)")
     ap.add_argument("--no-paired-mode", dest="paired_mode", action="store_false", help="Không map theo số prompt")
     ap.set_defaults(paired_mode=True)
