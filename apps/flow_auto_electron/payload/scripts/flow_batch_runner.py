@@ -2349,9 +2349,16 @@ def run(args):
                                 if ref_img is not None:
                                     matched_refs.append(ref_img)
                         else:
-                            # AI Prompt Studio: upload every image in the selected character folder for every prompt.
-                            exts = {".jpg", ".jpeg", ".png", ".webp"}
-                            matched_refs.extend([p for p in sorted(refs_dir.iterdir(), key=natural_file_key) if p.is_file() and p.suffix.lower() in exts])
+                            # One prompt gets exactly one numbered local image.
+                            # Never attach every file in the folder to one prompt.
+                            ref_img = resolve_ref_image(refs_dir, prompt_no)
+                            if ref_img is not None:
+                                matched_refs.append(ref_img)
+
+                    # Hard guard: the normal prompt pipeline may upload at most one image.
+                    # Multi-reference wardrobe jobs use a numbered subfolder explicitly.
+                    if not (args.paired_mode and (refs_dir / str(prompt_no)).is_dir()):
+                        matched_refs = matched_refs[:1]
 
                     for ref_file in matched_refs:
                         log_line(f"[flow] prompt #{prompt_no} use ref image: {ref_file.name}")
