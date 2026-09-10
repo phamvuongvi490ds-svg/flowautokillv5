@@ -40,6 +40,11 @@ def log_line(msg: str):
             print("[flow] log encoding fallback")
 
 
+def natural_file_key(path: Path):
+    parts = re.split(r'(\d+)', path.name.lower())
+    return [int(x) if x.isdigit() else x for x in parts]
+
+
 def resolve_ref_image(refs_dir: Path | None, prompt_no: int):
     if refs_dir is None:
         return None
@@ -57,8 +62,8 @@ def resolve_first_ref_image(refs_dir: Path | None):
     exts = [".jpg", ".jpeg", ".png", ".webp"]
     files = []
     for ext in exts:
-        files.extend(sorted(refs_dir.glob(f"*{ext}")))
-    return files[0] if files else None
+        files.extend(sorted(refs_dir.glob(f"*{ext}"), key=natural_file_key))
+    return sorted(files, key=natural_file_key)[0] if files else None
 
 
 def set_upload_file_input(page, image_path: Path):
@@ -724,37 +729,30 @@ def get_box_text(box):
         return ""
 
 
-def clear_attached_references(page):
-    # Extension-style pre-flight cleanup: click close button for attached references/chips if present.
+def clear_attached_references(page, timeout_sec=8):
+    """Remove only attachments inside the prompt composer and confirm it is empty."""
+    composer = page.locator('flow-prompt-box.prompt-box-container')
     try:
-        page.evaluate(
-            """
-            () => {
-              const visible = (el) => {
-                if (!el) return false;
-                const st = getComputedStyle(el);
-                if (!st || st.display === 'none' || st.visibility === 'hidden') return false;
-                const r = el.getBoundingClientRect();
-                return r.width > 8 && r.height > 8;
-              };
-              const btns = Array.from(document.querySelectorAll('button,[role="button"]')).filter(visible);
-              for (const b of btns) {
-                const icon = (b.querySelector('i')?.textContent || '').trim().toLowerCase();
-                const txt = ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '')).toLowerCase();
-                if (icon === 'close' || txt.includes('remove') || txt.includes('xóa') || txt.includes('clear')) {
-                  // chỉ click close gần prompt/reference area, tránh đóng browser/dialog lớn
-                  const r = b.getBoundingClientRect();
-                  if (r.top > window.innerHeight * 0.45) {
-                    try { b.click(); } catch {}
-                  }
-                }
-              }
-            }
-            """
+        buttons = composer.locator(
+            'button[aria-label*="Xóa" i],button[aria-label*="Remove" i],'
+            'button[title*="Xóa" i],button[title*="Remove" i]'
         )
-    except Exception:
-        pass
-    time.sleep(0.25)
+        for i in range(buttons.count() - 1, -1, -1):
+            button = buttons.nth(i)
+            if button.is_visible():
+                button.click(timeout=3000)
+                time.sleep(0.25)
+        deadline=time.time()+timeout_sec
+        while time.time()<deadline:
+            media=composer.locator('[data-media-id],img:not([class*="icon"]),video')
+            if media.count()==0:
+                return True
+            time.sleep(0.3)
+        log_line(f"[flow] stale composer attachments remain: {media.count()}")
+        return False
+    except Exception as e:
+        log_line(f"[flow] clear composer attachments failed: {e}")
+        return False
 
 
 def close_open_menus(page):
@@ -2332,7 +2330,8 @@ def run(args):
 
                     # Always clear before typing, especially for AI Studio/Continuous runs
                     clear_prompt_box(page, box)
-                    clear_attached_references(page)
+                    if not clear_attached_references(page):
+                        raise RuntimeError("stale_reference_not_cleared")
 
                     prompt_to_type = prompt
                     matched_refs = []
@@ -2344,7 +2343,7 @@ def run(args):
                             prompt_ref_dir = refs_dir / str(prompt_no)
                             if prompt_ref_dir.is_dir():
                                 exts = {".jpg", ".jpeg", ".png", ".webp"}
-                                matched_refs.extend([p for p in sorted(prompt_ref_dir.iterdir()) if p.is_file() and p.suffix.lower() in exts])
+                                matched_refs.extend([p for p in sorted(prompt_ref_dir.iterdir(), key=natural_file_key) if p.is_file() and p.suffix.lower() in exts])
                             else:
                                 ref_img = resolve_ref_image(refs_dir, prompt_no)
                                 if ref_img is not None:
@@ -2352,12 +2351,13 @@ def run(args):
                         else:
                             # AI Prompt Studio: upload every image in the selected character folder for every prompt.
                             exts = {".jpg", ".jpeg", ".png", ".webp"}
-                            matched_refs.extend([p for p in sorted(refs_dir.iterdir()) if p.is_file() and p.suffix.lower() in exts])
+                            matched_refs.extend([p for p in sorted(refs_dir.iterdir(), key=natural_file_key) if p.is_file() and p.suffix.lower() in exts])
 
                     for ref_file in matched_refs:
                         log_line(f"[flow] prompt #{prompt_no} use ref image: {ref_file.name}")
-                        # AI Prompt Studio uses --no-paired-mode: upload files only on prompt #1, then reuse by searching filenames in Flow library.
-                        upload_reference_image(page, ref_file, prompt_box=box, upload_file=(args.paired_mode if args.paired_mode else (prompt_no == 1)))
+                        # Always upload the exact local file selected for this prompt.
+                        # Reusing Flow library entries by filename can attach stale media.
+                        upload_reference_image(page, ref_file, prompt_box=box, upload_file=True)
 
                     if matched_refs:
                         settled = wait_reference_upload_settled(page, timeout_sec=45)
