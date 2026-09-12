@@ -2308,6 +2308,8 @@ def run(args):
             ok = False
             submitted = False
             flow_rejected = False
+            reference_attached = False
+            matched_refs = []
 
             for attempt in range(1, args.max_retries + 2):
                 try:
@@ -2328,14 +2330,15 @@ def run(args):
 
                     box = find_input_box(page)
 
-                    # Always clear before typing, especially for AI Studio/Continuous runs
+                    # Keep a successfully attached reference across retries of
+                    # this same prompt; clearing/uploading again creates duplicates.
                     clear_prompt_box(page, box)
-                    if not clear_attached_references(page):
+                    if not reference_attached and not clear_attached_references(page):
                         raise RuntimeError("stale_reference_not_cleared")
 
                     prompt_to_type = prompt
                     matched_refs = []
-                    if refs_dir is not None:
+                    if refs_dir is not None and not reference_attached:
                         if args.paired_mode:
                             # Normal Flow tabs: paired image mapping only (1.jpg -> prompt #1, 2.jpg -> prompt #2).
                             # Dance wardrobe batches may provide one folder per prompt containing
@@ -2381,6 +2384,10 @@ def run(args):
                         log_line(f"[flow] prompt #{prompt_no} reference upload settled: {settled}")
                         if not settled:
                             raise RuntimeError("reference_upload_not_settled")
+                        reference_attached = True
+                        log_line(f"[flow] prompt #{prompt_no} reference locked; retries will not upload again")
+                    elif reference_attached:
+                        log_line(f"[flow] prompt #{prompt_no} retry reuses already attached reference")
 
                     time.sleep(random.uniform(args.pre_paste_min, args.pre_paste_max))
 
@@ -2449,7 +2456,9 @@ def run(args):
                                     log_line(f"[flow] batch download prompt #{item['prompt_no']} of {batch_size}")
                                     dl_ok, dl_step = download_prompt_queue_item(page, item, args, claimed_ids=claimed_media_ids)
                                     if not dl_ok:
-                                        raise RuntimeError(f"auto_download_failed_prompt_{item['prompt_no']}:{dl_step}")
+                                        item["batch_download_error"] = dl_step
+                                        log_line(f"[flow] batch download deferred prompt #{item['prompt_no']}: {dl_step}; continue submissions")
+                                        continue
                                     # Remove only after successful complete download.
                                     if delayed_downloads and delayed_downloads[0] is item:
                                         delayed_downloads.pop(0)
