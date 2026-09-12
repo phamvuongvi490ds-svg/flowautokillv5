@@ -2341,9 +2341,14 @@ def run(args):
                             # Dance wardrobe batches may provide one folder per prompt containing
                             # the model image followed by every garment/accessory reference.
                             prompt_ref_dir = refs_dir / str(prompt_no)
-                            if prompt_ref_dir.is_dir():
+                            if prompt_ref_dir.is_dir() and args.allow_multi_refs:
                                 exts = {".jpg", ".jpeg", ".png", ".webp"}
                                 matched_refs.extend([p for p in sorted(prompt_ref_dir.iterdir(), key=natural_file_key) if p.is_file() and p.suffix.lower() in exts])
+                            elif prompt_ref_dir.is_dir():
+                                exts = {".jpg", ".jpeg", ".png", ".webp"}
+                                files = [p for p in sorted(prompt_ref_dir.iterdir(), key=natural_file_key) if p.is_file() and p.suffix.lower() in exts]
+                                if files:
+                                    matched_refs.append(files[0])
                             else:
                                 ref_img = resolve_ref_image(refs_dir, prompt_no)
                                 if ref_img is not None:
@@ -2362,7 +2367,7 @@ def run(args):
 
                     # Only paired mode is limited to one numbered image. Explicit
                     # all mode and wardrobe subfolders intentionally keep all refs.
-                    if args.ref_mode != "all" and not (args.paired_mode and (refs_dir / str(prompt_no)).is_dir()):
+                    if args.ref_mode != "all" and not args.allow_multi_refs:
                         matched_refs = matched_refs[:1]
 
                     for ref_file in matched_refs:
@@ -2616,6 +2621,7 @@ def main():
     ap.add_argument("--omni-duration", default="", choices=["", "4s", "6s", "8s", "10s"], help="Thời lượng chỉ áp dụng cho omni_flash")
     ap.add_argument("--video-sub-mode", default="frames", choices=["frames", "ingredients"], help="Video sub mode")
     ap.add_argument("--ref-mode", choices=["paired", "all"], default="paired", help="paired: N.jpg cho prompt N; all: toàn bộ ảnh cho mỗi prompt")
+    ap.add_argument("--allow-multi-refs", action="store_true", help="Chỉ dành cho job nhiều ảnh rõ ràng như Dance Wardrobe")
     ap.add_argument("--paired-mode", dest="paired_mode", action="store_true", help="Map ảnh theo số prompt (1.jpg->prompt1)")
     ap.add_argument("--no-paired-mode", dest="paired_mode", action="store_false", help="Không map theo số prompt")
     ap.set_defaults(paired_mode=True)
