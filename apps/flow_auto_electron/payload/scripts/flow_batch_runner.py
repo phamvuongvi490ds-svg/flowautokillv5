@@ -1577,6 +1577,26 @@ def ordered_new_media_ids(page, before_ids=None):
     except Exception:
         return []
 
+def prompt_queue_item_ready_now(page, item, claimed_ids=None):
+    """Non-blocking readiness check used while continuous submissions are active."""
+    claimed_ids = claimed_ids or set()
+    expected = max(1, int(item.get("count") or "1"))
+    assigned = [x for x in (item.get("assigned_ids") or []) if x and x not in claimed_ids]
+    candidates = assigned or [x for x in ordered_new_media_ids(page, before_ids=set(item.get("before_ids") or []) | set(claimed_ids)) if x not in claimed_ids]
+    if len(candidates) < expected:
+        return False
+    try:
+        return bool(page.evaluate(
+            """({ids,kind}) => ids.every(id => {
+              const tile=[...document.querySelectorAll('flow-grid-tile-container')].find(t=>t.querySelector('[data-media-id]')?.getAttribute('data-media-id')===id);
+              if(!tile || tile.querySelector('flow-pending-tile')) return false;
+              return kind==='video' ? !!tile.querySelector('video[src],video source[src]') : !!tile.querySelector('img[src],canvas');
+            })""",
+            {"ids": candidates[:expected], "kind": item.get("media_kind") or "video"},
+        ))
+    except Exception:
+        return False
+
 def download_prompt_queue_item(page, item, args, expected_count=1, claimed_ids=None):
     claimed_ids = claimed_ids if claimed_ids is not None else set()
     expected = max(1, int(item.get("count") or expected_count or "1"))
@@ -2453,7 +2473,11 @@ def run(args):
                                 log_line(f"[flow] completed submit batch of {batch_size}; FIFO download now: {[x['prompt_no'] for x in batch]}")
                                 for item in batch:
                                     license_guard_or_raise(force=True)
-                                    log_line(f"[flow] batch download prompt #{item['prompt_no']} of {batch_size}")
+                                    if not prompt_queue_item_ready_now(page, item, claimed_ids=claimed_media_ids):
+                                        item["batch_download_error"] = "not_ready_nonblocking"
+                                        log_line(f"[flow] batch prompt #{item['prompt_no']} not ready; keep FIFO and continue prompt submissions")
+                                        continue
+                                    log_line(f"[flow] batch download ready prompt #{item['prompt_no']} of {batch_size}")
                                     dl_ok, dl_step = download_prompt_queue_item(page, item, args, claimed_ids=claimed_media_ids)
                                     if not dl_ok:
                                         item["batch_download_error"] = dl_step
