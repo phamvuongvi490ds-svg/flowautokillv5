@@ -2109,14 +2109,16 @@ def auto_download_with_retry(page, resolution="720p", timeout_sec=480, before_id
     if res == "720":
         res = "720p"
     while time.time() < deadline:
-        # Prefer direct media bytes while browser is busy; UI download can sometimes save an HTML/redirect placeholder.
+        # Video Flow mới ổn định nhất qua hotbar 'Tuỳ chọn khác' trong tile.
+        ok, step = current_flow_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
+        last = step
+        if ok:
+            return True, step
+        # Preserve old direct downloader as fallback.
         ok, step = direct_download_media_from_tile(page, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
         last = step
         if ok:
             return True, step
-        # If direct media is unavailable, use Flow's own UI download after the page is idle.
-        # Validate actual bytes after download; bad preview/placeholder files are deleted by
-        # extension_download_tile_via_ui() and retried instead of being kept.
         try:
             page.wait_for_timeout(1200)
         except Exception:
@@ -2407,19 +2409,27 @@ def run(args):
                     if args.ref_mode != "all" and not args.allow_multi_refs:
                         matched_refs = matched_refs[:1]
 
+                    uploaded_this_attempt = False
                     for ref_file in matched_refs:
+                        if reference_attached and not args.allow_multi_refs and args.ref_mode != "all":
+                            log_line(f"[flow] prompt #{prompt_no} reference already attached; block duplicate upload of {ref_file.name}")
+                            continue
                         log_line(f"[flow] prompt #{prompt_no} use ref image: {ref_file.name}")
                         # Always upload the exact local file selected for this prompt.
                         # Reusing Flow library entries by filename can attach stale media.
                         upload_reference_image(page, ref_file, prompt_box=box, upload_file=True)
+                        uploaded_this_attempt = True
+                        if not args.allow_multi_refs and args.ref_mode != "all":
+                            reference_attached = True
+                            log_line(f"[flow] prompt #{prompt_no} reference locked immediately after add-to-prompt; retries will not upload again")
+                            break
 
                     if matched_refs:
-                        settled = wait_reference_upload_settled(page, timeout_sec=45)
+                        settled = wait_reference_upload_settled(page, timeout_sec=20)
                         log_line(f"[flow] prompt #{prompt_no} reference upload settled: {settled}")
-                        if not settled:
-                            raise RuntimeError("reference_upload_not_settled")
-                        reference_attached = True
-                        log_line(f"[flow] prompt #{prompt_no} reference locked; retries will not upload again")
+                        if uploaded_this_attempt and (args.allow_multi_refs or args.ref_mode == "all"):
+                            reference_attached = True
+                            log_line(f"[flow] prompt #{prompt_no} multi-reference locked; retries will not upload again")
                     elif reference_attached:
                         log_line(f"[flow] prompt #{prompt_no} retry reuses already attached reference")
 
