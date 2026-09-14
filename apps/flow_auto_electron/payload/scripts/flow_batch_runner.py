@@ -1224,8 +1224,22 @@ def _upload_media_without_native_dialog(page, image_path: Path):
         log_line(f"[flow] intercepted reference upload failed: {e}")
         return False
 
-def _add_uploaded_media_to_prompt(page, timeout_sec=90):
-    """Attach uploaded media and verify it appears inside the composer."""
+def composer_attachment_count(page):
+    try:
+        return int(page.locator(
+            'flow-prompt-box.prompt-box-container [data-media-id],'
+            'flow-prompt-box.prompt-box-container flow-media-chip,'
+            'flow-prompt-box.prompt-box-container flow-attachment-chip,'
+            'flow-prompt-box.prompt-box-container img:not(mat-icon img):not([class*="icon"]),'
+            'flow-prompt-box.prompt-box-container video'
+        ).count())
+    except Exception:
+        return 0
+
+def _add_uploaded_media_to_prompt(page, timeout_sec=90, before_count=None):
+    """Attach the just-uploaded media; old/stale attachments must not satisfy this."""
+    if before_count is None:
+        before_count = composer_attachment_count(page)
     selector = (
         'flow-add-menu-detail-pane button.detail-add-to-prompt-btn:has-text("Thêm vào câu lệnh"),'
         'flow-add-menu-detail-pane button[aria-label="Thêm vào câu lệnh"]'
@@ -1234,18 +1248,15 @@ def _add_uploaded_media_to_prompt(page, timeout_sec=90):
         button = page.locator(selector).first
         button.wait_for(state='visible', timeout=int(timeout_sec * 1000))
         button.click(timeout=7000)
-        deadline = time.time() + 15
+        deadline = time.time() + 20
         while time.time() < deadline:
-            attached = page.locator(
-                'flow-prompt-box.prompt-box-container img,'
-                'flow-prompt-box.prompt-box-container video,'
-                'flow-prompt-box.prompt-box-container [data-media-id]'
-            )
-            if attached.count() > 0:
+            now = composer_attachment_count(page)
+            if now > before_count:
                 close_open_menus(page)
+                log_line(f"[flow] add-to-prompt confirmed attachment count {before_count}->{now}")
                 return True
             time.sleep(0.4)
-        log_line('[flow] add-to-prompt clicked but composer media was not confirmed')
+        log_line(f"[flow] add-to-prompt clicked but attachment count did not increase: before={before_count} now={composer_attachment_count(page)}")
     except Exception as e:
         log_line(f"[flow] add uploaded media to prompt failed: {e}")
     close_open_menus(page)
@@ -1269,12 +1280,13 @@ def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=
         if not plus_opened:
             raise RuntimeError(f"extension_upload:add_menu_not_opened:{fname}")
         log_line("[flow] plus menu opened for reference upload")
+        before_attach = composer_attachment_count(page)
         file_set = _upload_media_without_native_dialog(page, image_path)
         if not file_set:
             raise RuntimeError(f"extension_upload:filechooser_not_intercepted:{fname}")
 
         log_line(f"[flow] extension-upload injected file: {fname}")
-        if not _add_uploaded_media_to_prompt(page, timeout_sec=60):
+        if not _add_uploaded_media_to_prompt(page, timeout_sec=60, before_count=before_attach):
             raise RuntimeError(f"extension_upload:add_to_prompt_failed:{fname}")
         log_line(f"[flow] uploaded media added to prompt: {fname}")
         time.sleep(1.0)
@@ -1423,7 +1435,7 @@ def wait_reference_upload_settled(page, timeout_sec=45):
                   const dialogs=Array.from(document.querySelectorAll('[role="dialog"],[data-radix-popper-content-wrapper]')).filter(visible).length;
                   const uploadBusy=Array.from(document.querySelectorAll('[role="progressbar"],[aria-busy="true"]')).filter(visible).length;
                   const composer=document.querySelector('textarea,[contenteditable="true"]')?.closest('form') || null;
-                  const refs=composer ? Array.from(composer.querySelectorAll('img,video,[data-tile-id]')).map((el,i)=>el.getAttribute('data-tile-id')||el.currentSrc||el.src||el.getAttribute('src')||`ref-${i}`).filter(Boolean).sort() : [];
+                  const refs=composer ? Array.from(composer.querySelectorAll('[data-media-id],img,video')).map((el,i)=>el.getAttribute('data-media-id')||el.currentSrc||el.src||el.getAttribute('src')||`ref-${i}`).filter(Boolean).sort() : [];
                   return {dialogs,uploadBusy,refs};
                 }
                 """
@@ -1918,11 +1930,13 @@ def extension_download_tile_via_ui(page, resolution="720p", before_ids=None, out
               const Dn = (tile) => !!tile.querySelector('video');
               const collectNewTiles = (snapshot) => {
                 const out = [], seen = new Set();
-                document.querySelectorAll('[data-tile-id]').forEach(tile => {
-                  const id = tile.getAttribute('data-tile-id');
+                document.querySelectorAll('flow-grid-tile-container').forEach(tile => {
+                  const mediaIdEl = tile.querySelector('[data-media-id]');
+                  const id = mediaIdEl?.getAttribute('data-media-id');
                   if (!id || seen.has(id)) return;
                   seen.add(id);
                   if (snapshot && snapshot.has(id)) return;
+                  if (tile.querySelector('flow-pending-tile')) return;
                   if (On(tile) && visible(tile)) out.push({tileId:id, tileEl:tile, isVideo:Dn(tile)});
                 });
                 return out;
