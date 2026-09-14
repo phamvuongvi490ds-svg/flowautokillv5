@@ -1286,8 +1286,22 @@ def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=
             raise RuntimeError(f"extension_upload:filechooser_not_intercepted:{fname}")
 
         log_line(f"[flow] extension-upload injected file: {fname}")
-        if not _add_uploaded_media_to_prompt(page, timeout_sec=60, before_count=before_attach):
-            raise RuntimeError(f"extension_upload:add_to_prompt_failed:{fname}")
+        # Current Flow may auto-attach the selected file immediately after
+        # file chooser injection. If count already increased, do NOT click
+        # "Thêm vào câu lệnh" again or the same image is attached twice.
+        auto_deadline = time.time() + 8
+        auto_attached = False
+        while time.time() < auto_deadline:
+            now_attach = composer_attachment_count(page)
+            if now_attach > before_attach:
+                auto_attached = True
+                log_line(f"[flow] upload auto-attached media count {before_attach}->{now_attach}; skip add-to-prompt button")
+                close_open_menus(page)
+                break
+            time.sleep(0.4)
+        if not auto_attached:
+            if not _add_uploaded_media_to_prompt(page, timeout_sec=60, before_count=before_attach):
+                raise RuntimeError(f"extension_upload:add_to_prompt_failed:{fname}")
         log_line(f"[flow] uploaded media added to prompt: {fname}")
         time.sleep(1.0)
         return
