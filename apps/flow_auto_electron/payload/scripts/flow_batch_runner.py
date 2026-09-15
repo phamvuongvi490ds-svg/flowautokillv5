@@ -729,46 +729,37 @@ def get_box_text(box):
         return ""
 
 
-def clear_attached_references(page, timeout_sec=8):
-    """Remove only attachments inside the prompt composer and confirm it is empty."""
-    composer = page.locator('flow-prompt-box.prompt-box-container')
+def clear_attached_references(page):
+    # Extension-style pre-flight cleanup: click close button for attached references/chips if present.
     try:
-        buttons = composer.locator(
-            'button[aria-label*="Xóa" i],button[aria-label*="Remove" i],'
-            'button[title*="Xóa" i],button[title*="Remove" i]'
+        page.evaluate(
+            """
+            () => {
+              const visible = (el) => {
+                if (!el) return false;
+                const st = getComputedStyle(el);
+                if (!st || st.display === 'none' || st.visibility === 'hidden') return false;
+                const r = el.getBoundingClientRect();
+                return r.width > 8 && r.height > 8;
+              };
+              const btns = Array.from(document.querySelectorAll('button,[role="button"]')).filter(visible);
+              for (const b of btns) {
+                const icon = (b.querySelector('i')?.textContent || '').trim().toLowerCase();
+                const txt = ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '')).toLowerCase();
+                if (icon === 'close' || txt.includes('remove') || txt.includes('xóa') || txt.includes('clear')) {
+                  // chỉ click close gần prompt/reference area, tránh đóng browser/dialog lớn
+                  const r = b.getBoundingClientRect();
+                  if (r.top > window.innerHeight * 0.45) {
+                    try { b.click(); } catch {}
+                  }
+                }
+              }
+            }
+            """
         )
-        for i in range(buttons.count() - 1, -1, -1):
-            button = buttons.nth(i)
-            if button.is_visible():
-                button.click(timeout=3000)
-                time.sleep(0.25)
-        deadline=time.time()+timeout_sec
-        while time.time()<deadline:
-            media=composer.locator('[data-media-id]:not(flow-grid-tile-container [data-media-id]),flow-media-chip,flow-attachment-chip,[class*="attachment"],[class*="media-chip"]')
-            if media.count()==0:
-                return True
-            # Fallback: select attachment/media and delete it from the composer.
-            try:
-                media.first.click(timeout=1000)
-                page.keyboard.press('Backspace')
-                page.keyboard.press('Delete')
-            except Exception:
-                pass
-            try:
-                editor = page.locator('flow-prompt-box.prompt-box-container div.ProseMirror[contenteditable="true"]').first
-                if editor.is_visible():
-                    editor.click(timeout=1000, position={'x': 10, 'y': 10})
-                    mod = 'Meta' if sys.platform == 'darwin' else 'Control'
-                    page.keyboard.press(f'{mod}+A')
-                    page.keyboard.press('Backspace')
-            except Exception:
-                pass
-            time.sleep(0.5)
-        log_line(f"[flow] stale composer attachments remain: {media.count()}")
-        return False
-    except Exception as e:
-        log_line(f"[flow] clear composer attachments failed: {e}")
-        return False
+    except Exception:
+        pass
+    time.sleep(0.25)
 
 
 def close_open_menus(page):
@@ -1352,19 +1343,24 @@ def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=
     if upload_file:
         # Phase 1: open add/upload picker beside prompt composer, then inject file.
         plus_opened = _open_plus_menu(page, prompt_box=prompt_box)
-        if not plus_opened:
-            raise RuntimeError(f"extension_upload:add_menu_not_opened:{fname}")
-        log_line("[flow] plus menu opened for reference upload")
-        before_attach = composer_attachment_count(page)
-        before_library = latest_library_media_count(page)
-        file_set = _upload_media_without_native_dialog(page, image_path)
+        if plus_opened:
+            log_line("[flow] plus menu opened for reference upload")
+            _click_upload_image_item(page)
+        else:
+            log_line("[flow] plus menu not found; trying direct file input fallback")
+
+        file_set = set_upload_file_input(page, image_path)
+        if not file_set and not plus_opened:
+            plus_opened = _open_plus_menu(page, prompt_box=None)
+            if plus_opened:
+                log_line("[flow] plus menu opened on fallback attempt")
+                _click_upload_image_item(page)
+                file_set = set_upload_file_input(page, image_path)
         if not file_set:
-            raise RuntimeError(f"extension_upload:filechooser_not_intercepted:{fname}")
+            raise RuntimeError(f"extension_upload:cannot_inject_file:{fname}")
 
         log_line(f"[flow] extension-upload injected file: {fname}")
-        if not wait_new_library_media(page, before_count=before_library, timeout_sec=70):
-            log_line(f"[flow] library media count did not increase after upload; continuing to add-to-prompt for {fname}")
-        if not _add_uploaded_media_to_prompt(page, timeout_sec=70, before_count=before_attach):
+        if not _add_uploaded_media_to_prompt(page, timeout_sec=60):
             raise RuntimeError(f"extension_upload:add_to_prompt_failed:{fname}")
         log_line(f"[flow] uploaded media added to prompt: {fname}")
         time.sleep(1.0)
