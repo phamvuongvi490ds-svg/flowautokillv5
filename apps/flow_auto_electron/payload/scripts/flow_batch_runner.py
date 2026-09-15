@@ -1225,16 +1225,42 @@ def _upload_media_without_native_dialog(page, image_path: Path):
         return False
 
 def composer_attachment_count(page):
+    """Count unique prompt attachments, not nested img/chip duplicates."""
     try:
-        return int(page.locator(
-            'flow-prompt-box.prompt-box-container [data-media-id],'
-            'flow-prompt-box.prompt-box-container flow-media-chip,'
-            'flow-prompt-box.prompt-box-container flow-attachment-chip,'
-            'flow-prompt-box.prompt-box-container img:not(mat-icon img):not([class*="icon"]),'
-            'flow-prompt-box.prompt-box-container video'
-        ).count())
+        return int(page.evaluate(
+            """() => {
+              const root=document.querySelector('flow-prompt-box.prompt-box-container');
+              if(!root) return 0;
+              const ids=new Set([...root.querySelectorAll('[data-media-id]')].map(x=>x.getAttribute('data-media-id')).filter(Boolean));
+              if(ids.size) return ids.size;
+              const chips=[...root.querySelectorAll('flow-media-chip,flow-attachment-chip,[class*="attachment"],[class*="media-chip"]')]
+                .filter(el=>{const r=el.getBoundingClientRect();return r.width>20&&r.height>20;});
+              if(chips.length) return chips.length;
+              const media=[...root.querySelectorAll('img,video')].filter(el=>{
+                const r=el.getBoundingClientRect(), src=el.currentSrc||el.src||el.getAttribute('src')||'';
+                return r.width>30&&r.height>30&&src&&!el.closest('button')&&!String(el.className||'').toLowerCase().includes('icon');
+              });
+              return media.length;
+            }"""
+        ))
     except Exception:
         return 0
+
+def enforce_single_prompt_attachment(page):
+    """For 1-image mode, remove extra visible attachment chips if Flow duplicated one upload."""
+    try:
+        return bool(page.evaluate(
+            """() => {
+              const root=document.querySelector('flow-prompt-box.prompt-box-container');
+              if(!root) return true;
+              const removeBtns=[...root.querySelectorAll('button')].filter(b=>/xóa|remove|delete|close/i.test((b.getAttribute('aria-label')||b.title||b.textContent||'')));
+              while(removeBtns.length>1){ const b=removeBtns.shift(); b.click(); }
+              return true;
+            }"""
+        ))
+    except Exception:
+        return False
+
 
 def _add_uploaded_media_to_prompt(page, timeout_sec=90, before_count=None):
     """Attach the just-uploaded media; old/stale attachments must not satisfy this."""
@@ -1252,8 +1278,11 @@ def _add_uploaded_media_to_prompt(page, timeout_sec=90, before_count=None):
         while time.time() < deadline:
             now = composer_attachment_count(page)
             if now > before_count:
+                if now - before_count > 1:
+                    enforce_single_prompt_attachment(page)
+                    log_line(f"[flow] add-to-prompt created duplicate attachments {before_count}->{now}; trimmed extras")
                 close_open_menus(page)
-                log_line(f"[flow] add-to-prompt confirmed attachment count {before_count}->{now}")
+                log_line(f"[flow] add-to-prompt confirmed attachment count {before_count}->{composer_attachment_count(page)}")
                 return True
             time.sleep(0.4)
         log_line(f"[flow] add-to-prompt clicked but attachment count did not increase: before={before_count} now={composer_attachment_count(page)}")
@@ -1295,7 +1324,11 @@ def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=
             now_attach = composer_attachment_count(page)
             if now_attach > before_attach:
                 auto_attached = True
-                log_line(f"[flow] upload auto-attached media count {before_attach}->{now_attach}; skip add-to-prompt button")
+                if now_attach - before_attach > 1:
+                    enforce_single_prompt_attachment(page)
+                    log_line(f"[flow] upload auto-attached duplicated count {before_attach}->{now_attach}; trimmed extras")
+                else:
+                    log_line(f"[flow] upload auto-attached media count {before_attach}->{now_attach}; skip add-to-prompt button")
                 close_open_menus(page)
                 break
             time.sleep(0.4)
