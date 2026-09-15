@@ -747,7 +747,23 @@ def clear_attached_references(page, timeout_sec=8):
             media=composer.locator('[data-media-id],img:not([class*="icon"]),video')
             if media.count()==0:
                 return True
-            time.sleep(0.3)
+            # Fallback: select attachment/media and delete it from the composer.
+            try:
+                media.first.click(timeout=1000)
+                page.keyboard.press('Backspace')
+                page.keyboard.press('Delete')
+            except Exception:
+                pass
+            try:
+                editor = page.locator('flow-prompt-box.prompt-box-container div.ProseMirror[contenteditable="true"]').first
+                if editor.is_visible():
+                    editor.click(timeout=1000, position={'x': 10, 'y': 10})
+                    mod = 'Meta' if sys.platform == 'darwin' else 'Control'
+                    page.keyboard.press(f'{mod}+A')
+                    page.keyboard.press('Backspace')
+            except Exception:
+                pass
+            time.sleep(0.5)
         log_line(f"[flow] stale composer attachments remain: {media.count()}")
         return False
     except Exception as e:
@@ -1274,9 +1290,11 @@ def _add_uploaded_media_to_prompt(page, timeout_sec=90, before_count=None):
         button = page.locator(selector).first
         button.wait_for(state='visible', timeout=int(timeout_sec * 1000))
         button.click(timeout=7000)
-        deadline = time.time() + 20
+        deadline = time.time() + 45
+        last_count = before_count
         while time.time() < deadline:
             now = composer_attachment_count(page)
+            last_count = now
             if now > before_count:
                 if now - before_count > 1:
                     enforce_single_prompt_attachment(page)
@@ -1284,8 +1302,15 @@ def _add_uploaded_media_to_prompt(page, timeout_sec=90, before_count=None):
                 close_open_menus(page)
                 log_line(f"[flow] add-to-prompt confirmed attachment count {before_count}->{composer_attachment_count(page)}")
                 return True
-            time.sleep(0.4)
-        log_line(f"[flow] add-to-prompt clicked but attachment count did not increase: before={before_count} now={composer_attachment_count(page)}")
+            time.sleep(0.5)
+        # Flow sometimes attaches a moment after the detail pane closes. One final grace check.
+        time.sleep(3)
+        now = composer_attachment_count(page)
+        if now > before_count:
+            close_open_menus(page)
+            log_line(f"[flow] add-to-prompt confirmed late attachment count {before_count}->{now}")
+            return True
+        log_line(f"[flow] add-to-prompt clicked but attachment count did not increase: before={before_count} now={now} last={last_count}")
     except Exception as e:
         log_line(f"[flow] add uploaded media to prompt failed: {e}")
     close_open_menus(page)
@@ -1334,7 +1359,17 @@ def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=
             time.sleep(0.4)
         if not auto_attached:
             if not _add_uploaded_media_to_prompt(page, timeout_sec=60, before_count=before_attach):
-                raise RuntimeError(f"extension_upload:add_to_prompt_failed:{fname}")
+                # Last-resort late attach check: do not retry/upload again if Flow did attach it.
+                late_deadline = time.time() + 10
+                late_ok = False
+                while time.time() < late_deadline:
+                    if composer_attachment_count(page) > before_attach:
+                        late_ok = True
+                        log_line(f"[flow] uploaded media appeared late after add-to-prompt failure: {fname}")
+                        break
+                    time.sleep(0.5)
+                if not late_ok:
+                    raise RuntimeError(f"extension_upload:add_to_prompt_failed:{fname}")
         log_line(f"[flow] uploaded media added to prompt: {fname}")
         time.sleep(1.0)
         return
