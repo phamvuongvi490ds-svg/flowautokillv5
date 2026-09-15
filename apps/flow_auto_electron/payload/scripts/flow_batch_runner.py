@@ -744,7 +744,7 @@ def clear_attached_references(page, timeout_sec=8):
                 time.sleep(0.25)
         deadline=time.time()+timeout_sec
         while time.time()<deadline:
-            media=composer.locator('[data-media-id],img:not([class*="icon"]),video')
+            media=composer.locator('[data-media-id]:not(flow-grid-tile-container [data-media-id]),flow-media-chip,flow-attachment-chip,[class*="attachment"],[class*="media-chip"]')
             if media.count()==0:
                 return True
             # Fallback: select attachment/media and delete it from the composer.
@@ -1241,26 +1241,28 @@ def _upload_media_without_native_dialog(page, image_path: Path):
         return False
 
 def composer_attachment_count(page):
-    """Count unique prompt attachments, not nested img/chip duplicates."""
+    """Count attachments actually inserted in the prompt composer, not library grid tiles."""
     try:
         return int(page.evaluate(
             """() => {
               const root=document.querySelector('flow-prompt-box.prompt-box-container');
               if(!root) return 0;
-              const ids=new Set([...root.querySelectorAll('[data-media-id]')].map(x=>x.getAttribute('data-media-id')).filter(Boolean));
-              if(ids.size) return ids.size;
-              const chips=[...root.querySelectorAll('flow-media-chip,flow-attachment-chip,[class*="attachment"],[class*="media-chip"]')]
-                .filter(el=>{const r=el.getBoundingClientRect();return r.width>20&&r.height>20;});
-              if(chips.length) return chips.length;
-              const media=[...root.querySelectorAll('img,video')].filter(el=>{
-                const r=el.getBoundingClientRect(), src=el.currentSrc||el.src||el.getAttribute('src')||'';
-                return r.width>30&&r.height>30&&src&&!el.closest('button')&&!String(el.className||'').toLowerCase().includes('icon');
-              });
-              return media.length;
+              const candidates=[...root.querySelectorAll('[data-media-id],flow-media-chip,flow-attachment-chip,[class*="attachment"],[class*="media-chip"],img,video')]
+                .filter(el=>{
+                  if(el.closest('flow-grid-tile-container,flow-add-menu-popover-content,.cdk-overlay-pane')) return false;
+                  const r=el.getBoundingClientRect();
+                  if(r.width<24||r.height<24) return false;
+                  const txt=(el.getAttribute('aria-label')||el.title||el.className||'').toString().toLowerCase();
+                  if(txt.includes('icon')) return false;
+                  return true;
+                });
+              const ids=new Set(candidates.map(x=>x.getAttribute?.('data-media-id')).filter(Boolean));
+              return ids.size || candidates.length;
             }"""
         ))
     except Exception:
         return 0
+
 
 def enforce_single_prompt_attachment(page):
     """For 1-image mode, remove extra visible attachment chips if Flow duplicated one upload."""
@@ -1316,6 +1318,25 @@ def _add_uploaded_media_to_prompt(page, timeout_sec=90, before_count=None):
     close_open_menus(page)
     return False
 
+def latest_library_media_count(page):
+    try:
+        return int(page.locator('flow-grid-tile-container [data-media-id]').count())
+    except Exception:
+        return 0
+
+
+def wait_new_library_media(page, before_count=0, timeout_sec=60):
+    deadline=time.time()+timeout_sec
+    while time.time()<deadline:
+        try:
+            count=latest_library_media_count(page)
+            if count>before_count:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
 def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=True):
     """Extension-style image pipeline: upload to Flow library, then search by filename and attach.
 
@@ -1335,41 +1356,16 @@ def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=
             raise RuntimeError(f"extension_upload:add_menu_not_opened:{fname}")
         log_line("[flow] plus menu opened for reference upload")
         before_attach = composer_attachment_count(page)
+        before_library = latest_library_media_count(page)
         file_set = _upload_media_without_native_dialog(page, image_path)
         if not file_set:
             raise RuntimeError(f"extension_upload:filechooser_not_intercepted:{fname}")
 
         log_line(f"[flow] extension-upload injected file: {fname}")
-        # Current Flow may auto-attach the selected file immediately after
-        # file chooser injection. If count already increased, do NOT click
-        # "Thêm vào câu lệnh" again or the same image is attached twice.
-        auto_deadline = time.time() + 8
-        auto_attached = False
-        while time.time() < auto_deadline:
-            now_attach = composer_attachment_count(page)
-            if now_attach > before_attach:
-                auto_attached = True
-                if now_attach - before_attach > 1:
-                    enforce_single_prompt_attachment(page)
-                    log_line(f"[flow] upload auto-attached duplicated count {before_attach}->{now_attach}; trimmed extras")
-                else:
-                    log_line(f"[flow] upload auto-attached media count {before_attach}->{now_attach}; skip add-to-prompt button")
-                close_open_menus(page)
-                break
-            time.sleep(0.4)
-        if not auto_attached:
-            if not _add_uploaded_media_to_prompt(page, timeout_sec=60, before_count=before_attach):
-                # Last-resort late attach check: do not retry/upload again if Flow did attach it.
-                late_deadline = time.time() + 10
-                late_ok = False
-                while time.time() < late_deadline:
-                    if composer_attachment_count(page) > before_attach:
-                        late_ok = True
-                        log_line(f"[flow] uploaded media appeared late after add-to-prompt failure: {fname}")
-                        break
-                    time.sleep(0.5)
-                if not late_ok:
-                    raise RuntimeError(f"extension_upload:add_to_prompt_failed:{fname}")
+        if not wait_new_library_media(page, before_count=before_library, timeout_sec=70):
+            log_line(f"[flow] library media count did not increase after upload; continuing to add-to-prompt for {fname}")
+        if not _add_uploaded_media_to_prompt(page, timeout_sec=70, before_count=before_attach):
+            raise RuntimeError(f"extension_upload:add_to_prompt_failed:{fname}")
         log_line(f"[flow] uploaded media added to prompt: {fname}")
         time.sleep(1.0)
         return
