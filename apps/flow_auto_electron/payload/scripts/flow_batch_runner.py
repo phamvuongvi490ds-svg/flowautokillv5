@@ -816,34 +816,34 @@ def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retr
         try:
             # Ưu tiên find_input_box đã có sẵn logic New Project
             box = find_input_box(page)
-            
+
             # Click vào tọa độ trung tâm để đảm bảo focus sâu vào editor
             rect = box.bounding_box()
             if rect:
                 page.mouse.click(rect['x'] + rect['width']/2, rect['y'] + rect['height']/2)
             else:
                 box.click(force=True)
-            
+
             time.sleep(0.3)
             page.keyboard.press("Control+A")
             page.keyboard.press("Backspace")
             time.sleep(0.2)
-            
+
             # Use Playwright's native fill() which handles events correctly for most editors
             box.fill(prompt)
             time.sleep(0.5)
-            
+
             # Verify
             txt = box.inner_text() or box.input_value() or ""
             if len(txt.strip()) >= min(5, len(prompt)):
                 return True
-            
+
             # Fallback 2: insert_text
             page.keyboard.insert_text(prompt)
             time.sleep(0.5)
             if (box.inner_text() or box.input_value() or "").strip():
                 return True
-                
+
             # Fallback 3: Strong JS injection with multiple events
             page.evaluate("""
                 (args) => {
@@ -2223,7 +2223,7 @@ def run(args):
             for attempt in range(1, args.max_retries + 2):
                 try:
                     license_guard_or_raise(force=True)
-                    
+
                     # Do not force the Flow browser window to front between prompts.
 
                     # Settings are applied only once per run. Do not re-select model/ratio/count for later prompts.
@@ -2392,7 +2392,7 @@ def run(args):
             # Sau khi tạo/download thành công: reset UI để prompt kế tiếp upload ảnh mới đúng paired-mode
             if ok and prompt_no < total:
                 try:
-                    
+
                     # Do not force the Flow browser window to front after each prompt.
                     close_open_menus(page)
                     clear_attached_references(page)
@@ -2554,4 +2554,3 @@ def settings_summary_matches(page, args):
     except Exception as e:
         log_line(f"[flow] settings summary check failed: {e}")
         return False
-
