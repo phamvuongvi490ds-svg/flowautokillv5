@@ -207,39 +207,76 @@ def capture_startup_screenshot(page):
 
 
 def _try_click_new_project(page):
-    """Best-effort New Project click across Flow UI variants."""
+    """Click current Flow New Project button. UI-mapping only; fail closed on unknown UI."""
     try:
-        patterns = [
-            r"new\s*project", r"new\s*chat", r"new\s*creation", r"create\s*new",
-            r"dự\s*án\s*mới", r"tạo\s*dự\s*án", r"tạo\s*mới", r"làm\s*mới",
+        # If composer is already open, do not click New Project again.
+        try:
+            if page.locator('flow-prompt-box.prompt-box-container div.ProseMirror[contenteditable="true"]').first.is_visible(timeout=1500):
+                log_line('[flow] composer already visible; skip New Project click')
+                return True
+        except Exception:
+            pass
+
+        # Always operate on current Flow homepage.
+        try:
+            if 'flow.google.com' not in (page.url or ''):
+                page.goto('https://flow.google.com', wait_until='domcontentloaded', timeout=30000)
+                time.sleep(2.0)
+        except Exception as e:
+            log_line(f'[flow] Flow entry navigation warning: {e}')
+
+        selectors = [
+            'flow-projects-page button.new-project-button',
+            'button.new-project-button',
+            'button.mdc-fab.new-project-button',
+            'button:has-text("Dự án mới")',
+            'button:has-text("New project")',
         ]
-        rx = re.compile("|".join(patterns), re.I)
-        locs = [
-            page.locator('flow-projects-page button.new-project-button'),
-            page.locator('button.new-project-button'),
-            page.locator('button:has-text("Dự án mới")'),
-            page.locator('button:has-text("New project")'),
-            page.get_by_text(rx),
-            page.locator("button,[role='button'],a,[role='link'],div[role='button']").filter(has_text=rx),
-            page.locator("[aria-label*='New' i], [title*='New' i], [aria-label*='mới' i], [title*='mới' i]"),
-        ]
-        for loc in locs:
+        for sel in selectors:
             try:
-                if loc.count() > 0:
-                    el = loc.first
+                loc = page.locator(sel).first
+                if loc.is_visible(timeout=5000):
                     try:
-                        el.click(timeout=4000)
+                        loc.scroll_into_view_if_needed(timeout=2000)
                     except Exception:
-                        el.click(timeout=4000, force=True)
-                    time.sleep(1.5)
-                    log_line("[flow] clicked New Project")
+                        pass
+                    try:
+                        loc.click(timeout=5000)
+                    except Exception:
+                        loc.click(timeout=5000, force=True)
+                    time.sleep(2.0)
+                    log_line(f'[flow] clicked New Project via {sel}')
                     return True
             except Exception:
                 continue
-    except Exception as e:
-        log_line(f"[flow] New Project click skipped: {e}")
-    return False
 
+        # DOM fallback, still restricted to the recorded current Flow projects page button.
+        clicked = page.evaluate(
+            """() => {
+              const visible = (el) => {
+                if (!el) return false;
+                const st=getComputedStyle(el), r=el.getBoundingClientRect();
+                return st.display!=='none' && st.visibility!=='hidden' && r.width>20 && r.height>20;
+              };
+              const btns=[...document.querySelectorAll('flow-projects-page button.new-project-button, button.new-project-button')].filter(visible);
+              const b=btns[0];
+              if(!b) return {ok:false, count:btns.length, url:location.href, title:document.title};
+              b.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:1,pointerType:'mouse',isPrimary:true,buttons:1}));
+              b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,buttons:1}));
+              b.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:1,pointerType:'mouse',isPrimary:true,buttons:0}));
+              b.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,buttons:0}));
+              b.click();
+              return {ok:true, text:b.innerText||b.textContent||'', cls:b.className||'', url:location.href};
+            }"""
+        )
+        if clicked and clicked.get('ok'):
+            time.sleep(2.0)
+            log_line(f"[flow] clicked New Project via DOM fallback: {clicked}")
+            return True
+        log_line(f"[flow] New Project button not found on current UI: {clicked}")
+    except Exception as e:
+        log_line(f"[flow] New Project click failed: {e}")
+    return False
 
 def find_input_box(page):
     # Chờ editor sẵn sàng sau New project
