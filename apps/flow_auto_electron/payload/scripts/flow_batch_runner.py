@@ -1143,6 +1143,11 @@ def _choose_uploaded_image_from_menu(page, image_path: Path):
 
 def _click_upload_image_item(page):
     upload_item_selectors = [
+        ".cdk-overlay-pane flow-add-menu-popover-content button.sidebar-upload-btn:has-text('Tải nội dung nghe nhìn lên')",
+        ".cdk-overlay-pane button.sidebar-upload-btn",
+        "button.sidebar-upload-btn:has-text('Tải nội dung nghe nhìn lên')",
+        "button:has-text('Tải nội dung nghe nhìn lên')",
+        "button:has-text('Upload media')",
         "button:has-text('Upload image')",
         "button:has-text('Upload an image')",
         "button:has-text('Tải hình ảnh lên')",
@@ -1179,7 +1184,7 @@ def _click_upload_image_item(page):
                 const r = el.getBoundingClientRect();
                 return r.width > 6 && r.height > 6;
               };
-              const texts = ['upload image','upload an image','tải hình ảnh lên','tải ảnh lên'];
+              const texts = ['tải nội dung nghe nhìn lên','upload media','upload image','upload an image','tải hình ảnh lên','tải ảnh lên'];
               const els = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"], button, div, span')).filter(visible);
               for (const el of els) {
                 const t = (el.innerText || el.textContent || '').trim().toLowerCase();
