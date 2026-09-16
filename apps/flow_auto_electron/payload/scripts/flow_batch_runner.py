@@ -1271,43 +1271,23 @@ def enforce_single_prompt_attachment(page):
         return False
 
 
-def _add_uploaded_media_to_prompt(page, timeout_sec=90, before_count=None):
-    """Attach the just-uploaded media; old/stale attachments must not satisfy this."""
-    if before_count is None:
-        before_count = composer_attachment_count(page)
+def _add_uploaded_media_to_prompt(page, timeout_sec=60):
+    """Wait for Flow's uploaded-media detail pane, then attach it to prompt."""
     selector = (
-        'flow-add-menu-detail-pane button.detail-add-to-prompt-btn:has-text("Thêm vào câu lệnh"),'
-        'flow-add-menu-detail-pane button[aria-label="Thêm vào câu lệnh"]'
+        '.cdk-overlay-pane flow-add-menu-popover-content '
+        'flow-add-menu-detail-pane button.detail-add-to-prompt-btn:has-text("Thêm vào câu lệnh")'
     )
     try:
-        button = page.locator(selector).first
+        button = page.locator(selector)
         button.wait_for(state='visible', timeout=int(timeout_sec * 1000))
-        button.click(timeout=7000)
-        deadline = time.time() + 45
-        last_count = before_count
-        while time.time() < deadline:
-            now = composer_attachment_count(page)
-            last_count = now
-            if now > before_count:
-                if now - before_count > 1:
-                    enforce_single_prompt_attachment(page)
-                    log_line(f"[flow] add-to-prompt created duplicate attachments {before_count}->{now}; trimmed extras")
-                close_open_menus(page)
-                log_line(f"[flow] add-to-prompt confirmed attachment count {before_count}->{composer_attachment_count(page)}")
-                return True
-            time.sleep(0.5)
-        # Flow sometimes attaches a moment after the detail pane closes. One final grace check.
-        time.sleep(3)
-        now = composer_attachment_count(page)
-        if now > before_count:
-            close_open_menus(page)
-            log_line(f"[flow] add-to-prompt confirmed late attachment count {before_count}->{now}")
-            return True
-        log_line(f"[flow] add-to-prompt clicked but attachment count did not increase: before={before_count} now={now} last={last_count}")
+        button.click(timeout=5000)
+        page.locator('.cdk-overlay-pane flow-add-menu-popover-content').wait_for(
+            state='hidden', timeout=10000
+        )
+        return True
     except Exception as e:
         log_line(f"[flow] add uploaded media to prompt failed: {e}")
-    close_open_menus(page)
-    return False
+        return False
 
 def latest_library_media_count(page):
     try:
@@ -2443,8 +2423,8 @@ def run(args):
                     # Keep a successfully attached reference across retries of
                     # this same prompt; clearing/uploading again creates duplicates.
                     clear_prompt_box(page, box)
-                    if not reference_attached and not clear_attached_references(page):
-                        raise RuntimeError("stale_reference_not_cleared")
+                    if not reference_attached:
+                        clear_attached_references(page)
 
                     prompt_to_type = prompt
                     matched_refs = []
@@ -2495,7 +2475,6 @@ def run(args):
                         uploaded_this_attempt = True
                         if not args.allow_multi_refs and args.ref_mode != "all":
                             reference_attached = True
-                            log_line(f"[flow] prompt #{prompt_no} reference locked immediately after add-to-prompt; retries will not upload again")
                             break
 
                     if matched_refs:
