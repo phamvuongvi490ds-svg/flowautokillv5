@@ -40,6 +40,11 @@ def log_line(msg: str):
             print("[flow] log encoding fallback")
 
 
+def natural_file_key(path: Path):
+    parts = re.split(r'(\d+)', path.name.lower())
+    return [int(x) if x.isdigit() else x for x in parts]
+
+
 def resolve_ref_image(refs_dir: Path | None, prompt_no: int):
     if refs_dir is None:
         return None
@@ -57,8 +62,8 @@ def resolve_first_ref_image(refs_dir: Path | None):
     exts = [".jpg", ".jpeg", ".png", ".webp"]
     files = []
     for ext in exts:
-        files.extend(sorted(refs_dir.glob(f"*{ext}")))
-    return files[0] if files else None
+        files.extend(sorted(refs_dir.glob(f"*{ext}"), key=natural_file_key))
+    return sorted(files, key=natural_file_key)[0] if files else None
 
 
 def set_upload_file_input(page, image_path: Path):
@@ -127,73 +132,62 @@ def save_state(path: Path, data: dict):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def find_flow_page(browser):
-    for context in browser.contexts:
-        for page in context.pages:
-            url = page.url or ""
-            # hỗ trợ cả URL locale: /fx/vi/tools/flow
-            if re.search(r"labs\.google/fx(?:/[a-z]{2})?/tools/flow(?:/project)?", url):
-                return page
+def find_flow_page(browser, timeout=25):
+    """Wait for the single Flow tab launched by Electron; never navigate/reload it."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for context in browser.contexts:
+            for page in context.pages:
+                if "flow.google.com" in (page.url or ""):
+                    return page
+        time.sleep(0.25)
     return None
 
+_PROJECT_LAUNCH_ATTEMPTED = False
+
+def _prompt_ready(page, timeout=1200):
+    try:
+        return page.locator("flow-prompt-box.prompt-box-container, flow-prompt-box").first.is_visible(timeout=timeout)
+    except Exception:
+        return False
 
 def ensure_project_page(page):
+    global _PROJECT_LAUNCH_ATTEMPTED
+    if _prompt_ready(page):
+        return page
     url = page.url or ""
-
-    # Mặc định luôn vào /tools/flow (hỗ trợ locale /fx/vi/tools/flow)
-    if not re.search(r"labs\.google/fx(?:/[a-z]{2})?/tools/flow(?:/project)?", url):
+    if "flow.google.com" not in url:
+        raise RuntimeError("flow_page_not_ready_without_reload")
+    if re.search(r"https://flow\.google\.com/project/", url, re.I):
         try:
-            page.goto("https://flow.google.com", wait_until="domcontentloaded", timeout=30000)
-            time.sleep(1.0)
+            page.locator("flow-prompt-box.prompt-box-container, flow-prompt-box").first.wait_for(state="visible", timeout=20000)
         except Exception:
             pass
-
-    # Bấm New project với nhiều fallback
-    clicked = False
-    selectors = [
-        "button:has-text('New project')",
-        "button:has-text('Dự án mới')",
-        "button:has-text('Tạo dự án')",
-        "a:has-text('New project')",
-        "[role='button']:has-text('New project')",
-        "button[id*='new' i]",
-        "button[data-testid*='new' i]",
-    ]
-    for sel in selectors:
-        if clicked:
-            break
+        return page
+    if _PROJECT_LAUNCH_ATTEMPTED:
         try:
-            loc = page.locator(sel)
-            if loc.count() > 0 and loc.first.is_visible():
-                try:
-                    loc.first.click(timeout=4000)
-                except Exception:
-                    loc.first.click(timeout=4000, force=True)
-                time.sleep(1.2)
-                clicked = True
+            page.locator("flow-prompt-box.prompt-box-container, flow-prompt-box").first.wait_for(state="visible", timeout=20000)
         except Exception:
             pass
-
-    # Fallback: thử click theo text regex tổng quát
-    if not clicked:
-        try:
-            new_btn = page.locator("button,[role='button'],a,[role='link']").filter(
-                has_text=re.compile(r"new\s*project|dự\s*án\s*mới|tạo\s*dự\s*án|new", re.I)
-            )
-            if new_btn.count() > 0:
-                try:
-                    new_btn.first.click(timeout=4000)
-                except Exception:
-                    new_btn.first.click(timeout=4000, force=True)
-                time.sleep(1.2)
-                clicked = True
-        except Exception:
-            pass
-
-    # Không goto thẳng /project nữa.
-    # Bắt buộc đi qua /tools/flow rồi click New project để UI đúng trạng thái.
+        return page
+    launch = page.locator(
+        "button[aria-label='Dự án mới'],button[aria-label='New project'],"
+        "a[aria-label='Dự án mới'],a[aria-label='New project'],"
+        "button:has-text('Dự án mới'),button:has-text('New project'),"
+        "a:has-text('Dự án mới'),a:has-text('New project')"
+    ).first
+    if launch.count() <= 0 or not launch.is_visible():
+        raise RuntimeError("flow_new_project_button_not_found")
+    _PROJECT_LAUNCH_ATTEMPTED = True
+    try:
+        launch.click(timeout=5000)
+    except Exception:
+        launch.click(timeout=5000, force=True)
+    try:
+        page.locator("flow-prompt-box.prompt-box-container, flow-prompt-box").first.wait_for(state="visible", timeout=20000)
+    except Exception:
+        raise RuntimeError("flow_project_prompt_not_ready_after_single_click")
     return page
-
 
 def capture_startup_screenshot(page):
     try:
@@ -207,110 +201,103 @@ def capture_startup_screenshot(page):
 
 
 def _try_click_new_project(page):
-    """Click current Flow New Project button. UI-mapping only; fail closed on unknown UI."""
+    """Best-effort New Project click across Flow UI variants."""
     try:
-        # If composer is already open, do not click New Project again.
-        try:
-            if page.locator('flow-prompt-box.prompt-box-container div.ProseMirror[contenteditable="true"]').first.is_visible(timeout=1500):
-                log_line('[flow] composer already visible; skip New Project click')
-                return True
-        except Exception:
-            pass
-
-        # Always operate on current Flow homepage.
-        try:
-            if 'flow.google.com' not in (page.url or ''):
-                page.goto('https://flow.google.com', wait_until='domcontentloaded', timeout=30000)
-                time.sleep(2.0)
-        except Exception as e:
-            log_line(f'[flow] Flow entry navigation warning: {e}')
-
-        selectors = [
-            'flow-projects-page button.new-project-button',
-            'button.new-project-button',
-            'button.mdc-fab.new-project-button',
-            'button:has-text("Dự án mới")',
-            'button:has-text("New project")',
+        patterns = [
+            r"new\s*project", r"new\s*chat", r"new\s*creation", r"create\s*new",
+            r"dự\s*án\s*mới", r"tạo\s*dự\s*án", r"tạo\s*mới", r"làm\s*mới",
         ]
-        for sel in selectors:
+        rx = re.compile("|".join(patterns), re.I)
+        locs = [
+            page.get_by_text(rx),
+            page.locator("button,[role='button'],a,[role='link'],div[role='button']").filter(has_text=rx),
+            page.locator("[aria-label*='New' i], [title*='New' i], [aria-label*='mới' i], [title*='mới' i]"),
+        ]
+        for loc in locs:
             try:
-                loc = page.locator(sel).first
-                if loc.is_visible(timeout=5000):
+                if loc.count() > 0:
+                    el = loc.first
                     try:
-                        loc.scroll_into_view_if_needed(timeout=2000)
+                        el.click(timeout=4000)
                     except Exception:
-                        pass
-                    try:
-                        loc.click(timeout=5000)
-                    except Exception:
-                        loc.click(timeout=5000, force=True)
-                    time.sleep(2.0)
-                    log_line(f'[flow] clicked New Project via {sel}')
+                        el.click(timeout=4000, force=True)
+                    time.sleep(1.5)
+                    log_line("[flow] clicked New Project")
                     return True
             except Exception:
                 continue
-
-        # DOM fallback, still restricted to the recorded current Flow projects page button.
-        clicked = page.evaluate(
-            """() => {
-              const visible = (el) => {
-                if (!el) return false;
-                const st=getComputedStyle(el), r=el.getBoundingClientRect();
-                return st.display!=='none' && st.visibility!=='hidden' && r.width>20 && r.height>20;
-              };
-              const btns=[...document.querySelectorAll('flow-projects-page button.new-project-button, button.new-project-button')].filter(visible);
-              const b=btns[0];
-              if(!b) return {ok:false, count:btns.length, url:location.href, title:document.title};
-              b.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:1,pointerType:'mouse',isPrimary:true,buttons:1}));
-              b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,buttons:1}));
-              b.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:1,pointerType:'mouse',isPrimary:true,buttons:0}));
-              b.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,buttons:0}));
-              b.click();
-              return {ok:true, text:b.innerText||b.textContent||'', cls:b.className||'', url:location.href};
-            }"""
-        )
-        if clicked and clicked.get('ok'):
-            time.sleep(2.0)
-            log_line(f"[flow] clicked New Project via DOM fallback: {clicked}")
-            return True
-        log_line(f"[flow] New Project button not found on current UI: {clicked}")
     except Exception as e:
-        log_line(f"[flow] New Project click failed: {e}")
+        log_line(f"[flow] New Project click skipped: {e}")
     return False
 
+
 def find_input_box(page):
-    # Chờ editor sẵn sàng sau New project
+    """Return only the rendered ProseMirror inside Flow's prompt composer."""
     deadline = time.time() + 30
     retried_new_project = False
-    selectors = [
-        'flow-prompt-box.prompt-box-container div.ProseMirror[contenteditable="true"]',
-        'flow-prompt-box div[contenteditable="true"]',
-        'div[role="textbox"][contenteditable="true"]',
-        'div[contenteditable="true"]',
-        'textarea',
-        'input[type="text"]',
-    ]
+    selector = 'flow-prompt-box.prompt-box-container div.ProseMirror[contenteditable="true"]'
 
     while time.time() < deadline:
-        for sel in selectors:
-            try:
-                boxes = page.locator(sel)
-                count = boxes.count()
-                for i in range(count - 1, -1, -1):
-                    b = boxes.nth(i)
-                    if b.is_visible():
-                        return b
-            except Exception:
-                pass
+        try:
+            boxes = page.locator(selector)
+            for i in range(boxes.count()):
+                box = boxes.nth(i)
+                if box.is_visible() and box.is_enabled():
+                    return box
+        except Exception:
+            pass
 
         if not retried_new_project:
-            _try_click_new_project(page)
+            ensure_project_page(page)
             retried_new_project = True
-
         time.sleep(0.5)
 
-    raise RuntimeError("Không tìm thấy ô nhập prompt")
+    raise RuntimeError("flow_prompt_editor_not_found")
 
+def focus_prompt_box(page, box):
+    """Click the exact editor once and preserve Flow's native blue caret."""
+    close_open_menus(page)
+    try:
+        page.locator('.cdk-overlay-pane').wait_for(state='hidden', timeout=5000)
+    except Exception:
+        pass
+
+    try:
+        # Avoid scroll and wrapper clicks: both caused the composer to jump.
+        box.click(timeout=5000, position={'x': 20, 'y': 18})
+        try:
+            page.wait_for_function(
+                "el => document.activeElement === el && el.classList.contains('ProseMirror-focused')",
+                arg=box.element_handle(), timeout=1800,
+            )
+        except Exception:
+            pass
+        state = box.evaluate(
+            """el => ({active:document.activeElement===el,
+              focused:el.classList.contains('ProseMirror-focused'),
+              editable:el.isContentEditable})"""
+        )
+        log_line(f"[flow] native prompt focus state: {state}")
+        if state and state.get('active') and state.get('focused') and state.get('editable'):
+            return True
+    except Exception as e:
+        log_line(f"[flow] native prompt click failed: {e}")
+
+    # One non-visual fallback only. Do not click/scroll repeatedly.
+    try:
+        state = box.evaluate(
+            """el => {
+              el.focus({preventScroll:true});
+              const range=document.createRange(); range.selectNodeContents(el); range.collapse(false);
+              const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+              return {active:document.activeElement===el,range:sel.rangeCount,editable:el.isContentEditable};
+            }"""
+        )
+        log_line(f"[flow] prompt focus fallback state: {state}")
+        return bool(state and state.get('active') and state.get('range') == 1 and state.get('editable'))
+    except Exception as e:
+        log_line(f"[flow] prompt focus fallback failed: {e}")
+        return False
 
 MODEL_LABELS = {
     "default": "Veo 3.1 - Fast",
@@ -552,6 +539,31 @@ def apply_aspect_ratio(page, ratio: str):
         pass
 
 
+def settings_summary_matches(page, args):
+    """Accept the current composer configuration when its rendered summary is exact."""
+    model_key = (args.flow_model or "default").strip().lower()
+    task_mode = (args.task_mode or "createvideo").strip().lower()
+    if model_key == "default":
+        model_key = "nano_banana_pro" if task_mode == "createimage" else "veo3_fast"
+    model = MODEL_LABELS.get(model_key, "")
+    ratio_icon = "crop_9_16" if args.flow_aspect_ratio == "9:16" else "crop_16_9"
+    count = f"x{str(args.flow_count or '1').strip()}"
+    try:
+        summary = page.locator(
+            'flow-prompt-box.prompt-box-container button.settings-trigger-button '
+            '.settings-summary'
+        )
+        if summary.count() != 1 or not summary.is_visible():
+            return False
+        raw = summary.inner_text(timeout=3000) or ""
+        normalized = " ".join(raw.split()).lower()
+        ok = model.lower() in normalized and ratio_icon.lower() in normalized and count.lower() in normalized
+        log_line(f"[flow] settings summary check: ok={ok} model={model_key} ratio={ratio_icon} count={count}")
+        return ok
+    except Exception as e:
+        log_line(f"[flow] settings summary check failed: {e}")
+        return False
+
 def apply_flow_settings(page, args):
     if settings_summary_matches(page, args):
         log_line("[flow] settings already exact in composer summary; skip panel")
@@ -717,37 +729,30 @@ def get_box_text(box):
         return ""
 
 
-def clear_attached_references(page):
-    # Extension-style pre-flight cleanup: click close button for attached references/chips if present.
+def clear_attached_references(page, timeout_sec=8):
+    """Remove only attachments inside the prompt composer and confirm it is empty."""
+    composer = page.locator('flow-prompt-box.prompt-box-container')
     try:
-        page.evaluate(
-            """
-            () => {
-              const visible = (el) => {
-                if (!el) return false;
-                const st = getComputedStyle(el);
-                if (!st || st.display === 'none' || st.visibility === 'hidden') return false;
-                const r = el.getBoundingClientRect();
-                return r.width > 8 && r.height > 8;
-              };
-              const btns = Array.from(document.querySelectorAll('button,[role="button"]')).filter(visible);
-              for (const b of btns) {
-                const icon = (b.querySelector('i')?.textContent || '').trim().toLowerCase();
-                const txt = ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '')).toLowerCase();
-                if (icon === 'close' || txt.includes('remove') || txt.includes('xóa') || txt.includes('clear')) {
-                  // chỉ click close gần prompt/reference area, tránh đóng browser/dialog lớn
-                  const r = b.getBoundingClientRect();
-                  if (r.top > window.innerHeight * 0.45) {
-                    try { b.click(); } catch {}
-                  }
-                }
-              }
-            }
-            """
+        buttons = composer.locator(
+            'button[aria-label*="Xóa" i],button[aria-label*="Remove" i],'
+            'button[title*="Xóa" i],button[title*="Remove" i]'
         )
-    except Exception:
-        pass
-    time.sleep(0.25)
+        for i in range(buttons.count() - 1, -1, -1):
+            button = buttons.nth(i)
+            if button.is_visible():
+                button.click(timeout=3000)
+                time.sleep(0.25)
+        deadline=time.time()+timeout_sec
+        while time.time()<deadline:
+            media=composer.locator('[data-media-id],img:not([class*="icon"]),video')
+            if media.count()==0:
+                return True
+            time.sleep(0.3)
+        log_line(f"[flow] stale composer attachments remain: {media.count()}")
+        return False
+    except Exception as e:
+        log_line(f"[flow] clear composer attachments failed: {e}")
+        return False
 
 
 def close_open_menus(page):
@@ -851,64 +856,88 @@ def human_type_text(page, text: str, base_delay_ms: float = 12.0):
 
 def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retries: int = 3):
     prompt = (prompt or "").strip()
-    if not prompt: return True
+    if not prompt:
+        return True
+    expected = " ".join(prompt.split())
 
     for attempt in range(1, retries + 1):
         try:
-            # Ưu tiên find_input_box đã có sẵn logic New Project
             box = find_input_box(page)
+            focused = focus_prompt_box(page, box)
+            if focused:
+                modifier = "Meta" if sys.platform == "darwin" else "Control"
+                page.keyboard.press(f"{modifier}+A")
+                page.keyboard.press("Backspace")
+                # Paste the complete prompt in one ProseMirror transaction.
+                # This behaves like Ctrl+V without replacing the user's OS clipboard.
+                pasted = box.evaluate(
+                    """(el, text) => {
+                      try {
+                        const dt=new DataTransfer(); dt.setData('text/plain', text);
+                        return el.dispatchEvent(new ClipboardEvent('paste', {
+                          bubbles:true, cancelable:true, composed:true, clipboardData:dt
+                        }));
+                      } catch { return false; }
+                    }""",
+                    prompt,
+                )
+                time.sleep(0.25)
+                current = box.evaluate("el => (el.innerText || el.textContent || '').trim()") or ""
+                if " ".join(str(current).split())[:40] != expected[:40]:
+                    page.keyboard.insert_text(prompt)
+                log_line(f"[flow] prompt pasted in one operation: event={pasted} length={len(prompt)}")
+                time.sleep(0.25)
 
-            # Click vào tọa độ trung tâm để đảm bảo focus sâu vào editor
-            rect = box.bounding_box()
-            if rect:
-                page.mouse.click(rect['x'] + rect['width']/2, rect['y'] + rect['height']/2)
+            text = box.evaluate("el => (el.innerText || el.textContent || '').trim()") or ""
+            normalized = " ".join(str(text).split())
+            if normalized[:40] != expected[:40]:
+                # Focus-independent contenteditable fallback. execCommand emits
+                # the browser editing transaction that ProseMirror observes.
+                result = box.evaluate(
+                    """(el, text) => {
+                      el.focus({preventScroll:true});
+                      const sel=window.getSelection();
+                      const all=document.createRange(); all.selectNodeContents(el);
+                      sel.removeAllRanges(); sel.addRange(all);
+                      let deleted=false, inserted=false;
+                      try { deleted=document.execCommand('delete', false); } catch {}
+                      const caret=document.createRange(); caret.selectNodeContents(el); caret.collapse(false);
+                      sel.removeAllRanges(); sel.addRange(caret);
+                      try { inserted=document.execCommand('insertText', false, text); } catch {}
+                      if (!inserted) {
+                        el.replaceChildren(document.createTextNode(text));
+                        const end=document.createRange(); end.selectNodeContents(el); end.collapse(false);
+                        sel.removeAllRanges(); sel.addRange(end);
+                        el.dispatchEvent(new InputEvent('input', {bubbles:true, composed:true,
+                          inputType:'insertText', data:text}));
+                      }
+                      el.dispatchEvent(new Event('change', {bubbles:true, composed:true}));
+                      return {deleted,inserted,text:(el.innerText||el.textContent||'').trim(),active:document.activeElement===el};
+                    }""",
+                    prompt,
+                )
+                log_line(f"[flow] prompt DOM-edit fallback attempt {attempt}: {result}")
+                time.sleep(0.5)
+                normalized = " ".join(str(box.evaluate("el => (el.innerText || el.textContent || '').trim()") or "").split())
+
+            if len(normalized) >= min(5, len(expected)) and normalized[:40] == expected[:40]:
+                # Flow must also enable its exact submit button; text in DOM
+                # alone is not enough to prove ProseMirror accepted the edit.
+                submit = page.locator(
+                    'flow-prompt-box.prompt-box-container flow-generate-icon-button '
+                    'button.generate-icon-button[type="submit"][aria-label="Bắt đầu tạo"]'
+                )
+                enabled = submit.count() == 1 and submit.is_visible() and submit.is_enabled()
+                log_line(f"[flow] prompt verified attempt {attempt}: enabled={enabled} length={len(normalized)}")
+                if enabled:
+                    return True
             else:
-                box.click(force=True)
-
-            time.sleep(0.3)
-            page.keyboard.press("Control+A")
-            page.keyboard.press("Backspace")
-            time.sleep(0.2)
-
-            # Use Playwright's native fill() which handles events correctly for most editors
-            box.fill(prompt)
-            time.sleep(0.5)
-
-            # Verify
-            txt = box.inner_text() or box.input_value() or ""
-            if len(txt.strip()) >= min(5, len(prompt)):
-                return True
-
-            # Fallback 2: insert_text
-            page.keyboard.insert_text(prompt)
-            time.sleep(0.5)
-            if (box.inner_text() or box.input_value() or "").strip():
-                return True
-
-            # Fallback 3: Strong JS injection with multiple events
-            page.evaluate("""
-                (args) => {
-                    const el = args.el;
-                    const val = args.txt;
-                    el.focus();
-                    if ('value' in el) {
-                        el.value = val;
-                    } else {
-                        el.innerText = val;
-                        el.textContent = val;
-                    }
-                    const evts = ['input', 'change', 'beforeinput', 'keydown', 'keyup'];
-                    evts.forEach(n => el.dispatchEvent(new Event(n, { bubbles: true, composed: true })));
-                }
-            """, {"el": box, "txt": prompt})
-            time.sleep(0.5)
-            if (box.inner_text() or box.input_value() or "").strip():
-                return True
-
+                log_line(f"[flow] prompt verify failed attempt {attempt}: length={len(normalized)}")
         except Exception as e:
-            log_line(f"[flow] attempt {attempt} input error: {e}")
-        time.sleep(1.0)
+            log_line(f"[flow] prompt input attempt {attempt} failed: {e}")
+        time.sleep(0.6)
     return False
+
 def _open_plus_menu(page, prompt_box=None):
     # Exact add button recorded inside the current Flow prompt composer.
     try:
@@ -1178,71 +1207,60 @@ def _choose_uploaded_image_from_menu(page, image_path: Path):
     return False
 
 
-def _click_upload_image_item(page):
-    upload_item_selectors = [
-        ".cdk-overlay-pane flow-add-menu-popover-content button.sidebar-upload-btn:has-text('Tải nội dung nghe nhìn lên')",
-        ".cdk-overlay-pane button.sidebar-upload-btn",
-        "button.sidebar-upload-btn:has-text('Tải nội dung nghe nhìn lên')",
-        "button:has-text('Tải nội dung nghe nhìn lên')",
-        "button:has-text('Upload media')",
-        "button:has-text('Upload image')",
-        "button:has-text('Upload an image')",
-        "button:has-text('Tải hình ảnh lên')",
-        "button:has-text('Tải ảnh lên')",
-        "[role='menuitem']:has-text('Upload image')",
-        "[role='menuitem']:has-text('Upload an image')",
-        "[role='menuitem']:has-text('Tải hình ảnh lên')",
-        "[role='option']:has-text('Upload image')",
-        "[role='option']:has-text('Upload an image')",
-    ]
-
-    for sel in upload_item_selectors:
-        try:
-            loc = page.locator(sel)
-            if loc.count() > 0 and loc.first.is_visible():
-                try:
-                    loc.first.click(timeout=3500)
-                except Exception:
-                    loc.first.click(timeout=3500, force=True)
-                time.sleep(0.35)
-                return True
-        except Exception:
-            pass
-
-    # fallback mạnh: click theo text trên mọi phần tử menu/list
+def _upload_media_without_native_dialog(page, image_path: Path):
+    """Intercept Flow's chooser so Windows never opens a second window."""
+    selector = (
+        '.cdk-overlay-pane flow-add-menu-popover-content '
+        'button.sidebar-upload-btn:has-text("Tải nội dung nghe nhìn lên")'
+    )
     try:
-        ok = page.evaluate(
-            """
-            () => {
-              const visible = (el) => {
-                if (!el) return false;
-                const st = getComputedStyle(el);
-                if (!st || st.display === 'none' || st.visibility === 'hidden') return false;
-                const r = el.getBoundingClientRect();
-                return r.width > 6 && r.height > 6;
-              };
-              const texts = ['tải nội dung nghe nhìn lên','upload media','upload image','upload an image','tải hình ảnh lên','tải ảnh lên'];
-              const els = Array.from(document.querySelectorAll('[role="menuitem"], [role="option"], button, div, span')).filter(visible);
-              for (const el of els) {
-                const t = (el.innerText || el.textContent || '').trim().toLowerCase();
-                if (!t) continue;
-                if (texts.some(x => t.includes(x))) {
-                  el.click();
-                  return true;
-                }
-              }
-              return false;
-            }
-            """
-        )
-        if ok:
-            time.sleep(0.35)
-            return True
+        button = page.locator(selector)
+        button.wait_for(state='visible', timeout=5000)
+        with page.expect_file_chooser(timeout=5000) as chooser_info:
+            button.click(timeout=5000)
+        chooser_info.value.set_files(str(image_path))
+        return True
+    except Exception as e:
+        log_line(f"[flow] intercepted reference upload failed: {e}")
+        return False
+
+def composer_attachment_count(page):
+    try:
+        return int(page.locator(
+            'flow-prompt-box.prompt-box-container [data-media-id],'
+            'flow-prompt-box.prompt-box-container flow-media-chip,'
+            'flow-prompt-box.prompt-box-container flow-attachment-chip,'
+            'flow-prompt-box.prompt-box-container img:not(mat-icon img):not([class*="icon"]),'
+            'flow-prompt-box.prompt-box-container video'
+        ).count())
     except Exception:
-        pass
+        return 0
 
+def _add_uploaded_media_to_prompt(page, timeout_sec=90, before_count=None):
+    """Attach the just-uploaded media; old/stale attachments must not satisfy this."""
+    if before_count is None:
+        before_count = composer_attachment_count(page)
+    selector = (
+        'flow-add-menu-detail-pane button.detail-add-to-prompt-btn:has-text("Thêm vào câu lệnh"),'
+        'flow-add-menu-detail-pane button[aria-label="Thêm vào câu lệnh"]'
+    )
+    try:
+        button = page.locator(selector).first
+        button.wait_for(state='visible', timeout=int(timeout_sec * 1000))
+        button.click(timeout=7000)
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            now = composer_attachment_count(page)
+            if now > before_count:
+                close_open_menus(page)
+                log_line(f"[flow] add-to-prompt confirmed attachment count {before_count}->{now}")
+                return True
+            time.sleep(0.4)
+        log_line(f"[flow] add-to-prompt clicked but attachment count did not increase: before={before_count} now={composer_attachment_count(page)}")
+    except Exception as e:
+        log_line(f"[flow] add uploaded media to prompt failed: {e}")
+    close_open_menus(page)
     return False
-
 
 def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=True):
     """Extension-style image pipeline: upload to Flow library, then search by filename and attach.
@@ -1259,28 +1277,38 @@ def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=
     if upload_file:
         # Phase 1: open add/upload picker beside prompt composer, then inject file.
         plus_opened = _open_plus_menu(page, prompt_box=prompt_box)
-        if plus_opened:
-            log_line("[flow] plus menu opened for reference upload")
-            _click_upload_image_item(page)
-        else:
-            log_line("[flow] plus menu not found; trying direct file input fallback")
-
-        file_set = set_upload_file_input(page, image_path)
-        if not file_set and not plus_opened:
-            plus_opened = _open_plus_menu(page, prompt_box=None)
-            if plus_opened:
-                log_line("[flow] plus menu opened on fallback attempt")
-                _click_upload_image_item(page)
-                file_set = set_upload_file_input(page, image_path)
+        if not plus_opened:
+            raise RuntimeError(f"extension_upload:add_menu_not_opened:{fname}")
+        log_line("[flow] plus menu opened for reference upload")
+        before_attach = composer_attachment_count(page)
+        file_set = _upload_media_without_native_dialog(page, image_path)
         if not file_set:
-            raise RuntimeError(f"extension_upload:cannot_inject_file:{fname}")
+            raise RuntimeError(f"extension_upload:filechooser_not_intercepted:{fname}")
 
         log_line(f"[flow] extension-upload injected file: {fname}")
-        time.sleep(3.0)
+        # Current Flow may auto-attach the selected file immediately after
+        # file chooser injection. If count already increased, do NOT click
+        # "Thêm vào câu lệnh" again or the same image is attached twice.
+        auto_deadline = time.time() + 8
+        auto_attached = False
+        while time.time() < auto_deadline:
+            now_attach = composer_attachment_count(page)
+            if now_attach > before_attach:
+                auto_attached = True
+                log_line(f"[flow] upload auto-attached media count {before_attach}->{now_attach}; skip add-to-prompt button")
+                close_open_menus(page)
+                break
+            time.sleep(0.4)
+        if not auto_attached:
+            if not _add_uploaded_media_to_prompt(page, timeout_sec=60, before_count=before_attach):
+                raise RuntimeError(f"extension_upload:add_to_prompt_failed:{fname}")
+        log_line(f"[flow] uploaded media added to prompt: {fname}")
+        time.sleep(1.0)
+        return
     else:
         log_line(f"[flow] reuse uploaded ref from library: {fname}")
 
-    # Phase 2: attach by reopening picker and searching filename (extension-style)
+    # Reuse path only: reopen the library and attach an already uploaded file.
     attached = False
     for attempt in range(1, 6):
         try:
@@ -1366,30 +1394,21 @@ def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=
 
 
 def find_create_button(page):
-    # Cách 1: ưu tiên selector ổn định (aria/id/data-testid)
-    stable_selectors = [
-        "button[data-testid*='create' i]",
-        "button[id*='create' i]",
-        "button[aria-label*='create' i]",
-        "button[aria-label*='generate' i]",
-        "button[aria-label*='tạo' i]",
-        # UI hiện tại thường hiển thị icon text + nhãn Tạo
-        "button:has-text('arrow_forward'):has-text('Tạo')",
-        "button:has-text('arrow_forward'):has-text('Create')",
-    ]
-
-    for sel in stable_selectors:
-        try:
-            loc = page.locator(sel)
-            cnt = loc.count()
-            for i in range(cnt - 1, -1, -1):
-                btn = loc.nth(i)
-                if btn.is_visible() and btn.is_enabled():
-                    return btn
-        except Exception:
-            continue
-
-    raise RuntimeError("Không tìm thấy nút Create/Tạo theo selector ổn định")
+    # Exact selector recorded on the current Flow prompt composer.
+    selector = (
+        'flow-prompt-box.prompt-box-container '
+        'flow-generate-icon-button button.generate-icon-button[type="submit"]'
+        '[aria-label="Bắt đầu tạo"]'
+    )
+    try:
+        buttons = page.locator(selector)
+        for i in range(buttons.count()):
+            btn = buttons.nth(i)
+            if btn.is_visible() and btn.is_enabled():
+                return btn
+    except Exception:
+        pass
+    raise RuntimeError("flow_generate_button_not_ready")
 
 
 def classify_flow_error(page):
@@ -1430,7 +1449,7 @@ def wait_reference_upload_settled(page, timeout_sec=45):
                   const dialogs=Array.from(document.querySelectorAll('[role="dialog"],[data-radix-popper-content-wrapper]')).filter(visible).length;
                   const uploadBusy=Array.from(document.querySelectorAll('[role="progressbar"],[aria-busy="true"]')).filter(visible).length;
                   const composer=document.querySelector('textarea,[contenteditable="true"]')?.closest('form') || null;
-                  const refs=composer ? Array.from(composer.querySelectorAll('img,video,[data-tile-id]')).map((el,i)=>el.getAttribute('data-tile-id')||el.currentSrc||el.src||el.getAttribute('src')||`ref-${i}`).filter(Boolean).sort() : [];
+                  const refs=composer ? Array.from(composer.querySelectorAll('[data-media-id],img,video')).map((el,i)=>el.getAttribute('data-media-id')||el.currentSrc||el.src||el.getAttribute('src')||`ref-${i}`).filter(Boolean).sort() : [];
                   return {dialogs,uploadBusy,refs};
                 }
                 """
@@ -1584,6 +1603,26 @@ def ordered_new_media_ids(page, before_ids=None):
     except Exception:
         return []
 
+def prompt_queue_item_ready_now(page, item, claimed_ids=None):
+    """Non-blocking readiness check used while continuous submissions are active."""
+    claimed_ids = claimed_ids or set()
+    expected = max(1, int(item.get("count") or "1"))
+    assigned = [x for x in (item.get("assigned_ids") or []) if x and x not in claimed_ids]
+    candidates = assigned or [x for x in ordered_new_media_ids(page, before_ids=set(item.get("before_ids") or []) | set(claimed_ids)) if x not in claimed_ids]
+    if len(candidates) < expected:
+        return False
+    try:
+        return bool(page.evaluate(
+            """({ids,kind}) => ids.every(id => {
+              const tile=[...document.querySelectorAll('flow-grid-tile-container')].find(t=>t.querySelector('[data-media-id]')?.getAttribute('data-media-id')===id);
+              if(!tile || tile.querySelector('flow-pending-tile')) return false;
+              return kind==='video' ? !!tile.querySelector('video[src],video source[src]') : !!tile.querySelector('img[src],canvas');
+            })""",
+            {"ids": candidates[:expected], "kind": item.get("media_kind") or "video"},
+        ))
+    except Exception:
+        return False
+
 def download_prompt_queue_item(page, item, args, expected_count=1, claimed_ids=None):
     claimed_ids = claimed_ids if claimed_ids is not None else set()
     expected = max(1, int(item.get("count") or expected_count or "1"))
@@ -1618,7 +1657,7 @@ def download_prompt_queue_item(page, item, args, expected_count=1, claimed_ids=N
     kind_ok = page.evaluate(
         """
         ({ids,kind}) => ids.every(id => {
-          const tile=Array.from(document.querySelectorAll('[data-tile-id]')).find(t=>t.getAttribute('data-tile-id')===id);
+          const tile=Array.from(document.querySelectorAll('flow-grid-tile-container')).find(t=>t.querySelector('[data-media-id]')?.getAttribute('data-media-id')===id);
           if(!tile)return false;
           if(kind==='video'){
             const v=tile.querySelector('video');
@@ -1760,6 +1799,19 @@ def _next_numbered_media_target(output_dir=None, ext=".mp4"):
         target = out_dir / f"{n}{ext}"
     return target
 
+def _prompt_numbered_target(output_dir, output_prefix, ext):
+    out_dir = Path(output_dir).expanduser() if output_dir else Path.home() / "Downloads"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    raw = str(output_prefix or "1")
+    m = re.match(r"^(\d+)(?:_(\d+))?$", raw)
+    stem = raw if m else "1"
+    target = out_dir / f"{stem}{ext}"
+    if not target.exists():
+        return target
+    n = 2
+    while (out_dir / f"{stem}_{n}{ext}").exists(): n += 1
+    return out_dir / f"{stem}_{n}{ext}"
+
 def _save_media_bytes(data: bytes, output_prefix="flow-auto", output_dir=None):
     ext = _detect_ext_from_bytes(data[:64])
     if not ext:
@@ -1831,6 +1883,39 @@ def direct_download_media_from_tile(page, before_ids=None, output_prefix="flow-a
     except Exception as e:
         return False, f"direct_exception:{e}"
 
+
+def current_flow_download_tile_via_ui(page, resolution="720p", before_ids=None, output_prefix="1", output_dir=None):
+    """Download through current Flow tile hotbar mapping."""
+    before = list(before_ids or [])
+    try:
+        tile_id = page.evaluate(
+            """before => {
+              const old=new Set(before||[]), visible=el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>80&&r.height>60&&s.display!=='none'&&s.visibility!=='hidden'};
+              const tiles=[...document.querySelectorAll('flow-grid-tile-container')]
+                .filter(t=>{const id=t.querySelector('[data-media-id]')?.getAttribute('data-media-id');return id&&!old.has(id)&&visible(t)&&(t.querySelector('flow-image-hotbar,flow-video-hotbar')||t.matches('flow-image-tile,flow-video-tile'))});
+              tiles.sort((a,b)=>b.getBoundingClientRect().top-a.getBoundingClientRect().top);
+              return tiles[0]?.querySelector('[data-media-id]')?.getAttribute('data-media-id')||null;
+            }""", before)
+        if not tile_id: return False, 'current_no_target_tile'
+        tile = page.locator(f'flow-grid-tile-container:has([data-media-id="{tile_id}"])').first
+        tile.hover(timeout=5000)
+        menu = tile.locator('flow-image-hotbar button[aria-label="Tuỳ chọn khác"],flow-video-hotbar button[aria-label="Tuỳ chọn khác"],button[aria-label="Tuỳ chọn khác"]')
+        if menu.count() < 1: return False, 'current_more_options_missing'
+        menu.first.click(timeout=5000)
+        quality = '1K' if str(resolution).upper() == '1K' else ('720p' if str(resolution) in ('720','720p') else str(resolution))
+        option = page.locator('.cdk-overlay-pane button,.cdk-overlay-pane [role="menuitem"]').filter(has_text=quality)
+        option.first.wait_for(state='visible', timeout=5000)
+        with page.expect_download(timeout=30000) as info:
+            option.first.click(timeout=5000)
+        dl=info.value
+        tmp=Path(dl.path())
+        data=tmp.read_bytes(); ext=_detect_ext_from_bytes(data[:64])
+        if not ext: return False, 'current_invalid_download_bytes'
+        target=_next_numbered_media_target(output_dir=output_dir, ext=ext)
+        dl.save_as(str(target)); _remember_media_hash(data,target.name,output_dir=output_dir)
+        return True, f'current_saved_as:{target.name}'
+    except Exception as e:
+        return False, f'current_exception:{e}'
 
 def extension_download_tile_via_ui(page, resolution="720p", before_ids=None, output_prefix="flow-auto", output_dir=None):
     """Downloader ported from extension 2.0.6 (yr + Un): tile media -> context menu -> download -> quality."""
@@ -2038,14 +2123,16 @@ def auto_download_with_retry(page, resolution="720p", timeout_sec=480, before_id
     if res == "720":
         res = "720p"
     while time.time() < deadline:
-        # Prefer direct media bytes while browser is busy; UI download can sometimes save an HTML/redirect placeholder.
+        # Video Flow mới ổn định nhất qua hotbar 'Tuỳ chọn khác' trong tile.
+        ok, step = current_flow_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
+        last = step
+        if ok:
+            return True, step
+        # Preserve old direct downloader as fallback.
         ok, step = direct_download_media_from_tile(page, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
         last = step
         if ok:
             return True, step
-        # If direct media is unavailable, use Flow's own UI download after the page is idle.
-        # Validate actual bytes after download; bad preview/placeholder files are deleted by
-        # extension_download_tile_via_ui() and retried instead of being kept.
         try:
             page.wait_for_timeout(1200)
         except Exception:
@@ -2220,10 +2307,7 @@ def run(args):
         browser = p.chromium.connect_over_cdp(args.cdp)
         page = find_flow_page(browser)
         if not page:
-            ctx = browser.contexts[0]
-            page = ctx.pages[0] if ctx.pages else ctx.new_page()
-            page.goto("https://flow.google.com", wait_until="domcontentloaded", timeout=30000)
-            time.sleep(1.0)
+            raise RuntimeError("flow_tab_not_ready_after_electron_launch")
 
         page = ensure_project_page(page)
         # Do not force the Flow browser window to front. Users may intentionally keep it hidden/minimized.
@@ -2256,7 +2340,16 @@ def run(args):
         refs_dir = args.refs_dir
         delayed_downloads = []
         claimed_media_ids = set()
+        last_submit_at = None
         for idx in range(done, total):
+            # "Giãn cách prompt" is measured between Generate clicks, not
+            # added after housekeeping/DOM checks. Wait only the remainder.
+            if last_submit_at is not None:
+                spacing_sec = max(0.0, float(args.between_prompts_sec or 0))
+                remaining = spacing_sec - (time.monotonic() - last_submit_at)
+                if remaining > 0:
+                    log_line(f"[flow] prompt spacing: wait remaining {remaining:.2f}s of configured {spacing_sec:.2f}s")
+                    time.sleep(remaining)
             while PAUSE_FILE_DEFAULT.exists():
                 log_line("[flow] paused")
                 time.sleep(2.0)
@@ -2265,11 +2358,13 @@ def run(args):
             ok = False
             submitted = False
             flow_rejected = False
+            reference_attached = False
+            matched_refs = []
 
             for attempt in range(1, args.max_retries + 2):
                 try:
                     license_guard_or_raise(force=True)
-
+                    
                     # Do not force the Flow browser window to front between prompts.
 
                     # Settings are applied only once per run. Do not re-select model/ratio/count for later prompts.
@@ -2285,40 +2380,72 @@ def run(args):
 
                     box = find_input_box(page)
 
-                    # Always clear before typing, especially for AI Studio/Continuous runs
+                    # Keep a successfully attached reference across retries of
+                    # this same prompt; clearing/uploading again creates duplicates.
                     clear_prompt_box(page, box)
-                    clear_attached_references(page)
+                    if not reference_attached and not clear_attached_references(page):
+                        raise RuntimeError("stale_reference_not_cleared")
 
                     prompt_to_type = prompt
                     matched_refs = []
-                    if refs_dir is not None:
+                    if refs_dir is not None and not reference_attached:
                         if args.paired_mode:
                             # Normal Flow tabs: paired image mapping only (1.jpg -> prompt #1, 2.jpg -> prompt #2).
                             # Dance wardrobe batches may provide one folder per prompt containing
                             # the model image followed by every garment/accessory reference.
                             prompt_ref_dir = refs_dir / str(prompt_no)
-                            if prompt_ref_dir.is_dir():
+                            if prompt_ref_dir.is_dir() and args.allow_multi_refs:
                                 exts = {".jpg", ".jpeg", ".png", ".webp"}
-                                matched_refs.extend([p for p in sorted(prompt_ref_dir.iterdir()) if p.is_file() and p.suffix.lower() in exts])
+                                matched_refs.extend([p for p in sorted(prompt_ref_dir.iterdir(), key=natural_file_key) if p.is_file() and p.suffix.lower() in exts])
+                            elif prompt_ref_dir.is_dir():
+                                exts = {".jpg", ".jpeg", ".png", ".webp"}
+                                files = [p for p in sorted(prompt_ref_dir.iterdir(), key=natural_file_key) if p.is_file() and p.suffix.lower() in exts]
+                                if files:
+                                    matched_refs.append(files[0])
                             else:
                                 ref_img = resolve_ref_image(refs_dir, prompt_no)
                                 if ref_img is not None:
                                     matched_refs.append(ref_img)
-                        else:
-                            # AI Prompt Studio: upload every image in the selected character folder for every prompt.
+                        elif args.ref_mode == "all":
+                            # Explicit all-reference mode: upload every image for every prompt.
                             exts = {".jpg", ".jpeg", ".png", ".webp"}
-                            matched_refs.extend([p for p in sorted(refs_dir.iterdir()) if p.is_file() and p.suffix.lower() in exts])
+                            matched_refs.extend([
+                                p for p in sorted(refs_dir.iterdir(), key=natural_file_key)
+                                if p.is_file() and p.suffix.lower() in exts
+                            ])
+                        else:
+                            ref_img = resolve_ref_image(refs_dir, prompt_no)
+                            if ref_img is not None:
+                                matched_refs.append(ref_img)
 
+                    # Only paired mode is limited to one numbered image. Explicit
+                    # all mode and wardrobe subfolders intentionally keep all refs.
+                    if args.ref_mode != "all" and not args.allow_multi_refs:
+                        matched_refs = matched_refs[:1]
+
+                    uploaded_this_attempt = False
                     for ref_file in matched_refs:
+                        if reference_attached and not args.allow_multi_refs and args.ref_mode != "all":
+                            log_line(f"[flow] prompt #{prompt_no} reference already attached; block duplicate upload of {ref_file.name}")
+                            continue
                         log_line(f"[flow] prompt #{prompt_no} use ref image: {ref_file.name}")
-                        # AI Prompt Studio uses --no-paired-mode: upload files only on prompt #1, then reuse by searching filenames in Flow library.
-                        upload_reference_image(page, ref_file, prompt_box=box, upload_file=(args.paired_mode if args.paired_mode else (prompt_no == 1)))
+                        # Always upload the exact local file selected for this prompt.
+                        # Reusing Flow library entries by filename can attach stale media.
+                        upload_reference_image(page, ref_file, prompt_box=box, upload_file=True)
+                        uploaded_this_attempt = True
+                        if not args.allow_multi_refs and args.ref_mode != "all":
+                            reference_attached = True
+                            log_line(f"[flow] prompt #{prompt_no} reference locked immediately after add-to-prompt; retries will not upload again")
+                            break
 
                     if matched_refs:
-                        settled = wait_reference_upload_settled(page, timeout_sec=45)
+                        settled = wait_reference_upload_settled(page, timeout_sec=20)
                         log_line(f"[flow] prompt #{prompt_no} reference upload settled: {settled}")
-                        if not settled:
-                            raise RuntimeError("reference_upload_not_settled")
+                        if uploaded_this_attempt and (args.allow_multi_refs or args.ref_mode == "all"):
+                            reference_attached = True
+                            log_line(f"[flow] prompt #{prompt_no} multi-reference locked; retries will not upload again")
+                    elif reference_attached:
+                        log_line(f"[flow] prompt #{prompt_no} retry reuses already attached reference")
 
                     time.sleep(random.uniform(args.pre_paste_min, args.pre_paste_max))
 
@@ -2335,18 +2462,23 @@ def run(args):
                     btn = find_create_button(page)
                     btn.click(timeout=5000)
                     submitted = True
-                    log_line(f"[flow] prompt #{prompt_no} submitted")
+                    last_submit_at = time.monotonic()
+                    log_line(f"[flow] prompt #{prompt_no} submitted; spacing clock started")
+                    continuous_batch = int(args.download_delay_prompts or 0) > 0 or bool(args.continuous_download)
                     submitted_tile_ids = capture_submitted_tile_ids(
                         page,
                         before_ids=pre_submit_tiles,
                         expected_count=1,
-                        timeout_sec=180,
+                        timeout_sec=1 if continuous_batch else 180,
                     )
                     log_line(f"[flow] prompt #{prompt_no} locked tile IDs: {submitted_tile_ids}")
-                    if not submitted_tile_ids:
+                    if not submitted_tile_ids and not continuous_batch:
                         raise RuntimeError("submitted_job_tile_not_created")
+                    if not submitted_tile_ids:
+                        log_line(f"[flow] prompt #{prompt_no} tile pending; continuous mode will resolve it from pre-submit baseline during FIFO download")
 
-                    time.sleep(2)
+                    if not continuous_batch:
+                        time.sleep(2)
                     fail_reason = classify_flow_error(page)
                     if fail_reason:
                         flow_rejected = True
@@ -2371,19 +2503,24 @@ def run(args):
                                 "output_prefix": prompt_file_prefix(prompt, prompt_no),
                             })
                             batch_size = max(1, int(args.download_delay_prompts or 0))
-                            if len(delayed_downloads) > batch_size:
-                                # Prompt N+1 acts as the trigger, then drain the
-                                # complete previous batch in FIFO order. Keep the
-                                # newly submitted trigger prompt queued for the
-                                # next batch.
+                            if len(delayed_downloads) >= batch_size:
+                                # Submit exactly one batch, then pause submissions
+                                # and download that complete batch in FIFO order.
+                                # For delay=3: submit 1,2,3; download 1,2,3; then 4.
                                 batch = delayed_downloads[:batch_size]
-                                log_line(f"[flow] prompt #{prompt_no} triggered FIFO batch download: {[x['prompt_no'] for x in batch]}")
+                                log_line(f"[flow] completed submit batch of {batch_size}; FIFO download now: {[x['prompt_no'] for x in batch]}")
                                 for item in batch:
                                     license_guard_or_raise(force=True)
-                                    log_line(f"[flow] batch download prompt #{item['prompt_no']} of {batch_size}")
+                                    if not prompt_queue_item_ready_now(page, item, claimed_ids=claimed_media_ids):
+                                        item["batch_download_error"] = "not_ready_nonblocking"
+                                        log_line(f"[flow] batch prompt #{item['prompt_no']} not ready; keep FIFO and continue prompt submissions")
+                                        continue
+                                    log_line(f"[flow] batch download ready prompt #{item['prompt_no']} of {batch_size}")
                                     dl_ok, dl_step = download_prompt_queue_item(page, item, args, claimed_ids=claimed_media_ids)
                                     if not dl_ok:
-                                        raise RuntimeError(f"auto_download_failed_prompt_{item['prompt_no']}:{dl_step}")
+                                        item["batch_download_error"] = dl_step
+                                        log_line(f"[flow] batch download deferred prompt #{item['prompt_no']}: {dl_step}; continue submissions")
+                                        continue
                                     # Remove only after successful complete download.
                                     if delayed_downloads and delayed_downloads[0] is item:
                                         delayed_downloads.pop(0)
@@ -2438,7 +2575,7 @@ def run(args):
             # Sau khi tạo/download thành công: reset UI để prompt kế tiếp upload ảnh mới đúng paired-mode
             if ok and prompt_no < total:
                 try:
-
+                    
                     # Do not force the Flow browser window to front after each prompt.
                     close_open_menus(page)
                     clear_attached_references(page)
@@ -2478,8 +2615,6 @@ def run(args):
                     "ts": int(time.time()),
                 }
                 save_state(args.state, state)
-                if prompt_no < total:
-                    time.sleep(args.between_prompts_sec)
                 continue
 
             prior_failed = state.get("failed_prompts", []) if isinstance(state, dict) else []
@@ -2494,9 +2629,6 @@ def run(args):
 
             if prompt_no % args.batch_size == 0 or prompt_no == total:
                 log_line(f"[flow] progress: {prompt_no}/{total}")
-
-            if prompt_no < total:
-                time.sleep(args.between_prompts_sec)
 
         if args.auto_download and (args.continuous_download or int(args.download_delay_prompts or 0) > 0):
             # Final prompts have no later submissions providing a natural delay.
@@ -2559,6 +2691,8 @@ def main():
     ap.add_argument("--flow-count", default="1", help="Số lượng output x1/x2/x3/x4")
     ap.add_argument("--omni-duration", default="", choices=["", "4s", "6s", "8s", "10s"], help="Thời lượng chỉ áp dụng cho omni_flash")
     ap.add_argument("--video-sub-mode", default="frames", choices=["frames", "ingredients"], help="Video sub mode")
+    ap.add_argument("--ref-mode", choices=["paired", "all"], default="paired", help="paired: N.jpg cho prompt N; all: toàn bộ ảnh cho mỗi prompt")
+    ap.add_argument("--allow-multi-refs", action="store_true", help="Chỉ dành cho job nhiều ảnh rõ ràng như Dance Wardrobe")
     ap.add_argument("--paired-mode", dest="paired_mode", action="store_true", help="Map ảnh theo số prompt (1.jpg->prompt1)")
     ap.add_argument("--no-paired-mode", dest="paired_mode", action="store_false", help="Không map theo số prompt")
     ap.set_defaults(paired_mode=True)
@@ -2575,28 +2709,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-def settings_summary_matches(page, args):
-    """Accept the current composer configuration when its rendered summary is exact."""
-    model_key = (args.flow_model or "default").strip().lower()
-    task_mode = (args.task_mode or "createvideo").strip().lower()
-    if model_key == "default":
-        model_key = "nano_banana_pro" if task_mode == "createimage" else "veo3_fast"
-    model = MODEL_LABELS.get(model_key, "")
-    ratio_icon = "crop_9_16" if args.flow_aspect_ratio == "9:16" else "crop_16_9"
-    count = f"x{str(args.flow_count or '1').strip()}"
-    try:
-        summary = page.locator(
-            'flow-prompt-box.prompt-box-container button.settings-trigger-button '
-            '.settings-summary'
-        )
-        if summary.count() != 1 or not summary.is_visible():
-            return False
-        raw = summary.inner_text(timeout=3000) or ""
-        normalized = " ".join(raw.split()).lower()
-        ok = model.lower() in normalized and ratio_icon.lower() in normalized and count.lower() in normalized
-        log_line(f"[flow] settings summary check: ok={ok} model={model_key} ratio={ratio_icon} count={count}")
-        return ok
-    except Exception as e:
-        log_line(f"[flow] settings summary check failed: {e}")
-        return False

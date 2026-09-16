@@ -23,9 +23,7 @@ async function ensureProjectPage(page){
   try{ if(await page.locator('textarea,[contenteditable="true"],div[role="textbox"]').last().isVisible({timeout:1200})) return page; }catch{}
   const selectors=[
     "button:has-text('New project')",
-    "flow-projects-page button.new-project-button",
-  "button.new-project-button",
-  "button:has-text('Dự án mới')",
+    "button:has-text('Dự án mới')",
     "button:has-text('Tạo dự án')",
     "a:has-text('New project')",
     "[role='button']:has-text('New project')",
