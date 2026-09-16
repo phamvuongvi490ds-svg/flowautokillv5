@@ -143,7 +143,7 @@ def ensure_project_page(page):
     # Mặc định luôn vào /tools/flow (hỗ trợ locale /fx/vi/tools/flow)
     if not re.search(r"labs\.google/fx(?:/[a-z]{2})?/tools/flow(?:/project)?", url):
         try:
-            page.goto("https://labs.google/fx/vi/tools/flow", wait_until="domcontentloaded", timeout=30000)
+            page.goto("https://flow.google.com", wait_until="domcontentloaded", timeout=30000)
             time.sleep(1.0)
         except Exception:
             pass
@@ -215,6 +215,10 @@ def _try_click_new_project(page):
         ]
         rx = re.compile("|".join(patterns), re.I)
         locs = [
+            page.locator('flow-projects-page button.new-project-button'),
+            page.locator('button.new-project-button'),
+            page.locator('button:has-text("Dự án mới")'),
+            page.locator('button:has-text("New project")'),
             page.get_by_text(rx),
             page.locator("button,[role='button'],a,[role='link'],div[role='button']").filter(has_text=rx),
             page.locator("[aria-label*='New' i], [title*='New' i], [aria-label*='mới' i], [title*='mới' i]"),
@@ -2176,7 +2180,7 @@ def run(args):
         if not page:
             ctx = browser.contexts[0]
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
-            page.goto("https://labs.google/fx/vi/tools/flow", wait_until="domcontentloaded", timeout=30000)
+            page.goto("https://flow.google.com", wait_until="domcontentloaded", timeout=30000)
             time.sleep(1.0)
 
         page = ensure_project_page(page)
