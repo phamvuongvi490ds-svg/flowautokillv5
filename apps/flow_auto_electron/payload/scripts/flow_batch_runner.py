@@ -1263,177 +1263,82 @@ def _add_uploaded_media_to_prompt(page, timeout_sec=90, before_count=None):
     return False
 
 def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=True):
-    """Extension-style image pipeline: upload to Flow library, then search by filename and attach.
-
-    This replaces the old UI-position based uploader. It follows extension 2.0.6 logic:
-    add_2 trigger -> file input inject -> wait settle -> add_2 trigger -> search filename -> click result row.
-    """
+    """Upload file, then search the component picker by filename and attach the exact media."""
     image_path = Path(image_path)
     if not image_path.exists():
         raise RuntimeError(f"missing_ref_image:{image_path}")
-
     fname = image_path.name
 
     if upload_file:
-        # Phase 1: open add/upload picker beside prompt composer, then inject file.
-        plus_opened = _open_plus_menu(page, prompt_box=prompt_box)
-        if not plus_opened:
+        if not _open_plus_menu(page, prompt_box=prompt_box):
             raise RuntimeError(f"extension_upload:add_menu_not_opened:{fname}")
         log_line("[flow] plus menu opened for reference upload")
-        before_attach = composer_attachment_count(page)
-        file_set = _upload_media_without_native_dialog(page, image_path)
-        if not file_set:
+        if not _upload_media_without_native_dialog(page, image_path):
             raise RuntimeError(f"extension_upload:filechooser_not_intercepted:{fname}")
-
         log_line(f"[flow] extension-upload injected file: {fname}")
-        # Current Flow may auto-attach the selected file immediately after
-        # file chooser injection. If count already increased, do NOT click
-        # "Thêm vào câu lệnh" again or the same image is attached twice.
-        auto_deadline = time.time() + 8
-        auto_attached = False
-        while time.time() < auto_deadline:
-            now_attach = composer_attachment_count(page)
-            if now_attach > before_attach:
-                auto_attached = True
-                log_line(f"[flow] upload auto-attached media count {before_attach}->{now_attach}; skip add-to-prompt button")
-                close_open_menus(page)
-                break
-            time.sleep(0.4)
-        if not auto_attached:
-            if not _add_uploaded_media_to_prompt(page, timeout_sec=60, before_count=before_attach):
-                raise RuntimeError(f"extension_upload:add_to_prompt_failed:{fname}")
-        log_line(f"[flow] uploaded media added to prompt: {fname}")
-        time.sleep(1.0)
-        return
-    else:
-        log_line(f"[flow] reuse uploaded ref from library: {fname}")
+        time.sleep(3.0)
+        close_open_menus(page)
 
-    # Reuse path only: reopen the library and attach an already uploaded file.
+    # Important rule: after upload, reopen components menu and type filename in its search box.
     attached = False
-    for attempt in range(1, 6):
+    for attempt in range(1, 7):
         try:
             if not _open_plus_menu(page, prompt_box=prompt_box):
-                if _choose_uploaded_image_from_menu(page, image_path):
-                    attached = True
-                    break
                 time.sleep(0.8)
                 continue
-
-            # search input inside asset picker/dialog
+            log_line(f"[flow] search uploaded component by filename attempt {attempt}: {fname}")
             found = page.evaluate(
                 """
                 (fname) => {
                   const visible = (el) => {
                     if (!el) return false;
                     const st = getComputedStyle(el);
-                    if (!st || st.display === 'none' || st.visibility === 'hidden') return false;
                     const r = el.getBoundingClientRect();
-                    return r.width > 8 && r.height > 8;
+                    return st.display !== 'none' && st.visibility !== 'hidden' && r.width > 8 && r.height > 8;
                   };
-                  const inputs = Array.from(document.querySelectorAll('[role="dialog"] input[type="text"], input[type="text"]')).filter(visible);
+                  const roots = [...document.querySelectorAll('.cdk-overlay-pane, flow-add-menu-popover-content, flow-add-menu-detail-pane, [role="dialog"]')].filter(visible);
+                  const root = roots[roots.length - 1] || document;
+                  const inputs = [...root.querySelectorAll('input[type="text"], input:not([type]), textarea, [contenteditable="true"]')].filter(visible);
                   const input = inputs[inputs.length - 1];
                   if (!input) return {ok:false, step:'no_search_input'};
-                  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-                  if (setter) setter.call(input, fname); else input.value = fname;
-                  input.dispatchEvent(new Event('input', {bubbles:true}));
-                  input.dispatchEvent(new KeyboardEvent('keyup', {bubbles:true, key:'Enter'}));
+                  input.focus();
+                  const setter = Object.getOwnPropertyDescriptor(input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value')?.set;
+                  if ('value' in input) {
+                    if (setter) setter.call(input, fname); else input.value = fname;
+                    input.dispatchEvent(new Event('input', {bubbles:true}));
+                    input.dispatchEvent(new KeyboardEvent('keydown', {bubbles:true, key:'Enter'}));
+                    input.dispatchEvent(new KeyboardEvent('keyup', {bubbles:true, key:'Enter'}));
+                  } else {
+                    input.textContent = fname;
+                    input.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:fname}));
+                  }
                   return {ok:true, step:'searched'};
                 }
                 """,
                 fname,
             )
-            if not found or not found.get("ok"):
+            if not found or not found.get('ok'):
+                log_line(f"[flow] component search box missing for {fname}: {found}")
                 time.sleep(0.8)
                 continue
 
-            # wait for virtuoso/list result exact filename and click its row
-            deadline = time.time() + 12
+            deadline = time.time() + 15
             while time.time() < deadline:
-                clicked = page.evaluate(
-                    """
-                    (fname) => {
-                      const visible = (el) => {
-                        if (!el) return false;
-                        const st = getComputedStyle(el);
-                        if (!st || st.display === 'none' || st.visibility === 'hidden') return false;
-                        const r = el.getBoundingClientRect();
-                        return r.width > 8 && r.height > 8;
-                      };
-                      const norm = s => String(s || '').trim().toLowerCase();
-                      const target = norm(fname);
-                      const imgs = Array.from(document.querySelectorAll('[data-testid="virtuoso-item-list"] img[alt], [role="dialog"] img[alt], img[alt]')).filter(visible);
-                      let img = imgs.find(i => norm(i.getAttribute('alt')) === target) || imgs.find(i => norm(i.getAttribute('alt')).endsWith('/' + target));
-                      if (!img) return false;
-                      const row = img.closest('button,[role="button"],[role="option"],[role="menuitem"],[role="gridcell"],li,div') || img.parentElement || img;
-                      row.click();
-                      return true;
-                    }
-                    """,
-                    fname,
-                )
-                if clicked:
+                if _choose_uploaded_image_from_menu(page, image_path):
                     attached = True
                     break
-                time.sleep(0.35)
-
+                time.sleep(0.5)
             if attached:
                 break
-        except Exception:
-            pass
+        except Exception as e:
+            log_line(f"[flow] filename search attach attempt failed: {e}")
         time.sleep(1.0)
 
     if not attached:
         raise RuntimeError(f"extension_upload:cannot_attach_by_filename:{fname}")
-
-    # close any remaining popover and wait for attach chip/reference to settle
-    try:
-        page.keyboard.press("Escape")
-    except Exception:
-        pass
+    close_open_menus(page)
     time.sleep(1.0)
-
-
-def find_create_button(page):
-    # Exact selector recorded on the current Flow prompt composer.
-    selector = (
-        'flow-prompt-box.prompt-box-container '
-        'flow-generate-icon-button button.generate-icon-button[type="submit"]'
-        '[aria-label="Bắt đầu tạo"]'
-    )
-    try:
-        buttons = page.locator(selector)
-        for i in range(buttons.count()):
-            btn = buttons.nth(i)
-            if btn.is_visible() and btn.is_enabled():
-                return btn
-    except Exception:
-        pass
-    raise RuntimeError("flow_generate_button_not_ready")
-
-
-def classify_flow_error(page):
-    try:
-        txt = (page.locator("body").inner_text(timeout=2000) or "").lower()
-        if "daily" in txt and ("limit" in txt or "quota" in txt):
-            return "daily_limit"
-        if "queue" in txt and ("full" in txt or "đầy" in txt):
-            return "queue_full"
-        if "policy" in txt or "chính sách" in txt:
-            return "policy"
-        if "oops, something went wrong" in txt:
-            return "oops"
-    except Exception:
-        pass
-    return ""
-
-
-def has_failure(page):
-    # Conservative check: only treat explicit global Oops banner as failure.
-    # Per-item "Failed/Retry" cards may exist from older jobs and should not stop the loop.
-    body = page.locator("body")
-    txt = body.inner_text(timeout=2000)
-    return "Oops, something went wrong" in txt
-
+    log_line(f"[flow] uploaded media searched and attached to prompt: {fname}")
 
 def wait_reference_upload_settled(page, timeout_sec=45):
     """Wait until reference picker/upload mutations stop before output baseline."""
@@ -1892,14 +1797,14 @@ def current_flow_download_tile_via_ui(page, resolution="720p", before_ids=None, 
             """before => {
               const old=new Set(before||[]), visible=el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>80&&r.height>60&&s.display!=='none'&&s.visibility!=='hidden'};
               const tiles=[...document.querySelectorAll('flow-grid-tile-container')]
-                .filter(t=>{const id=t.querySelector('[data-media-id]')?.getAttribute('data-media-id');return id&&!old.has(id)&&visible(t)&&(t.querySelector('flow-image-hotbar,flow-video-hotbar')||t.matches('flow-image-tile,flow-video-tile'))});
+                .filter(t=>{const id=t.querySelector('[data-media-id]')?.getAttribute('data-media-id');return id&&!old.has(id)&&visible(t)&&!t.querySelector('flow-pending-tile')&&(t.querySelector('video,img,canvas,[data-media-id]'));});
               tiles.sort((a,b)=>b.getBoundingClientRect().top-a.getBoundingClientRect().top);
               return tiles[0]?.querySelector('[data-media-id]')?.getAttribute('data-media-id')||null;
             }""", before)
         if not tile_id: return False, 'current_no_target_tile'
         tile = page.locator(f'flow-grid-tile-container:has([data-media-id="{tile_id}"])').first
         tile.hover(timeout=5000)
-        menu = tile.locator('flow-image-hotbar button[aria-label="Tuỳ chọn khác"],flow-video-hotbar button[aria-label="Tuỳ chọn khác"],button[aria-label="Tuỳ chọn khác"]')
+        menu = tile.locator('flow-image-hotbar button[aria-label*="Tu"],flow-video-hotbar button[aria-label*="Tu"],flow-image-hotbar button[aria-label*="More" i],flow-video-hotbar button[aria-label*="More" i],button[aria-label="Tuỳ chọn khác"],button[aria-label="Tùy chọn khác"],button[aria-label*="More" i]')
         if menu.count() < 1: return False, 'current_more_options_missing'
         menu.first.click(timeout=5000)
         quality = '1K' if str(resolution).upper() == '1K' else ('720p' if str(resolution) in ('720','720p') else str(resolution))
@@ -2446,11 +2351,6 @@ def run(args):
                             log_line(f"[flow] prompt #{prompt_no} multi-reference locked; retries will not upload again")
                     elif reference_attached:
                         log_line(f"[flow] prompt #{prompt_no} retry reuses already attached reference")
-
-                    if matched_refs:
-                        image_names = ", ".join([p.name for p in matched_refs])
-                        prompt_to_type = (image_names + "\n" + prompt).strip()
-                        log_line(f"[flow] prompt #{prompt_no} type image filename before prompt: {image_names}")
 
                     time.sleep(random.uniform(args.pre_paste_min, args.pre_paste_max))
 
