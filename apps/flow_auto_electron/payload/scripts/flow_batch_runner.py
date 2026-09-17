@@ -1033,179 +1033,72 @@ def _open_plus_menu(page, prompt_box=None):
 
 
 def _choose_uploaded_image_from_menu(page, image_path: Path):
-    # Chọn ảnh bằng cách click trực tiếp vùng có chứa text '1.jpg' (hoặc filename tương ứng)
-    # sau đó fallback mapping theo id/data-*.
+    """Click only the uploaded media result matching filename inside Flow component overlay.
+
+    Never click upload buttons or whole-page fallbacks here; those can open a native
+    folder/file picker outside the configured refsDir.
+    """
     stem = image_path.stem.strip()
-    m = re.search(r"(\d+)", stem)
-    number = m.group(1) if m else stem
-    idx = int(number) if str(number).isdigit() else None
-
-    # Step 1: tìm element hiển thị text filename và click vào chính vùng đó bằng tọa độ
-    try:
-        click_point = page.evaluate(
-            """
-            ({fileName, stem, number}) => {
-              const visible = (el) => {
-                if (!el) return false;
-                const st = getComputedStyle(el);
-                if (!st || st.display === 'none' || st.visibility === 'hidden') return false;
-                const r = el.getBoundingClientRect();
-                return r.width > 10 && r.height > 10;
-              };
-
-              const norm = (s) => String(s || '').toLowerCase().trim();
-              const targets = [fileName, stem, number].filter(Boolean).map(norm);
-
-              const els = Array.from(document.querySelectorAll('body *')).filter(visible);
-              let best = null;
-              let bestScore = Number.POSITIVE_INFINITY;
-
-              for (const el of els) {
-                const txt = norm(el.innerText || el.textContent || '');
-                if (!txt) continue;
-                if (!targets.some(t => t && txt.includes(t))) continue;
-
-                const r = el.getBoundingClientRect();
-                // ưu tiên element nhỏ/vừa (label/card) hơn các container lớn
-                const area = r.width * r.height;
-                if (area < 30 || area > 500000) continue;
-
-                // nếu element nằm trong popup có ảnh thì ưu tiên
-                let score = area;
-                const host = el.closest('[role="menu"],[role="listbox"],[role="dialog"],.MuiPopover-root,.MuiPopper-root,.cdk-overlay-pane,[data-radix-popper-content-wrapper]');
-                if (!host) score += 200000;
-
-                if (score < bestScore) {
-                  bestScore = score;
-                  best = r;
-                }
-              }
-
-              if (!best) return null;
-              return {
-                x: Math.floor(best.left + best.width / 2),
-                y: Math.floor(best.top + best.height / 2),
-              };
-            }
-            """,
-            {"fileName": image_path.name, "stem": stem, "number": number},
-        )
-        if click_point and isinstance(click_point, dict):
-            x = float(click_point.get("x", 0))
-            y = float(click_point.get("y", 0))
-            if x > 0 and y > 0:
-                page.mouse.click(x, y)
-                time.sleep(0.7)
-                return True
-    except Exception:
-        pass
-
-    # Step 2: fallback mapping id/data-* trong popup
+    fname = image_path.name.strip()
     try:
         picked = page.evaluate(
             """
-            ({fileName, stem, number, idx}) => {
+            ({fileName, stem}) => {
               const visible = (el) => {
                 if (!el) return false;
                 const st = getComputedStyle(el);
-                if (!st || st.display === 'none' || st.visibility === 'hidden') return false;
                 const r = el.getBoundingClientRect();
-                return r.width > 10 && r.height > 10;
+                return st.display !== 'none' && st.visibility !== 'hidden' && r.width > 10 && r.height > 10;
               };
+              const norm = (s) => String(s || '').toLowerCase().trim();
+              const targets = [fileName, stem].filter(Boolean).map(norm);
+              const roots = [...document.querySelectorAll('.cdk-overlay-pane, flow-add-menu-popover-content, flow-add-menu-detail-pane, [role="dialog"]')]
+                .filter(visible)
+                .filter(r => !r.closest('flow-prompt-box.prompt-box-container'));
+              const root = roots[roots.length - 1];
+              if (!root) return {ok:false, step:'no_overlay'};
 
+              const isUploadControl = (el) => {
+                const b = el.closest('button,[role="button"],label') || el;
+                const t = norm((b.innerText || b.textContent || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '') + ' ' + String(b.className || ''));
+                return t.includes('upload') || t.includes('tải nội dung') || t.includes('tai noi dung') || t.includes('tải lên') || t.includes('tai len') || !!b.querySelector('input[type="file"]') || b.classList?.contains('sidebar-upload-btn');
+              };
               const clickEl = (el) => {
-                if (!el) return false;
-                const target = el.closest('button,[role="button"],[role="option"],[role="menuitem"],[role="gridcell"],li,div') || el;
+                if (!el || isUploadControl(el)) return {ok:false, step:'blocked_upload_control'};
+                const target = el.closest('button,[role="button"],[role="option"],[role="gridcell"],li,flow-grid-tile-container,div') || el;
+                if (isUploadControl(target)) return {ok:false, step:'blocked_upload_target'};
                 target.click();
-                return true;
+                return {ok:true, step:'clicked_exact_media'};
               };
-
-              const zNum = (el) => {
-                try {
-                  const n = parseInt(getComputedStyle(el).zIndex || '0', 10);
-                  return Number.isFinite(n) ? n : 0;
-                } catch { return 0; }
-              };
-
-              const allNodes = Array.from(document.querySelectorAll('body *')).filter(visible);
-              const overlayCandidates = allNodes.filter(el => el.querySelector('img'));
-              let root = null;
-              let best = -1;
-              for (const el of overlayCandidates) {
-                const score = zNum(el) * 1000 + el.querySelectorAll('img').length;
-                if (score > best) { best = score; root = el; }
-              }
-              if (!root) return false;
-
-              const norm = (s) => String(s || '').toLowerCase();
-              const targets = [fileName, stem, number].filter(Boolean).map(norm);
-              const numberRe = number ? new RegExp(`(^|[^0-9])${number}([^0-9]|$)`) : null;
-
-              const cards = Array.from(root.querySelectorAll('*')).filter(el => {
-                if (!visible(el)) return false;
-                if (el.tagName === 'IMG') return true;
-                return !!el.querySelector('img');
-              });
-
               const metaOf = (el) => {
                 const img = el.tagName === 'IMG' ? el : el.querySelector('img');
                 return [
-                  el.id,
-                  el.getAttribute('data-id'),
-                  el.getAttribute('data-key'),
-                  el.getAttribute('data-testid'),
-                  el.getAttribute('aria-label'),
-                  el.getAttribute('title'),
-                  el.textContent,
-                  img?.getAttribute('alt'),
-                  img?.getAttribute('src'),
-                  img?.id,
-                  img?.getAttribute('data-id'),
-                  img?.getAttribute('data-key'),
-                  img?.getAttribute('data-testid')
+                  el.id, el.getAttribute('data-id'), el.getAttribute('data-key'), el.getAttribute('data-testid'),
+                  el.getAttribute('aria-label'), el.getAttribute('title'), el.textContent,
+                  img?.getAttribute('alt'), img?.getAttribute('src'), img?.id,
+                  img?.getAttribute('data-id'), img?.getAttribute('data-key'), img?.getAttribute('data-testid')
                 ].map(norm).join(' ');
               };
-
+              const cards = [...root.querySelectorAll('flow-grid-tile-container,[role="option"],[role="gridcell"],button,li,div,img')]
+                .filter(visible)
+                .filter(el => !isUploadControl(el))
+                .filter(el => el.tagName === 'IMG' || el.querySelector('img') || el.querySelector('[data-media-id]') || el.getAttribute('data-media-id'));
               for (const el of cards) {
                 const meta = metaOf(el);
-                if (targets.some(t => t && meta.includes(t))) {
-                  return clickEl(el);
-                }
+                if (targets.some(t => t && meta.includes(t))) return clickEl(el);
               }
-
-              if (numberRe) {
-                for (const el of cards) {
-                  const meta = metaOf(el);
-                  if (numberRe.test(meta)) {
-                    return clickEl(el);
-                  }
-                }
-              }
-
-              const thumbs = Array.from(root.querySelectorAll('img')).filter(visible);
-              if (!thumbs.length) return false;
-              thumbs.sort((a, b) => {
-                const ra = a.getBoundingClientRect();
-                const rb = b.getBoundingClientRect();
-                const dy = ra.top - rb.top;
-                if (Math.abs(dy) > 6) return dy;
-                return ra.left - rb.left;
-              });
-              let pick = 0;
-              if (Number.isInteger(idx) && idx > 0) pick = Math.min(idx - 1, thumbs.length - 1);
-              return clickEl(thumbs[pick]);
+              return {ok:false, step:'exact_filename_result_not_found', candidates:cards.length};
             }
             """,
-            {"fileName": image_path.name, "stem": stem, "number": number, "idx": idx},
+            {"fileName": fname, "stem": stem},
         )
-        if picked:
+        if picked and picked.get('ok'):
             time.sleep(0.7)
             return True
-    except Exception:
-        pass
-
+        log_line(f"[flow] exact uploaded media result not clicked for {fname}: {picked}")
+    except Exception as e:
+        log_line(f"[flow] choose uploaded media by filename failed: {e}")
     return False
-
 
 def _upload_media_without_native_dialog(page, image_path: Path):
     """Intercept Flow's chooser so Windows never opens a second window."""
@@ -1308,8 +1201,7 @@ def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=
                   const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
                   if (setter) setter.call(input, fname); else input.value = fname;
                   input.dispatchEvent(new Event('input', {bubbles:true}));
-                  input.dispatchEvent(new KeyboardEvent('keydown', {bubbles:true, key:'Enter'}));
-                  input.dispatchEvent(new KeyboardEvent('keyup', {bubbles:true, key:'Enter'}));
+                  input.dispatchEvent(new KeyboardEvent('keyup', {bubbles:true, key:fname.slice(-1) || ' '}));
                   return {ok:true, step:'searched'};
                 }
                 """,
