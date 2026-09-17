@@ -1297,21 +1297,19 @@ def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=
                     return st.display !== 'none' && st.visibility !== 'hidden' && r.width > 8 && r.height > 8;
                   };
                   const roots = [...document.querySelectorAll('.cdk-overlay-pane, flow-add-menu-popover-content, flow-add-menu-detail-pane, [role="dialog"]')].filter(visible);
-                  const root = roots[roots.length - 1] || document;
-                  const inputs = [...root.querySelectorAll('input[type="text"], input:not([type]), textarea, [contenteditable="true"]')].filter(visible);
+                  const root = roots[roots.length - 1];
+                  if (!root) return {ok:false, step:'no_component_overlay'};
+                  const inputs = [...root.querySelectorAll('input[type="text"], input[type="search"], input:not([type]), textarea')]
+                    .filter(el => visible(el) && !el.closest('flow-prompt-box.prompt-box-container'));
                   const input = inputs[inputs.length - 1];
                   if (!input) return {ok:false, step:'no_search_input'};
                   input.focus();
-                  const setter = Object.getOwnPropertyDescriptor(input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value')?.set;
-                  if ('value' in input) {
-                    if (setter) setter.call(input, fname); else input.value = fname;
-                    input.dispatchEvent(new Event('input', {bubbles:true}));
-                    input.dispatchEvent(new KeyboardEvent('keydown', {bubbles:true, key:'Enter'}));
-                    input.dispatchEvent(new KeyboardEvent('keyup', {bubbles:true, key:'Enter'}));
-                  } else {
-                    input.textContent = fname;
-                    input.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:fname}));
-                  }
+                  const proto = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+                  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                  if (setter) setter.call(input, fname); else input.value = fname;
+                  input.dispatchEvent(new Event('input', {bubbles:true}));
+                  input.dispatchEvent(new KeyboardEvent('keydown', {bubbles:true, key:'Enter'}));
+                  input.dispatchEvent(new KeyboardEvent('keyup', {bubbles:true, key:'Enter'}));
                   return {ok:true, step:'searched'};
                 }
                 """,
