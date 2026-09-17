@@ -2449,8 +2449,7 @@ def run(args):
 
                     if matched_refs:
                         image_names = ", ".join([p.name for p in matched_refs])
-                        prompt_to_type = f"{image_names}
-{prompt}".strip()
+                        prompt_to_type = (image_names + "\n" + prompt).strip()
                         log_line(f"[flow] prompt #{prompt_no} type image filename before prompt: {image_names}")
 
                     time.sleep(random.uniform(args.pre_paste_min, args.pre_paste_max))
