@@ -1033,72 +1033,108 @@ def _open_plus_menu(page, prompt_box=None):
 
 
 def _choose_uploaded_image_from_menu(page, image_path: Path):
-    """Click only the uploaded media result matching filename inside Flow component overlay.
+    """Search filename in Flow component picker, click exact asset, then click Add to prompt.
 
-    Never click upload buttons or whole-page fallbacks here; those can open a native
-    folder/file picker outside the configured refsDir.
+    Restricted to flow-add-menu-popover-content so tooltip overlays or upload buttons
+    cannot steal focus/click and open a native file picker.
     """
     stem = image_path.stem.strip()
     fname = image_path.name.strip()
     try:
-        picked = page.evaluate(
+        searched = page.evaluate(
             """
-            ({fileName, stem}) => {
+            ({fileName}) => {
               const visible = (el) => {
                 if (!el) return false;
                 const st = getComputedStyle(el);
                 const r = el.getBoundingClientRect();
-                return st.display !== 'none' && st.visibility !== 'hidden' && r.width > 10 && r.height > 10;
+                return st.display !== 'none' && st.visibility !== 'hidden' && r.width > 8 && r.height > 8;
               };
-              const norm = (s) => String(s || '').toLowerCase().trim();
-              const targets = [fileName, stem].filter(Boolean).map(norm);
-              const roots = [...document.querySelectorAll('.cdk-overlay-pane, flow-add-menu-popover-content, flow-add-menu-detail-pane, [role="dialog"]')]
-                .filter(visible)
-                .filter(r => !r.closest('flow-prompt-box.prompt-box-container'));
-              const root = roots[roots.length - 1];
-              if (!root) return {ok:false, step:'no_overlay'};
-
-              const isUploadControl = (el) => {
-                const b = el.closest('button,[role="button"],label') || el;
-                const t = norm((b.innerText || b.textContent || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '') + ' ' + String(b.className || ''));
-                return t.includes('upload') || t.includes('tải nội dung') || t.includes('tai noi dung') || t.includes('tải lên') || t.includes('tai len') || !!b.querySelector('input[type="file"]') || b.classList?.contains('sidebar-upload-btn');
-              };
-              const clickEl = (el) => {
-                if (!el || isUploadControl(el)) return {ok:false, step:'blocked_upload_control'};
-                const target = el.closest('button,[role="button"],[role="option"],[role="gridcell"],li,flow-grid-tile-container,div') || el;
-                if (isUploadControl(target)) return {ok:false, step:'blocked_upload_target'};
-                target.click();
-                return {ok:true, step:'clicked_exact_media'};
-              };
-              const metaOf = (el) => {
-                const img = el.tagName === 'IMG' ? el : el.querySelector('img');
-                return [
-                  el.id, el.getAttribute('data-id'), el.getAttribute('data-key'), el.getAttribute('data-testid'),
-                  el.getAttribute('aria-label'), el.getAttribute('title'), el.textContent,
-                  img?.getAttribute('alt'), img?.getAttribute('src'), img?.id,
-                  img?.getAttribute('data-id'), img?.getAttribute('data-key'), img?.getAttribute('data-testid')
-                ].map(norm).join(' ');
-              };
-              const cards = [...root.querySelectorAll('flow-grid-tile-container,[role="option"],[role="gridcell"],button,li,div,img')]
-                .filter(visible)
-                .filter(el => !isUploadControl(el))
-                .filter(el => el.tagName === 'IMG' || el.querySelector('img') || el.querySelector('[data-media-id]') || el.getAttribute('data-media-id'));
-              for (const el of cards) {
-                const meta = metaOf(el);
-                if (targets.some(t => t && meta.includes(t))) return clickEl(el);
-              }
-              return {ok:false, step:'exact_filename_result_not_found', candidates:cards.length};
+              const root = [...document.querySelectorAll('flow-add-menu-popover-content')].filter(visible).pop();
+              if (!root) return {ok:false, step:'no_add_menu_root'};
+              const input = root.querySelector('input.search-input[aria-label="Tìm kiếm thành phần"], input[placeholder="Tìm kiếm thành phần"], input.search-input');
+              if (!visible(input)) return {ok:false, step:'no_search_input'};
+              input.focus();
+              const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+              if (setter) setter.call(input, fileName); else input.value = fileName;
+              input.dispatchEvent(new Event('input', {bubbles:true}));
+              input.dispatchEvent(new KeyboardEvent('keyup', {bubbles:true, key:fileName.slice(-1) || ' '}));
+              return {ok:true, step:'searched'};
             }
             """,
-            {"fileName": fname, "stem": stem},
+            {"fileName": fname},
         )
-        if picked and picked.get('ok'):
-            time.sleep(0.7)
-            return True
-        log_line(f"[flow] exact uploaded media result not clicked for {fname}: {picked}")
+        if not searched or not searched.get('ok'):
+            log_line(f"[flow] component search box missing for {fname}: {searched}")
+            return False
+
+        deadline = time.time() + 35
+        clicked_asset = False
+        while time.time() < deadline:
+            picked = page.evaluate(
+                """
+                ({fileName, stem}) => {
+                  const visible = (el) => {
+                    if (!el) return false;
+                    const st = getComputedStyle(el);
+                    const r = el.getBoundingClientRect();
+                    return st.display !== 'none' && st.visibility !== 'hidden' && r.width > 10 && r.height > 10;
+                  };
+                  const norm = (s) => String(s || '').toLowerCase().trim();
+                  const names = [fileName, stem].filter(Boolean).map(norm);
+                  const root = [...document.querySelectorAll('flow-add-menu-popover-content')].filter(visible).pop();
+                  if (!root) return {ok:false, step:'no_add_menu_root'};
+                  const items = [...root.querySelectorAll('button.asset-item,[role="option"].asset-item, flow-add-menu-asset-item')].filter(visible);
+                  for (const item of items) {
+                    const title = norm(item.querySelector('.asset-title')?.textContent || item.textContent || item.getAttribute('aria-label') || '');
+                    if (!names.some(n => n && title.includes(n))) continue;
+                    const btn = item.closest('button.asset-item,[role="option"]') || item;
+                    if (btn.matches('.sidebar-upload-btn') || btn.querySelector('input[type="file"]')) return {ok:false, step:'blocked_upload_control'};
+                    btn.click();
+                    return {ok:true, step:'clicked_asset', title};
+                  }
+                  return {ok:false, step:'asset_not_ready', count:items.length};
+                }
+                """,
+                {"fileName": fname, "stem": stem},
+            )
+            if picked and picked.get('ok'):
+                clicked_asset = True
+                log_line(f"[flow] clicked uploaded asset result: {fname}")
+                break
+            time.sleep(0.5)
+        if not clicked_asset:
+            return False
+
+        deadline = time.time() + 45
+        while time.time() < deadline:
+            added = page.evaluate(
+                """
+                () => {
+                  const visible = (el) => {
+                    if (!el) return false;
+                    const st = getComputedStyle(el);
+                    const r = el.getBoundingClientRect();
+                    return st.display !== 'none' && st.visibility !== 'hidden' && r.width > 10 && r.height > 10;
+                  };
+                  const root = [...document.querySelectorAll('flow-add-menu-popover-content')].filter(visible).pop();
+                  if (!root) return {ok:false, step:'no_add_menu_root'};
+                  const btn = root.querySelector('flow-add-menu-detail-pane button.detail-add-to-prompt-btn');
+                  if (!visible(btn)) return {ok:false, step:'add_button_missing'};
+                  if (btn.disabled || btn.getAttribute('aria-disabled') === 'true' || btn.className.includes('disabled')) return {ok:false, step:'add_button_disabled'};
+                  btn.click();
+                  return {ok:true, step:'clicked_add_to_prompt'};
+                }
+                """
+            )
+            if added and added.get('ok'):
+                time.sleep(1.0)
+                return True
+            time.sleep(0.5)
+        return False
     except Exception as e:
         log_line(f"[flow] choose uploaded media by filename failed: {e}")
-    return False
+        return False
 
 def _upload_media_without_native_dialog(page, image_path: Path):
     """Intercept Flow's chooser so Windows never opens a second window."""
@@ -1189,16 +1225,12 @@ def upload_reference_image(page, image_path: Path, prompt_box=None, upload_file=
                     const r = el.getBoundingClientRect();
                     return st.display !== 'none' && st.visibility !== 'hidden' && r.width > 8 && r.height > 8;
                   };
-                  const roots = [...document.querySelectorAll('.cdk-overlay-pane, flow-add-menu-popover-content, flow-add-menu-detail-pane, [role="dialog"]')].filter(visible);
-                  const root = roots[roots.length - 1];
-                  if (!root) return {ok:false, step:'no_component_overlay'};
-                  const inputs = [...root.querySelectorAll('input[type="text"], input[type="search"], input:not([type]), textarea')]
-                    .filter(el => visible(el) && !el.closest('flow-prompt-box.prompt-box-container'));
-                  const input = inputs[inputs.length - 1];
-                  if (!input) return {ok:false, step:'no_search_input'};
+                  const root = [...document.querySelectorAll('flow-add-menu-popover-content')].filter(visible).pop();
+                  if (!root) return {ok:false, step:'no_add_menu_root'};
+                  const input = root.querySelector('input.search-input[aria-label="Tìm kiếm thành phần"], input[placeholder="Tìm kiếm thành phần"], input.search-input');
+                  if (!visible(input)) return {ok:false, step:'no_search_input'};
                   input.focus();
-                  const proto = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-                  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
                   if (setter) setter.call(input, fname); else input.value = fname;
                   input.dispatchEvent(new Event('input', {bubbles:true}));
                   input.dispatchEvent(new KeyboardEvent('keyup', {bubbles:true, key:fname.slice(-1) || ' '}));
