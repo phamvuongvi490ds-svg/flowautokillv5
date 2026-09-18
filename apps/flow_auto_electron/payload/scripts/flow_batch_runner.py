@@ -1769,7 +1769,7 @@ def direct_download_media_from_tile(page, before_ids=None, output_prefix="flow-a
 
 
 def current_flow_download_tile_via_ui(page, resolution="720p", before_ids=None, output_prefix="1", output_dir=None):
-    """Download through current Flow tile hotbar mapping."""
+    """Download through current Flow tile hotbar mapping, including video two-step menus."""
     before = list(before_ids or [])
     try:
         tile_id = page.evaluate(
@@ -1780,21 +1780,52 @@ def current_flow_download_tile_via_ui(page, resolution="720p", before_ids=None, 
               tiles.sort((a,b)=>b.getBoundingClientRect().top-a.getBoundingClientRect().top);
               return tiles[0]?.querySelector('[data-media-id]')?.getAttribute('data-media-id')||null;
             }""", before)
-        if not tile_id: return False, 'current_no_target_tile'
+        if not tile_id:
+            return False, 'current_no_target_tile'
         tile = page.locator(f'flow-grid-tile-container:has([data-media-id="{tile_id}"])').first
+        tile.scroll_into_view_if_needed(timeout=5000)
         tile.hover(timeout=5000)
-        menu = tile.locator('flow-image-hotbar button[aria-label*="Tu"],flow-video-hotbar button[aria-label*="Tu"],flow-image-hotbar button[aria-label*="More" i],flow-video-hotbar button[aria-label*="More" i],button[aria-label="Tuỳ chọn khác"],button[aria-label="Tùy chọn khác"],button[aria-label*="More" i]')
-        if menu.count() < 1: return False, 'current_more_options_missing'
+        time.sleep(0.6)
+        menu = tile.locator(
+            'flow-image-hotbar button[aria-label*="Tu"],flow-video-hotbar button[aria-label*="Tu"],'
+            'flow-image-hotbar button[aria-label*="More" i],flow-video-hotbar button[aria-label*="More" i],'
+            'button[aria-label="Tuỳ chọn khác"],button[aria-label="Tùy chọn khác"],button[aria-label*="More" i]'
+        )
+        if menu.count() < 1:
+            # Some video hotbars only materialize after mousemove over the media area.
+            tile.hover(timeout=5000, position={"x": 40, "y": 40})
+            time.sleep(0.8)
+            if menu.count() < 1:
+                return False, 'current_more_options_missing'
         menu.first.click(timeout=5000)
+        time.sleep(0.5)
         quality = '1K' if str(resolution).upper() == '1K' else ('720p' if str(resolution) in ('720','720p') else str(resolution))
-        option = page.locator('.cdk-overlay-pane button,.cdk-overlay-pane [role="menuitem"]').filter(has_text=quality)
-        option.first.wait_for(state='visible', timeout=5000)
-        with page.expect_download(timeout=30000) as info:
-            option.first.click(timeout=5000)
+
+        def menu_items():
+            return page.locator('.cdk-overlay-pane button,.cdk-overlay-pane [role="menuitem"],.cdk-overlay-pane [role="option"],.cdk-overlay-pane [mat-menu-item]')
+
+        # Video Flow menu is usually two-level: More options -> Download -> quality.
+        quality_option = menu_items().filter(has_text=quality)
+        if quality_option.count() < 1:
+            download_item = menu_items().filter(has_text=re.compile(r"download|tải xuống|tải về|xuống máy", re.I))
+            if download_item.count() < 1:
+                return False, 'current_download_item_missing'
+            download_item.first.click(timeout=5000)
+            time.sleep(0.7)
+            quality_option = menu_items().filter(has_text=quality)
+        if quality_option.count() < 1:
+            # fallback: pick first enabled quality-like item
+            quality_option = menu_items().filter(has_text=re.compile(r"720|1080|1K|2K|4K|MP4|video", re.I))
+        if quality_option.count() < 1:
+            return False, f'current_quality_missing:{quality}'
+        quality_option.first.wait_for(state='visible', timeout=7000)
+        with page.expect_download(timeout=60000) as info:
+            quality_option.first.click(timeout=5000)
         dl=info.value
         tmp=Path(dl.path())
         data=tmp.read_bytes(); ext=_detect_ext_from_bytes(data[:64])
-        if not ext: return False, 'current_invalid_download_bytes'
+        if not ext:
+            return False, 'current_invalid_download_bytes'
         target=_next_numbered_media_target(output_dir=output_dir, ext=ext)
         dl.save_as(str(target)); _remember_media_hash(data,target.name,output_dir=output_dir)
         return True, f'current_saved_as:{target.name}'
