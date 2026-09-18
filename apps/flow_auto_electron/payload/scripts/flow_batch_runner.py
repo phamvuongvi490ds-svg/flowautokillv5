@@ -2038,21 +2038,17 @@ def auto_download_with_retry(page, resolution="720p", timeout_sec=480, before_id
     if res == "720":
         res = "720p"
     while time.time() < deadline:
-        # Video Flow mới ổn định nhất qua hotbar 'Tuỳ chọn khác' trong tile.
+        # Proven old video download flow: target result tile -> context menu -> Download -> quality.
+        # Keep this primary; hotbar mapping is only fallback because Flow video hotbar changes often.
+        ok, step = extension_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
+        last = step
+        if ok:
+            return True, step
         ok, step = current_flow_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
         last = step
         if ok:
             return True, step
-        # Preserve old direct downloader as fallback.
         ok, step = direct_download_media_from_tile(page, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
-        last = step
-        if ok:
-            return True, step
-        try:
-            page.wait_for_timeout(1200)
-        except Exception:
-            pass
-        ok, step = extension_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
         last = step
         if ok:
             return True, step
