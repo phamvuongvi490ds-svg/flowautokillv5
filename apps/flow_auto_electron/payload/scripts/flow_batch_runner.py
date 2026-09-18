@@ -1485,7 +1485,12 @@ def ordered_new_media_ids(page, before_ids=None):
         return []
 
 def prompt_queue_item_ready_now(page, item, claimed_ids=None):
-    """Non-blocking readiness check used while continuous submissions are active."""
+    """Non-blocking readiness check used while continuous submissions are active.
+
+    For video, Flow can expose a completed/downloadable tile before a <video src>
+    appears. Treat any non-pending assigned result tile with media/menu affordance
+    as ready and let the downloader perform the real wait/click.
+    """
     claimed_ids = claimed_ids or set()
     expected = max(1, int(item.get("count") or "1"))
     assigned = [x for x in (item.get("assigned_ids") or []) if x and x not in claimed_ids]
@@ -1497,7 +1502,8 @@ def prompt_queue_item_ready_now(page, item, claimed_ids=None):
             """({ids,kind}) => ids.every(id => {
               const tile=[...document.querySelectorAll('flow-grid-tile-container')].find(t=>t.querySelector('[data-media-id]')?.getAttribute('data-media-id')===id);
               if(!tile || tile.querySelector('flow-pending-tile')) return false;
-              return kind==='video' ? !!tile.querySelector('video[src],video source[src]') : !!tile.querySelector('img[src],canvas');
+              if(kind==='video') return !!tile.querySelector('[data-media-id],video,img,canvas,button,[role="button"],flow-video-hotbar');
+              return !!tile.querySelector('img[src],canvas,[data-media-id]');
             })""",
             {"ids": candidates[:expected], "kind": item.get("media_kind") or "video"},
         ))
@@ -1533,18 +1539,15 @@ def download_prompt_queue_item(page, item, args, expected_count=1, claimed_ids=N
         target_ids = rebased[:expected]
     if len(target_ids) < expected:
         return False, f"missing_prompt_outputs:{len(target_ids)}/{expected}"
-    # Verify locked tiles contain the requested media type. Reference images or
-    # image placeholders must never satisfy a video queue item.
+    # Verify locked tiles are non-pending result tiles. For videos, do not require
+    # <video src>; current Flow often downloads through hotbar before src is exposed.
     kind_ok = page.evaluate(
         """
         ({ids,kind}) => ids.every(id => {
           const tile=Array.from(document.querySelectorAll('flow-grid-tile-container')).find(t=>t.querySelector('[data-media-id]')?.getAttribute('data-media-id')===id);
-          if(!tile)return false;
-          if(kind==='video'){
-            const v=tile.querySelector('video');
-            return !!v && (v.readyState>=1 || !!v.currentSrc || !!v.src || !!v.querySelector('source[src]'));
-          }
-          return !!tile.querySelector('img[src],canvas');
+          if(!tile || tile.querySelector('flow-pending-tile'))return false;
+          if(kind==='video') return !!tile.querySelector('[data-media-id],video,img,canvas,button,[role="button"],flow-video-hotbar');
+          return !!tile.querySelector('img[src],canvas,[data-media-id]');
         })
         """,
         {"ids": target_ids, "kind": item.get("media_kind") or ("image" if item["task_mode"] == "createimage" else "video")},
@@ -2392,11 +2395,8 @@ def run(args):
                                 log_line(f"[flow] completed submit batch of {batch_size}; FIFO download now: {[x['prompt_no'] for x in batch]}")
                                 for item in batch:
                                     license_guard_or_raise(force=True)
-                                    if not prompt_queue_item_ready_now(page, item, claimed_ids=claimed_media_ids):
-                                        item["batch_download_error"] = "not_ready_nonblocking"
-                                        log_line(f"[flow] batch prompt #{item['prompt_no']} not ready; keep FIFO and continue prompt submissions")
-                                        continue
-                                    log_line(f"[flow] batch download ready prompt #{item['prompt_no']} of {batch_size}")
+                                    ready_now = prompt_queue_item_ready_now(page, item, claimed_ids=claimed_media_ids)
+                                    log_line(f"[flow] batch download prompt #{item['prompt_no']} of {batch_size}; ready_now={ready_now}")
                                     dl_ok, dl_step = download_prompt_queue_item(page, item, args, claimed_ids=claimed_media_ids)
                                     if not dl_ok:
                                         item["batch_download_error"] = dl_step
