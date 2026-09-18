@@ -938,6 +938,60 @@ def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retr
         time.sleep(0.6)
     return False
 
+def click_flow_generate_button(page, timeout_sec=15):
+    """Clear text selection and click the exact Flow Generate button inside prompt box."""
+    deadline = time.time() + timeout_sec
+    last = None
+    while time.time() < deadline:
+        try:
+            res = page.evaluate(
+                """
+                () => {
+                  const visible = (el) => {
+                    if (!el) return false;
+                    const st = getComputedStyle(el);
+                    const r = el.getBoundingClientRect();
+                    return st.display !== 'none' && st.visibility !== 'hidden' && r.width > 10 && r.height > 10;
+                  };
+                  const root = document.querySelector('flow-prompt-box.prompt-box-container');
+                  if (!root) return {ok:false, step:'no_prompt_box'};
+                  const editor = root.querySelector('div.ProseMirror[contenteditable="true"], div[contenteditable="true"]');
+                  if (editor) {
+                    const sel = window.getSelection();
+                    try { sel && sel.removeAllRanges(); } catch {}
+                    try {
+                      const range = document.createRange();
+                      range.selectNodeContents(editor);
+                      range.collapse(false);
+                      sel.addRange(range);
+                    } catch {}
+                    editor.dispatchEvent(new Event('change', {bubbles:true, composed:true}));
+                    try { editor.blur(); } catch {}
+                  }
+                  const btn = root.querySelector('flow-generate-icon-button button.generate-icon-button[type="submit"], button.generate-icon-button[type="submit"], button[type="submit"][aria-label="Bắt đầu tạo"]');
+                  if (!visible(btn)) return {ok:false, step:'button_not_visible'};
+                  if (btn.disabled || btn.getAttribute('aria-disabled') === 'true' || btn.className.includes('disabled')) return {ok:false, step:'button_disabled'};
+                  btn.scrollIntoView({block:'center', inline:'center'});
+                  btn.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:1,pointerType:'mouse',isPrimary:true,buttons:1}));
+                  btn.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,buttons:1}));
+                  btn.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:1,pointerType:'mouse',isPrimary:true,buttons:0}));
+                  btn.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,buttons:0}));
+                  btn.click();
+                  return {ok:true, step:'clicked_generate'};
+                }
+                """
+            )
+            last = res
+            if res and res.get('ok'):
+                log_line(f"[flow] clicked generate button via exact composer JS: {res}")
+                return True
+        except Exception as e:
+            last = str(e)
+        time.sleep(0.35)
+    log_line(f"[flow] generate button click failed: {last}")
+    return False
+
+
 def _open_plus_menu(page, prompt_box=None):
     # Exact add button recorded inside the current Flow prompt composer.
     try:
@@ -2286,8 +2340,8 @@ def run(args):
 
                     # Bỏ chọn tỉ lệ theo yêu cầu: giữ nguyên tỉ lệ hiện tại trên UI
                     time.sleep(args.before_create_sec)
-                    btn = find_create_button(page)
-                    btn.click(timeout=5000)
+                    if not click_flow_generate_button(page, timeout_sec=20):
+                        raise RuntimeError("generate_button_not_clicked")
                     submitted = True
                     last_submit_at = time.monotonic()
                     log_line(f"[flow] prompt #{prompt_no} submitted; spacing clock started")
