@@ -2386,7 +2386,7 @@ def run(args):
                     if not submitted_tile_ids and not continuous_batch:
                         raise RuntimeError("submitted_job_tile_not_created")
                     if not submitted_tile_ids:
-                        log_line(f"[flow] prompt #{prompt_no} tile pending; continuous mode will resolve it from pre-submit baseline during FIFO download")
+                        log_line(f"[flow] prompt #{prompt_no} tile pending; FIFO download will use pre-submit baseline")
 
                     if not continuous_batch:
                         time.sleep(2)
@@ -2419,20 +2419,18 @@ def run(args):
                                 # and download that complete batch in FIFO order.
                                 # For delay=3: submit 1,2,3; download 1,2,3; then 4.
                                 batch = delayed_downloads[:batch_size]
-                                log_line(f"[flow] completed submit batch of {batch_size}; FIFO download now: {[x['prompt_no'] for x in batch]}")
-                                for item in batch:
+                                log_line(f"[flow] FORCE batch download after {batch_size} submitted prompts: {[x['prompt_no'] for x in batch]}")
+                                for item in list(batch):
                                     license_guard_or_raise(force=True)
                                     ready_now = prompt_queue_item_ready_now(page, item, claimed_ids=claimed_media_ids)
-                                    log_line(f"[flow] batch download prompt #{item['prompt_no']} of {batch_size}; ready_now={ready_now}")
+                                    log_line(f"[flow] batch download prompt #{item['prompt_no']} of {batch_size}; ready_now={ready_now}; before_ids={len(item.get('before_ids') or [])}; assigned={item.get('assigned_ids') or []}")
                                     dl_ok, dl_step = download_prompt_queue_item(page, item, args, claimed_ids=claimed_media_ids)
                                     if not dl_ok:
                                         item["batch_download_error"] = dl_step
-                                        log_line(f"[flow] batch download deferred prompt #{item['prompt_no']}: {dl_step}; continue submissions")
+                                        log_line(f"[flow] batch download deferred prompt #{item['prompt_no']}: {dl_step}; keep queued")
                                         continue
                                     # Remove only after successful complete download.
-                                    if delayed_downloads and delayed_downloads[0] is item:
-                                        delayed_downloads.pop(0)
-                                    else:
+                                    if item in delayed_downloads:
                                         delayed_downloads.remove(item)
                         elif args.continuous_download:
                             delayed_downloads.append({
