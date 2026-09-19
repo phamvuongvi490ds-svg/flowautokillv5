@@ -1710,6 +1710,11 @@ def _save_media_bytes(data: bytes, output_prefix="flow-auto", output_dir=None):
 
 
 def direct_download_media_from_tile(page, before_ids=None, output_prefix="flow-auto", output_dir=None):
+    """Old-style direct downloader: fetch media bytes from result tile without Flow menu.
+
+    Current Flow video tiles may not expose data-media-id. Do not require it;
+    use visible non-pending flow-video-tile/img/canvas and fetch currentSrc/blob.
+    """
     try:
         media = page.evaluate(
             """
@@ -1730,19 +1735,24 @@ def direct_download_media_from_tile(page, before_ids=None, output_prefix="flow-a
                 return btoa(bin);
               };
               const tiles = [];
-              document.querySelectorAll('flow-grid-tile-container').forEach(tile => {
-                const media = tile.querySelector('[data-media-id],video,video source[src],img,canvas');
-                const id = media?.getAttribute?.('data-media-id');
-                if (!id || (before.size && before.has(id))) return;
-                if (media && visible(tile)) tiles.push({tile, media, top: tile.getBoundingClientRect().top});
+              document.querySelectorAll('flow-grid-tile-container').forEach((tile, index) => {
+                if (!visible(tile) || tile.querySelector('flow-pending-tile')) return;
+                const id = tile.querySelector('[data-media-id]')?.getAttribute('data-media-id') || tile.getAttribute('data-tile-id') || '';
+                if (id && before.size && before.has(id)) return;
+                const video = tile.querySelector('flow-video-tile video, video, video source[src]');
+                const image = tile.querySelector('[data-media-id], img[src], img, canvas');
+                const media = video || image;
+                if (!media) return;
+                tiles.push({tile, media, id, index, top: tile.getBoundingClientRect().top, isVideo: !!video});
               });
               if (!tiles.length) return null;
-              tiles.sort((a,b) => b.top - a.top);
+              // Prefer newest generated video tile, then newest media tile.
+              tiles.sort((a,b) => (Number(b.isVideo)-Number(a.isVideo)) || (b.top-a.top));
               const m = tiles[0].media;
               if (m.tagName === 'CANVAS') return {kind:'base64', data:m.toDataURL('image/png').split(',')[1] || ''};
               const host = m.tagName === 'SOURCE' ? m.closest('video') : m;
               const url = host?.currentSrc || m.currentSrc || m.src || m.getAttribute('src') || host?.querySelector?.('source[src]')?.src || '';
-              if (!url) return null;
+              if (!url) return {kind:'no_url', isVideo: tiles[0].isVideo, id: tiles[0].id || '', index: tiles[0].index};
               if (url.startsWith('blob:') || url.startsWith('data:')) {
                 if (url.startsWith('data:')) return {kind:'base64', data:url.split(',')[1] || ''};
                 return {kind:'base64', data:await toB64(url)};
@@ -1753,14 +1763,16 @@ def direct_download_media_from_tile(page, before_ids=None, output_prefix="flow-a
             {"beforeIds": list(before_ids or [])},
         )
         if not media:
-            return False, "direct_no_media_url"
+            return False, "direct_no_media_tile"
+        if media.get("kind") == "no_url":
+            return False, f"direct_no_media_url:video={media.get('isVideo')} index={media.get('index')}"
         if media.get("kind") == "base64":
             data = base64.b64decode(media.get("data") or "")
             return _save_media_bytes(data, output_prefix=output_prefix, output_dir=output_dir)
         media_url = media.get("url") or ""
         if not media_url:
             return False, "direct_no_media_url"
-        resp = page.context.request.get(media_url, timeout=60000)
+        resp = page.context.request.get(media_url, timeout=120000)
         if not resp.ok:
             return False, f"direct_http_{resp.status}"
         return _save_media_bytes(resp.body(), output_prefix=output_prefix, output_dir=output_dir)
@@ -2027,16 +2039,17 @@ def auto_download_with_retry(page, resolution="720p", timeout_sec=480, before_id
     if res == "720":
         res = "720p"
     while time.time() < deadline:
-        # Recorded current Flow UI: video hotbar More options -> 720p.
+        # Proven old behavior: fetch media bytes directly, no Flow menu click.
+        ok, step = direct_download_media_from_tile(page, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
+        last = step
+        if ok:
+            return True, step
+        # Current Flow UI fallback: video hotbar More options -> 720p.
         ok, step = current_flow_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
         last = step
         if ok:
             return True, step
         ok, step = extension_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
-        last = step
-        if ok:
-            return True, step
-        ok, step = direct_download_media_from_tile(page, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
         last = step
         if ok:
             return True, step
