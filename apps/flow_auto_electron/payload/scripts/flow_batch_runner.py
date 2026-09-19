@@ -1769,66 +1769,55 @@ def direct_download_media_from_tile(page, before_ids=None, output_prefix="flow-a
 
 
 def current_flow_download_tile_via_ui(page, resolution="720p", before_ids=None, output_prefix="1", output_dir=None):
-    """Download through current Flow tile hotbar mapping, including video two-step menus."""
+    """Download via recorded current Flow video hotbar: More options -> 720p."""
     before = list(before_ids or [])
     try:
-        tile_id = page.evaluate(
+        target = page.evaluate(
             """before => {
-              const old=new Set(before||[]), visible=el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>80&&r.height>60&&s.display!=='none'&&s.visibility!=='hidden'};
-              const tiles=[...document.querySelectorAll('flow-grid-tile-container')]
-                .filter(t=>{const id=t.querySelector('[data-media-id]')?.getAttribute('data-media-id');return id&&!old.has(id)&&visible(t)&&!t.querySelector('flow-pending-tile')&&(t.querySelector('video,img,canvas,[data-media-id]'));});
-              tiles.sort((a,b)=>b.getBoundingClientRect().top-a.getBoundingClientRect().top);
-              return tiles[0]?.querySelector('[data-media-id]')?.getAttribute('data-media-id')||null;
+              const old=new Set(before||[]);
+              const visible=el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>80&&r.height>60&&s.display!=='none'&&s.visibility!=='hidden'};
+              const all=[...document.querySelectorAll('flow-grid-tile-container')];
+              const candidates=all.map((t,i)=>({t,i,id:t.querySelector('[data-media-id]')?.getAttribute('data-media-id')||''}))
+                .filter(x=>!x.id || !old.has(x.id))
+                .filter(x=>visible(x.t)&&!x.t.querySelector('flow-pending-tile'))
+                .filter(x=>x.t.querySelector('flow-video-tile,flow-video-hotbar,video'));
+              // newest/current Flow video tiles are usually highest in the visible grid after submit batch
+              candidates.sort((a,b)=>b.t.getBoundingClientRect().top-a.t.getBoundingClientRect().top);
+              const x=candidates[0];
+              return x ? {index:x.i,id:x.id,count:candidates.length} : null;
             }""", before)
-        if not tile_id:
-            return False, 'current_no_target_tile'
-        tile = page.locator(f'flow-grid-tile-container:has([data-media-id="{tile_id}"])').first
+        if not target:
+            return False, 'current_no_video_tile'
+        tile = page.locator('flow-grid-tile-container').nth(int(target.get('index')))
         tile.scroll_into_view_if_needed(timeout=5000)
         tile.hover(timeout=5000)
-        time.sleep(0.6)
-        menu = tile.locator(
-            'flow-image-hotbar button[aria-label*="Tu"],flow-video-hotbar button[aria-label*="Tu"],'
-            'flow-image-hotbar button[aria-label*="More" i],flow-video-hotbar button[aria-label*="More" i],'
-            'button[aria-label="Tuỳ chọn khác"],button[aria-label="Tùy chọn khác"],button[aria-label*="More" i]'
-        )
+        time.sleep(0.7)
+        menu = tile.locator('flow-video-hotbar button[aria-label="Tuỳ chọn khác"],flow-video-hotbar button[aria-label="Tùy chọn khác"],flow-video-hotbar button[aria-label*="Tu"],flow-video-hotbar button[aria-label*="More" i],button[aria-label="Tuỳ chọn khác"],button[aria-label="Tùy chọn khác"]')
         if menu.count() < 1:
-            # Some video hotbars only materialize after mousemove over the media area.
             tile.hover(timeout=5000, position={"x": 40, "y": 40})
             time.sleep(0.8)
-            if menu.count() < 1:
-                return False, 'current_more_options_missing'
+        if menu.count() < 1:
+            return False, 'current_more_options_missing'
         menu.first.click(timeout=5000)
-        time.sleep(0.5)
+        time.sleep(0.7)
         quality = '1K' if str(resolution).upper() == '1K' else ('720p' if str(resolution) in ('720','720p') else str(resolution))
-
-        def menu_items():
-            return page.locator('.cdk-overlay-pane button,.cdk-overlay-pane [role="menuitem"],.cdk-overlay-pane [role="option"],.cdk-overlay-pane [mat-menu-item]')
-
-        # Video Flow menu is usually two-level: More options -> Download -> quality.
-        quality_option = menu_items().filter(has_text=quality)
+        items = page.locator('.cdk-overlay-pane button.mat-mdc-menu-item,.cdk-overlay-pane [role="menuitem"],.cdk-overlay-pane button')
+        quality_option = items.filter(has_text=re.compile(re.escape(quality), re.I))
         if quality_option.count() < 1:
-            download_item = menu_items().filter(has_text=re.compile(r"download|tải xuống|tải về|xuống máy", re.I))
-            if download_item.count() < 1:
-                return False, 'current_download_item_missing'
-            download_item.first.click(timeout=5000)
-            time.sleep(0.7)
-            quality_option = menu_items().filter(has_text=quality)
-        if quality_option.count() < 1:
-            # fallback: pick first enabled quality-like item
-            quality_option = menu_items().filter(has_text=re.compile(r"720|1080|1K|2K|4K|MP4|video", re.I))
+            quality_option = items.filter(has_text=re.compile(r"720p|720|1080p|1080|Kích thước gốc|Kích thước gốc", re.I))
         if quality_option.count() < 1:
             return False, f'current_quality_missing:{quality}'
         quality_option.first.wait_for(state='visible', timeout=7000)
-        with page.expect_download(timeout=60000) as info:
+        with page.expect_download(timeout=300000) as info:
             quality_option.first.click(timeout=5000)
         dl=info.value
         tmp=Path(dl.path())
         data=tmp.read_bytes(); ext=_detect_ext_from_bytes(data[:64])
         if not ext:
             return False, 'current_invalid_download_bytes'
-        target=_next_numbered_media_target(output_dir=output_dir, ext=ext)
-        dl.save_as(str(target)); _remember_media_hash(data,target.name,output_dir=output_dir)
-        return True, f'current_saved_as:{target.name}'
+        target_path=_next_numbered_media_target(output_dir=output_dir, ext=ext)
+        dl.save_as(str(target_path)); _remember_media_hash(data,target_path.name,output_dir=output_dir)
+        return True, f'current_saved_as:{target_path.name}'
     except Exception as e:
         return False, f'current_exception:{e}'
 
@@ -2038,13 +2027,12 @@ def auto_download_with_retry(page, resolution="720p", timeout_sec=480, before_id
     if res == "720":
         res = "720p"
     while time.time() < deadline:
-        # Proven old video download flow: target result tile -> context menu -> Download -> quality.
-        # Keep this primary; hotbar mapping is only fallback because Flow video hotbar changes often.
-        ok, step = extension_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
+        # Recorded current Flow UI: video hotbar More options -> 720p.
+        ok, step = current_flow_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
         last = step
         if ok:
             return True, step
-        ok, step = current_flow_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
+        ok, step = extension_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
         last = step
         if ok:
             return True, step
