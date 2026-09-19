@@ -1349,24 +1349,28 @@ def wait_reference_upload_settled(page, timeout_sec=45):
     return False
 
 def snapshot_media_tiles(page):
-    """Snapshot output result tiles only; exclude reference picker/composer media."""
+    """Snapshot visible output tile keys. Use data-media-id when present, else stable DOM index key."""
     try:
         return set(page.evaluate(
             """
             () => {
               const visible=el=>{if(!el)return false;const st=getComputedStyle(el),r=el.getBoundingClientRect();return st.display!=='none'&&st.visibility!=='hidden'&&r.width>20&&r.height>20;};
-              const isOutput=tile=>{
-                if(!visible(tile) || tile.closest('[role="dialog"],[data-radix-popper-content-wrapper],form')) return false;
+              const out=[];
+              Array.from(document.querySelectorAll('flow-grid-tile-container')).forEach((tile,i)=>{
+                if(!visible(tile) || tile.closest('[role="dialog"],[data-radix-popper-content-wrapper],form') || tile.querySelector('flow-pending-tile')) return;
                 const r=tile.getBoundingClientRect();
-                const hasResult=!!tile.querySelector('video,canvas,img[src*="media.getMediaUrlRedirect"],button,[role="button"]');
-                return hasResult && r.width>120 && r.height>80;
-              };
-              return Array.from(document.querySelectorAll('flow-grid-tile-container')).filter(isOutput).map(t=>t.querySelector('[data-media-id]')?.getAttribute('data-media-id')).filter(Boolean);
+                const hasResult=!!tile.querySelector('flow-video-tile,flow-image-tile,video,canvas,img,button,[role="button"],[data-media-id]');
+                if(!hasResult || r.width<=120 || r.height<=80) return;
+                const id=tile.querySelector('[data-media-id]')?.getAttribute('data-media-id') || tile.getAttribute('data-tile-id') || `tile:${i}:${Math.round(r.top)}:${Math.round(r.left)}`;
+                out.push(id);
+              });
+              return out;
             }
             """
         ) or [])
     except Exception:
         return set()
+
 
 def capture_submitted_tile_ids(page, before_ids=None, expected_count=1, timeout_sec=45):
     """Capture stable Flow tile IDs created by this submit before later prompts can overlap."""
@@ -1417,14 +1421,15 @@ def wait_new_completed_media(page, before_ids=None, expected_count=1, timeout_se
                     return r.width > 20 && r.height > 20;
                   };
                   const beforeSet = new Set(before || []);
-                  const nodes = Array.from(document.querySelectorAll('flow-grid-tile-container')).filter(visible);
                   const ready = [];
-                  for (const el of nodes) {
-                    const media=el.querySelector('[data-media-id]');
-                    const id=media?.getAttribute('data-media-id');
-                    const hasMedia=!!media && !el.querySelector('flow-pending-tile');
-                    if (id && !beforeSet.has(id) && hasMedia) ready.push(id);
-                  }
+                  Array.from(document.querySelectorAll('flow-grid-tile-container')).forEach((el,i)=>{
+                    if(!visible(el) || el.querySelector('flow-pending-tile')) return;
+                    const r=el.getBoundingClientRect();
+                    const hasMedia=!!el.querySelector('flow-video-tile,flow-image-tile,video,canvas,img,[data-media-id],flow-video-hotbar,flow-image-hotbar');
+                    if(!hasMedia || r.width<=120 || r.height<=80) return;
+                    const id=el.querySelector('[data-media-id]')?.getAttribute('data-media-id') || el.getAttribute('data-tile-id') || `tile:${i}:${Math.round(r.top)}:${Math.round(r.left)}`;
+                    if(!beforeSet.has(id)) ready.push(id);
+                  });
                   const txt = (document.body?.innerText || '').toLowerCase();
                   const queueFull = txt.includes('queue') && (txt.includes('full') || txt.includes('đầy'));
                   const policy = txt.includes('policy') || txt.includes('chính sách');
@@ -1447,7 +1452,6 @@ def wait_new_completed_media(page, before_ids=None, expected_count=1, timeout_se
     return False, f"timeout_media_count_{last_count}"
 
 
-
 def ordered_new_media_ids(page, before_ids=None):
     before_ids = set(before_ids or [])
     try:
@@ -1463,17 +1467,17 @@ def ordered_new_media_ids(page, before_ids=None):
               };
               const beforeSet = new Set(before || []);
               const out=[];
-              const nodes = Array.from(document.querySelectorAll('flow-grid-tile-container')).filter(visible);
+              const nodes = Array.from(document.querySelectorAll('flow-grid-tile-container'));
               for (let i=0;i<nodes.length;i++){
                 const tile=nodes[i];
-                const media=tile.querySelector('[data-media-id]');
-                const id=media?.getAttribute('data-media-id');
-                if(id && !beforeSet.has(id) && media){
-                  const r=tile.getBoundingClientRect();
-                  out.push({id, top:r.top, left:r.left, idx:i});
-                }
+                if(!visible(tile) || tile.querySelector('flow-pending-tile')) continue;
+                const hasMedia=!!tile.querySelector('flow-video-tile,flow-image-tile,video,canvas,img,[data-media-id],flow-video-hotbar,flow-image-hotbar');
+                if(!hasMedia) continue;
+                const r=tile.getBoundingClientRect();
+                if(r.width<=120 || r.height<=80) continue;
+                const id=tile.querySelector('[data-media-id]')?.getAttribute('data-media-id') || tile.getAttribute('data-tile-id') || `tile:${i}:${Math.round(r.top)}:${Math.round(r.left)}`;
+                if(id && !beforeSet.has(id)) out.push({id, top:r.top, left:r.left, idx:i});
               }
-              // Flow commonly puts newest result near the top. For prompt order, use older/newer order by screen position: bottom/later list first.
               out.sort((a,b)=> (b.top-a.top) || (a.left-b.left) || (a.idx-b.idx));
               return out.map(x=>x.id);
             }
@@ -1483,6 +1487,7 @@ def ordered_new_media_ids(page, before_ids=None):
         return [x for x in (rows or []) if x]
     except Exception:
         return []
+
 
 def prompt_queue_item_ready_now(page, item, claimed_ids=None):
     """Non-blocking readiness check used while continuous submissions are active.
@@ -1539,21 +1544,8 @@ def download_prompt_queue_item(page, item, args, expected_count=1, claimed_ids=N
         target_ids = rebased[:expected]
     if len(target_ids) < expected:
         return False, f"missing_prompt_outputs:{len(target_ids)}/{expected}"
-    # Verify locked tiles are non-pending result tiles. For videos, do not require
-    # <video src>; current Flow often downloads through hotbar before src is exposed.
-    kind_ok = page.evaluate(
-        """
-        ({ids,kind}) => ids.every(id => {
-          const tile=Array.from(document.querySelectorAll('flow-grid-tile-container')).find(t=>t.querySelector('[data-media-id]')?.getAttribute('data-media-id')===id);
-          if(!tile || tile.querySelector('flow-pending-tile'))return false;
-          if(kind==='video') return !!tile.querySelector('[data-media-id],video,img,canvas,button,[role="button"],flow-video-hotbar');
-          return !!tile.querySelector('img[src],canvas,[data-media-id]');
-        })
-        """,
-        {"ids": target_ids, "kind": item.get("media_kind") or ("image" if item["task_mode"] == "createimage" else "video")},
-    )
-    if not kind_ok:
-        return False, f"locked_tiles_not_ready_as_{item.get('media_kind') or item['task_mode']}"
+    # IDs from ordered_new_media_ids already represent visible non-pending result tiles;
+    # do not re-lock by data-media-id because current Flow video tiles may not expose it.
     download_resolution = "1K" if item["task_mode"] == "createimage" else args.download_resolution
     downloaded = 0
     # Download each expected output separately. The old implementation called
