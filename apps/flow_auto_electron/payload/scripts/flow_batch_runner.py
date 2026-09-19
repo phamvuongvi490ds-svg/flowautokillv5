@@ -1551,8 +1551,15 @@ def download_prompt_queue_item(page, item, args, expected_count=1, claimed_ids=N
     # Download each expected output separately. The old implementation called
     # the downloader once, so count=2..4 commonly saved only one file.
     all_visible = set(ordered_new_media_ids(page, before_ids=item["before_ids"])) | set(snapshot_media_tiles(page))
+    is_video_item = (item.get("media_kind") or ("image" if item["task_mode"] == "createimage" else "video")) == "video"
     for output_idx, target_id in enumerate(target_ids, 1):
-        scoped_before = set(item["before_ids"]) | set(claimed_ids) | (all_visible - {target_id})
+        if is_video_item:
+            # Old working behavior: do not over-scope video by tile IDs. Current Flow
+            # video tiles may not expose media IDs, so scoped exclusions can hide the
+            # only downloadable video. Dedup is handled by file/hash save helpers.
+            scoped_before = set()
+        else:
+            scoped_before = set(item["before_ids"]) | set(claimed_ids) | (all_visible - {target_id})
         ok, step = auto_download_with_retry(
             page,
             resolution=download_resolution,
@@ -1561,6 +1568,16 @@ def download_prompt_queue_item(page, item, args, expected_count=1, claimed_ids=N
             output_prefix=f"{item.get('output_prefix') or ('prompt_' + str(item['prompt_no']))}_{output_idx}",
             output_dir=args.output_dir,
         )
+        if not ok and is_video_item:
+            log_line(f"[flow] scoped video download failed for prompt #{item['prompt_no']}: {step}; retry global old-style")
+            ok, step = auto_download_with_retry(
+                page,
+                resolution=download_resolution,
+                timeout_sec=180,
+                before_ids=set(),
+                output_prefix=f"{item.get('output_prefix') or ('prompt_' + str(item['prompt_no']))}_{output_idx}",
+                output_dir=args.output_dir,
+            )
         if not ok:
             return False, f"output_{output_idx}/{expected}:{step}"
         claimed_ids.add(target_id)
