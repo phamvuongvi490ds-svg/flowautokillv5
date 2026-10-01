@@ -855,6 +855,7 @@ def human_type_text(page, text: str, base_delay_ms: float = 12.0):
             time.sleep(random.uniform(0.12, 0.65))
 
 def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retries: int = 3):
+    """Insert prompt once and verify text without destructive retry after text is present."""
     prompt = (prompt or "").strip()
     if not prompt:
         return True
@@ -863,13 +864,21 @@ def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retr
     for attempt in range(1, retries + 1):
         try:
             box = find_input_box(page)
+            existing = box.evaluate("el => (el.innerText || el.textContent || '').trim()") or ""
+            normalized_existing = " ".join(str(existing).split())
+            if len(normalized_existing) >= min(5, len(expected)) and normalized_existing[:40] == expected[:40]:
+                try:
+                    page.evaluate("""() => { const s=window.getSelection(); try{s&&s.removeAllRanges()}catch{} }""")
+                except Exception:
+                    pass
+                log_line(f"[flow] prompt already present; skip destructive retry attempt {attempt}: length={len(normalized_existing)}")
+                return True
+
             focused = focus_prompt_box(page, box)
             if focused:
                 modifier = "Meta" if sys.platform == "darwin" else "Control"
                 page.keyboard.press(f"{modifier}+A")
                 page.keyboard.press("Backspace")
-                # Paste the complete prompt in one ProseMirror transaction.
-                # This behaves like Ctrl+V without replacing the user's OS clipboard.
                 pasted = box.evaluate(
                     """(el, text) => {
                       try {
@@ -881,18 +890,16 @@ def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retr
                     }""",
                     prompt,
                 )
-                time.sleep(0.25)
+                time.sleep(0.35)
                 current = box.evaluate("el => (el.innerText || el.textContent || '').trim()") or ""
                 if " ".join(str(current).split())[:40] != expected[:40]:
                     page.keyboard.insert_text(prompt)
                 log_line(f"[flow] prompt pasted in one operation: event={pasted} length={len(prompt)}")
-                time.sleep(0.25)
+                time.sleep(0.35)
 
             text = box.evaluate("el => (el.innerText || el.textContent || '').trim()") or ""
             normalized = " ".join(str(text).split())
             if normalized[:40] != expected[:40]:
-                # Focus-independent contenteditable fallback. execCommand emits
-                # the browser editing transaction that ProseMirror observes.
                 result = box.evaluate(
                     """(el, text) => {
                       el.focus({preventScroll:true});
@@ -921,22 +928,18 @@ def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retr
                 normalized = " ".join(str(box.evaluate("el => (el.innerText || el.textContent || '').trim()") or "").split())
 
             if len(normalized) >= min(5, len(expected)) and normalized[:40] == expected[:40]:
-                # Flow must also enable its exact submit button; text in DOM
-                # alone is not enough to prove ProseMirror accepted the edit.
-                submit = page.locator(
-                    'flow-prompt-box.prompt-box-container flow-generate-icon-button '
-                    'button.generate-icon-button[type="submit"][aria-label="Bắt đầu tạo"]'
-                )
-                enabled = submit.count() == 1 and submit.is_visible() and submit.is_enabled()
-                log_line(f"[flow] prompt verified attempt {attempt}: enabled={enabled} length={len(normalized)}")
-                if enabled:
-                    return True
-            else:
-                log_line(f"[flow] prompt verify failed attempt {attempt}: length={len(normalized)}")
+                try:
+                    page.evaluate("""() => { const s=window.getSelection(); try{s&&s.removeAllRanges()}catch{} }""")
+                except Exception:
+                    pass
+                log_line(f"[flow] prompt text verified attempt {attempt}: length={len(normalized)}")
+                return True
+            log_line(f"[flow] prompt verify failed attempt {attempt}: length={len(normalized)}")
         except Exception as e:
             log_line(f"[flow] prompt input attempt {attempt} failed: {e}")
         time.sleep(0.6)
     return False
+
 
 def click_flow_generate_button(page, timeout_sec=15):
     """Clear text selection and click the exact Flow Generate button inside prompt box."""
