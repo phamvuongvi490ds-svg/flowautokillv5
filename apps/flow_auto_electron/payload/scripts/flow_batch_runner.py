@@ -942,7 +942,7 @@ def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retr
 
 
 def click_flow_generate_button(page, timeout_sec=15):
-    """Clear text selection and click the exact Flow Generate button inside prompt box."""
+    """Click the exact Flow Generate button without touching prompt selection."""
     deadline = time.time() + timeout_sec
     last = None
     while time.time() < deadline:
@@ -958,35 +958,31 @@ def click_flow_generate_button(page, timeout_sec=15):
                   };
                   const root = document.querySelector('flow-prompt-box.prompt-box-container');
                   if (!root) return {ok:false, step:'no_prompt_box'};
+                  try { const s = window.getSelection(); s && s.removeAllRanges(); } catch {}
                   const editor = root.querySelector('div.ProseMirror[contenteditable="true"], div[contenteditable="true"]');
                   if (editor) {
-                    const sel = window.getSelection();
-                    try { sel && sel.removeAllRanges(); } catch {}
-                    try {
-                      const range = document.createRange();
-                      range.selectNodeContents(editor);
-                      range.collapse(false);
-                      sel.addRange(range);
-                    } catch {}
+                    // Notify Flow/ProseMirror only. Do not select, collapse, Ctrl+A, or edit.
+                    editor.dispatchEvent(new InputEvent('input', {bubbles:true, composed:true, inputType:'insertText', data:null}));
                     editor.dispatchEvent(new Event('change', {bubbles:true, composed:true}));
-                    try { editor.blur(); } catch {}
                   }
                   const btn = root.querySelector('flow-generate-icon-button button.generate-icon-button[type="submit"], button.generate-icon-button[type="submit"], button[type="submit"][aria-label="Bắt đầu tạo"]');
                   if (!visible(btn)) return {ok:false, step:'button_not_visible'};
                   if (btn.disabled || btn.getAttribute('aria-disabled') === 'true' || btn.className.includes('disabled')) return {ok:false, step:'button_disabled'};
                   btn.scrollIntoView({block:'center', inline:'center'});
-                  btn.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:1,pointerType:'mouse',isPrimary:true,buttons:1}));
-                  btn.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,buttons:1}));
-                  btn.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:1,pointerType:'mouse',isPrimary:true,buttons:0}));
-                  btn.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,buttons:0}));
-                  btn.click();
-                  return {ok:true, step:'clicked_generate'};
+                  const rect = btn.getBoundingClientRect();
+                  const opts = {bubbles:true,cancelable:true,clientX:rect.left+rect.width/2,clientY:rect.top+rect.height/2,buttons:1};
+                  btn.dispatchEvent(new PointerEvent('pointerdown',{...opts,pointerId:1,pointerType:'mouse',isPrimary:true}));
+                  btn.dispatchEvent(new MouseEvent('mousedown',opts));
+                  btn.dispatchEvent(new PointerEvent('pointerup',{...opts,buttons:0,pointerId:1,pointerType:'mouse',isPrimary:true}));
+                  btn.dispatchEvent(new MouseEvent('mouseup',{...opts,buttons:0}));
+                  btn.dispatchEvent(new MouseEvent('click',{...opts,buttons:0}));
+                  return {ok:true, step:'clicked_generate_no_selection'};
                 }
                 """
             )
             last = res
             if res and res.get('ok'):
-                log_line(f"[flow] clicked generate button via exact composer JS: {res}")
+                log_line(f"[flow] clicked generate button without prompt selection: {res}")
                 return True
         except Exception as e:
             last = str(e)
