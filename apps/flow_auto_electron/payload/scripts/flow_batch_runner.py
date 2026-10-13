@@ -967,47 +967,61 @@ def type_prompt_with_verify(page, prompt: str, type_delay_ms: float = 12.0, retr
 
 
 def click_flow_generate_button(page, timeout_sec=15):
-    """Click the exact Flow Generate button without touching prompt selection."""
+    """Physically click the exact Flow Generate button without editing prompt text."""
     deadline = time.time() + timeout_sec
+    selectors = [
+        'flow-prompt-box.prompt-box-container flow-generate-icon-button button.generate-icon-button[type="submit"]',
+        'flow-prompt-box.prompt-box-container button.generate-icon-button[type="submit"]',
+        'flow-prompt-box.prompt-box-container button[type="submit"][aria-label="Bắt đầu tạo"]',
+        'flow-prompt-box.prompt-box-container button[type="submit"]',
+    ]
     last = None
     while time.time() < deadline:
         try:
+            try:
+                page.evaluate("""() => { const s=window.getSelection(); try{s&&s.removeAllRanges()}catch{} }""")
+            except Exception:
+                pass
+            for sel in selectors:
+                btn = page.locator(sel).first
+                try:
+                    if btn.count() < 1:
+                        continue
+                    if not btn.is_visible(timeout=1000):
+                        last = f"not_visible:{sel}"
+                        continue
+                    disabled = btn.evaluate("el => !!el.disabled || el.getAttribute('aria-disabled') === 'true' || String(el.className||'').includes('disabled')")
+                    if disabled:
+                        last = f"disabled:{sel}"
+                        continue
+                    try:
+                        btn.scroll_into_view_if_needed(timeout=1500)
+                    except Exception:
+                        pass
+                    # Real Playwright click first. Flow/Angular may ignore synthetic JS click events.
+                    btn.click(timeout=5000, force=True)
+                    log_line(f"[flow] clicked generate button via physical Playwright click: {sel}")
+                    return True
+                except Exception as e:
+                    last = f"{sel}:{e}"
+                    continue
+            # Last-resort DOM click, but only after physical click failed.
             res = page.evaluate(
                 """
                 () => {
-                  const visible = (el) => {
-                    if (!el) return false;
-                    const st = getComputedStyle(el);
-                    const r = el.getBoundingClientRect();
-                    return st.display !== 'none' && st.visibility !== 'hidden' && r.width > 10 && r.height > 10;
-                  };
-                  const root = document.querySelector('flow-prompt-box.prompt-box-container');
-                  if (!root) return {ok:false, step:'no_prompt_box'};
-                  try { const s = window.getSelection(); s && s.removeAllRanges(); } catch {}
-                  const editor = root.querySelector('div.ProseMirror[contenteditable="true"], div[contenteditable="true"]');
-                  if (editor) {
-                    // Notify Flow/ProseMirror only. Do not select, collapse, Ctrl+A, or edit.
-                    editor.dispatchEvent(new InputEvent('input', {bubbles:true, composed:true, inputType:'insertText', data:null}));
-                    editor.dispatchEvent(new Event('change', {bubbles:true, composed:true}));
-                  }
-                  const btn = root.querySelector('flow-generate-icon-button button.generate-icon-button[type="submit"], button.generate-icon-button[type="submit"], button[type="submit"][aria-label="Bắt đầu tạo"]');
-                  if (!visible(btn)) return {ok:false, step:'button_not_visible'};
-                  if (btn.disabled || btn.getAttribute('aria-disabled') === 'true' || btn.className.includes('disabled')) return {ok:false, step:'button_disabled'};
-                  btn.scrollIntoView({block:'center', inline:'center'});
-                  const rect = btn.getBoundingClientRect();
-                  const opts = {bubbles:true,cancelable:true,clientX:rect.left+rect.width/2,clientY:rect.top+rect.height/2,buttons:1};
-                  btn.dispatchEvent(new PointerEvent('pointerdown',{...opts,pointerId:1,pointerType:'mouse',isPrimary:true}));
-                  btn.dispatchEvent(new MouseEvent('mousedown',opts));
-                  btn.dispatchEvent(new PointerEvent('pointerup',{...opts,buttons:0,pointerId:1,pointerType:'mouse',isPrimary:true}));
-                  btn.dispatchEvent(new MouseEvent('mouseup',{...opts,buttons:0}));
-                  btn.dispatchEvent(new MouseEvent('click',{...opts,buttons:0}));
-                  return {ok:true, step:'clicked_generate_no_selection'};
+                  const root=document.querySelector('flow-prompt-box.prompt-box-container');
+                  if(!root) return {ok:false, step:'no_prompt_box'};
+                  const btn=root.querySelector('flow-generate-icon-button button.generate-icon-button[type="submit"], button.generate-icon-button[type="submit"], button[type="submit"]');
+                  if(!btn) return {ok:false, step:'no_button'};
+                  if(btn.disabled || btn.getAttribute('aria-disabled')==='true') return {ok:false, step:'disabled'};
+                  btn.click();
+                  return {ok:true, step:'dom_click'};
                 }
                 """
             )
             last = res
             if res and res.get('ok'):
-                log_line(f"[flow] clicked generate button without prompt selection: {res}")
+                log_line(f"[flow] clicked generate button via DOM fallback: {res}")
                 return True
         except Exception as e:
             last = str(e)
