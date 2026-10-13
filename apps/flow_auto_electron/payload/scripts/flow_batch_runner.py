@@ -730,7 +730,11 @@ def get_box_text(box):
 
 
 def clear_attached_references(page, timeout_sec=8):
-    """Remove only attachments inside the prompt composer and confirm it is empty."""
+    """Best-effort remove prompt composer attachments.
+
+    Do not block the next prompt if Flow keeps a stale media element/result tile in
+    DOM. Old working behavior was best-effort, not fail-closed.
+    """
     composer = page.locator('flow-prompt-box.prompt-box-container')
     try:
         buttons = composer.locator(
@@ -738,22 +742,43 @@ def clear_attached_references(page, timeout_sec=8):
             'button[title*="Xóa" i],button[title*="Remove" i]'
         )
         for i in range(buttons.count() - 1, -1, -1):
-            button = buttons.nth(i)
-            if button.is_visible():
-                button.click(timeout=3000)
-                time.sleep(0.25)
-        deadline=time.time()+timeout_sec
-        while time.time()<deadline:
-            media=composer.locator('[data-media-id],img:not([class*="icon"]),video')
-            if media.count()==0:
-                return True
-            time.sleep(0.3)
-        log_line(f"[flow] stale composer attachments remain: {media.count()}")
-        return False
+            try:
+                button = buttons.nth(i)
+                if button.is_visible():
+                    button.click(timeout=1500)
+                    time.sleep(0.15)
+            except Exception:
+                pass
+        # Quick check only for real attachment chips/buttons inside prompt box.
+        try:
+            chips = composer.locator('flow-media-chip,flow-attachment-chip,[class*="attachment"],[class*="media-chip"]')
+            if chips.count() > 0:
+                log_line(f"[flow] prompt attachment chips remain after best-effort clear: {chips.count()}")
+        except Exception:
+            pass
+        return True
     except Exception as e:
-        log_line(f"[flow] clear composer attachments failed: {e}")
-        return False
+        log_line(f"[flow] clear composer attachments best-effort warning: {e}")
+        return True
 
+
+def classify_flow_error(page):
+    """Best-effort Flow error classifier used after submit.
+
+    Must never raise; missing this function broke post-submit logic and caused
+    false retries after a successful Generate click.
+    """
+    try:
+        txt = page.evaluate("() => (document.body?.innerText || '').toLowerCase()") or ""
+        if any(x in txt for x in ["policy", "chính sách", "violat", "vi phạm", "safety", "an toàn"]):
+            return "policy"
+        if ("queue" in txt and "full" in txt) or "hàng đợi" in txt or "quá nhiều" in txt:
+            return "queue_full"
+        if any(x in txt for x in ["failed", "error", "lỗi", "không thể tạo"]):
+            return "generic"
+    except Exception:
+        pass
+    return None
 
 def close_open_menus(page):
     try:
@@ -2303,8 +2328,8 @@ def run(args):
                     # Keep a successfully attached reference across retries of
                     # this same prompt; clearing/uploading again creates duplicates.
                     clear_prompt_box(page, box)
-                    if not reference_attached and not clear_attached_references(page):
-                        raise RuntimeError("stale_reference_not_cleared")
+                    if not reference_attached:
+                        clear_attached_references(page)
 
                     prompt_to_type = prompt
                     matched_refs = []
