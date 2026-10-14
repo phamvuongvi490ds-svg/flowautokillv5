@@ -1828,55 +1828,87 @@ def direct_download_media_from_tile(page, before_ids=None, output_prefix="flow-a
 
 
 def current_flow_download_tile_via_ui(page, resolution="720p", before_ids=None, output_prefix="1", output_dir=None):
-    """Download via recorded current Flow video hotbar: More options -> 720p."""
-    before = list(before_ids or [])
+    """Download video through current Flow hotbar by trying every visible video tile.
+
+    Recorded manual flow: hover video tile -> Tuỳ chọn khác -> 720p/Kích thước gốc.
+    Do not depend on data-media-id or newest-first ordering.
+    """
+    before = set(before_ids or [])
+    quality = '1K' if str(resolution).upper() == '1K' else ('720p' if str(resolution) in ('720','720p') else str(resolution))
     try:
-        target = page.evaluate(
+        candidates = page.evaluate(
             """before => {
               const old=new Set(before||[]);
-              const visible=el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>80&&r.height>60&&s.display!=='none'&&s.visibility!=='hidden'};
-              const all=[...document.querySelectorAll('flow-grid-tile-container')];
-              const candidates=all.map((t,i)=>({t,i,id:t.querySelector('[data-media-id]')?.getAttribute('data-media-id')||''}))
-                .filter(x=>!x.id || !old.has(x.id))
-                .filter(x=>visible(x.t)&&!x.t.querySelector('flow-pending-tile'))
-                .filter(x=>x.t.querySelector('flow-video-tile,flow-video-hotbar,video'));
-              // newest/current Flow video tiles are usually highest in the visible grid after submit batch
-              candidates.sort((a,b)=>b.t.getBoundingClientRect().top-a.t.getBoundingClientRect().top);
-              const x=candidates[0];
-              return x ? {index:x.i,id:x.id,count:candidates.length} : null;
-            }""", before)
-        if not target:
+              const visible=el=>{if(!el)return false;const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>120&&r.height>80&&s.display!=='none'&&s.visibility!=='hidden'};
+              const rows=[];
+              [...document.querySelectorAll('flow-grid-tile-container')].forEach((t,i)=>{
+                if(!visible(t) || t.querySelector('flow-pending-tile')) return;
+                if(!t.querySelector('flow-video-tile,flow-video-hotbar,video')) return;
+                const id=t.querySelector('[data-media-id]')?.getAttribute('data-media-id')||t.getAttribute('data-tile-id')||'';
+                if(id && old.has(id)) return;
+                const r=t.getBoundingClientRect();
+                rows.push({index:i,id,top:r.top,left:r.left,width:r.width,height:r.height});
+              });
+              // Try visible lower/newer tiles first, then the rest.
+              rows.sort((a,b)=>(b.top-a.top)||(a.left-b.left));
+              return rows;
+            }""",
+            list(before),
+        ) or []
+        if not candidates:
             return False, 'current_no_video_tile'
-        tile = page.locator('flow-grid-tile-container').nth(int(target.get('index')))
-        tile.scroll_into_view_if_needed(timeout=5000)
-        tile.hover(timeout=5000)
-        time.sleep(0.7)
-        menu = tile.locator('flow-video-hotbar button[aria-label="Tuỳ chọn khác"],flow-video-hotbar button[aria-label="Tùy chọn khác"],flow-video-hotbar button[aria-label*="Tu"],flow-video-hotbar button[aria-label*="More" i],button[aria-label="Tuỳ chọn khác"],button[aria-label="Tùy chọn khác"]')
-        if menu.count() < 1:
-            tile.hover(timeout=5000, position={"x": 40, "y": 40})
-            time.sleep(0.8)
-        if menu.count() < 1:
-            return False, 'current_more_options_missing'
-        menu.first.click(timeout=5000)
-        time.sleep(0.7)
-        quality = '1K' if str(resolution).upper() == '1K' else ('720p' if str(resolution) in ('720','720p') else str(resolution))
-        items = page.locator('.cdk-overlay-pane button.mat-mdc-menu-item,.cdk-overlay-pane [role="menuitem"],.cdk-overlay-pane button')
-        quality_option = items.filter(has_text=re.compile(re.escape(quality), re.I))
-        if quality_option.count() < 1:
-            quality_option = items.filter(has_text=re.compile(r"720p|720|1080p|1080|Kích thước gốc|Kích thước gốc", re.I))
-        if quality_option.count() < 1:
-            return False, f'current_quality_missing:{quality}'
-        quality_option.first.wait_for(state='visible', timeout=7000)
-        with page.expect_download(timeout=300000) as info:
-            quality_option.first.click(timeout=5000)
-        dl=info.value
-        tmp=Path(dl.path())
-        data=tmp.read_bytes(); ext=_detect_ext_from_bytes(data[:64])
-        if not ext:
-            return False, 'current_invalid_download_bytes'
-        target_path=_next_numbered_media_target(output_dir=output_dir, ext=ext)
-        dl.save_as(str(target_path)); _remember_media_hash(data,target_path.name,output_dir=output_dir)
-        return True, f'current_saved_as:{target_path.name}'
+        last = 'none'
+        for cand in candidates:
+            idx = int(cand.get('index'))
+            try:
+                tile = page.locator('flow-grid-tile-container').nth(idx)
+                tile.scroll_into_view_if_needed(timeout=5000)
+                tile.hover(timeout=5000)
+                time.sleep(0.8)
+                menu = tile.locator(
+                    'flow-video-hotbar button[aria-label="Tuỳ chọn khác"],'
+                    'flow-video-hotbar button[aria-label="Tùy chọn khác"],'
+                    'flow-video-hotbar button[aria-label*="Tu"],'
+                    'flow-video-hotbar button[aria-label*="More" i],'
+                    'button[aria-label="Tuỳ chọn khác"],button[aria-label="Tùy chọn khác"],button[aria-label*="More" i]'
+                )
+                if menu.count() < 1:
+                    tile.hover(timeout=5000, position={"x": max(20, min(80, int(cand.get('width') or 80) - 10)), "y": 40})
+                    time.sleep(0.8)
+                if menu.count() < 1:
+                    last = f'tile_{idx}:more_options_missing'
+                    continue
+                menu.first.click(timeout=5000)
+                time.sleep(0.7)
+                items = page.locator('.cdk-overlay-pane button.mat-mdc-menu-item,.cdk-overlay-pane [role="menuitem"],.cdk-overlay-pane button')
+                quality_option = items.filter(has_text=re.compile(re.escape(quality), re.I))
+                if quality_option.count() < 1:
+                    quality_option = items.filter(has_text=re.compile(r"720p|720|1080p|1080|Kích thước gốc|Kích thước gốc", re.I))
+                if quality_option.count() < 1:
+                    # close this menu before trying next tile
+                    close_open_menus(page)
+                    last = f'tile_{idx}:quality_missing:{quality}'
+                    continue
+                quality_option.first.wait_for(state='visible', timeout=7000)
+                with page.expect_download(timeout=300000) as info:
+                    quality_option.first.click(timeout=5000)
+                dl=info.value
+                tmp=Path(dl.path())
+                data=tmp.read_bytes(); ext=_detect_ext_from_bytes(data[:64])
+                if not ext:
+                    last = f'tile_{idx}:invalid_download_bytes'
+                    continue
+                target_path=_next_numbered_media_target(output_dir=output_dir, ext=ext)
+                dl.save_as(str(target_path)); _remember_media_hash(data,target_path.name,output_dir=output_dir)
+                return True, f'current_saved_as:{target_path.name}'
+            except Exception as e:
+                try:
+                    close_open_menus(page)
+                except Exception:
+                    pass
+                last = f'tile_{idx}:exception:{e}'
+                continue
+        return False, f'current_all_video_tiles_failed:{last}'
     except Exception as e:
         return False, f'current_exception:{e}'
 
