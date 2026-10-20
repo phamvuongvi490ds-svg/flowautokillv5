@@ -1855,8 +1855,14 @@ def current_flow_download_tile_via_ui(page, resolution="720p", before_ids=None, 
             }""",
             list(before),
         ) or []
+        if not candidates and before:
+            log_line('[flow] hotbar candidate fallback: ignore before_ids because video tile has no stable id')
+            candidates = page.evaluate(
+                """() => [...document.querySelectorAll('flow-grid-tile-container')].map((t,i)=>{const r=t.getBoundingClientRect(),s=getComputedStyle(t);return {index:i,id:'',top:r.top,left:r.left,width:r.width,height:r.height,video:!!t.querySelector('flow-video-tile,flow-video-hotbar,video'),visible:s.display!=='none'&&s.visibility!=='hidden'&&r.width>120&&r.height>80&&!t.querySelector('flow-pending-tile')};}).filter(x=>x.visible&&x.video).sort((a,b)=>(b.top-a.top)||(a.left-b.left))"""
+            ) or []
         if not candidates:
             return False, 'current_no_video_tile'
+        log_line(f'[flow] hotbar downloader candidates={len(candidates)} resolution={quality}')
         last = 'none'
         for cand in candidates:
             idx = int(cand.get('index'))
@@ -1878,13 +1884,16 @@ def current_flow_download_tile_via_ui(page, resolution="720p", before_ids=None, 
                 if menu.count() < 1:
                     last = f'tile_{idx}:more_options_missing'
                     continue
+                log_line(f'[flow] hotbar click tile={idx}')
                 menu.first.click(timeout=7000, force=True)
-                time.sleep(0.8)
+                time.sleep(1.0)
                 overlay = page.locator('.cdk-overlay-pane:visible')
                 items = overlay.locator('button.mat-mdc-menu-item,[role="menuitem"],button') if overlay.count() else page.locator('.cdk-overlay-pane button.mat-mdc-menu-item,.cdk-overlay-pane [role="menuitem"],.cdk-overlay-pane button')
                 quality_option = items.filter(has_text=re.compile(r"(?:720\s*p|720|1080\s*p|1080|k[ií]ch\s*th[ướư][ớơ]c\s*g[ốo]c)", re.I))
                 if quality_option.count() < 1:
                     quality_option = items.filter(has_text=re.compile(r"download|tải\s*xuống|original|g[ốo]c", re.I))
+                if quality_option.count() >= 1:
+                    log_line(f'[flow] hotbar quality option found tile={idx}')
                 if quality_option.count() < 1:
                     # close this menu before trying next tile
                     close_open_menus(page)
