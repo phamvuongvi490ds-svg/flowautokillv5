@@ -1878,12 +1878,13 @@ def current_flow_download_tile_via_ui(page, resolution="720p", before_ids=None, 
                 if menu.count() < 1:
                     last = f'tile_{idx}:more_options_missing'
                     continue
-                menu.first.click(timeout=5000)
-                time.sleep(0.7)
-                items = page.locator('.cdk-overlay-pane button.mat-mdc-menu-item,.cdk-overlay-pane [role="menuitem"],.cdk-overlay-pane button')
-                quality_option = items.filter(has_text=re.compile(re.escape(quality), re.I))
+                menu.first.click(timeout=7000, force=True)
+                time.sleep(0.8)
+                overlay = page.locator('.cdk-overlay-pane:visible')
+                items = overlay.locator('button.mat-mdc-menu-item,[role="menuitem"],button') if overlay.count() else page.locator('.cdk-overlay-pane button.mat-mdc-menu-item,.cdk-overlay-pane [role="menuitem"],.cdk-overlay-pane button')
+                quality_option = items.filter(has_text=re.compile(r"(?:720\s*p|720|1080\s*p|1080|k[ií]ch\s*th[ướư][ớơ]c\s*g[ốo]c)", re.I))
                 if quality_option.count() < 1:
-                    quality_option = items.filter(has_text=re.compile(r"720p|720|1080p|1080|Kích thước gốc|Kích thước gốc", re.I))
+                    quality_option = items.filter(has_text=re.compile(r"download|tải\s*xuống|original|g[ốo]c", re.I))
                 if quality_option.count() < 1:
                     # close this menu before trying next tile
                     close_open_menus(page)
@@ -2118,13 +2119,25 @@ def auto_download_with_retry(page, resolution="720p", timeout_sec=480, before_id
     if res == "720":
         res = "720p"
     while time.time() < deadline:
-        # Proven old behavior: fetch media bytes directly, no Flow menu click.
+        # Current Flow video tiles expose a thumbnail and hotbar, not a video URL.
+        # Use the native hotbar download before trying direct media extraction.
+        try:
+            has_video_tile = bool(page.evaluate("""() => [...document.querySelectorAll('flow-grid-tile-container')].some(t => { const s=getComputedStyle(t),r=t.getBoundingClientRect(); return s.display!=='none'&&s.visibility!=='hidden'&&r.width>120&&r.height>80&&!t.querySelector('flow-pending-tile')&&!!t.querySelector('flow-video-tile,flow-video-hotbar,video'); })"""))
+        except Exception:
+            has_video_tile = False
+        if has_video_tile:
+            ok, step = current_flow_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
+            last = step
+            if ok:
+                return True, step
+        # Direct extraction remains the image path and fallback for Flow versions
+        # that expose the generated media URL in the DOM.
         ok, step = direct_download_media_from_tile(page, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
         last = step
         if ok:
             return True, step
-        # Current Flow UI fallback: video hotbar More options -> 720p.
-        ok, step = current_flow_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
+        if not has_video_tile:
+            ok, step = current_flow_download_tile_via_ui(page, resolution=res, before_ids=before_ids, output_prefix=output_prefix, output_dir=output_dir)
         last = step
         if ok:
             return True, step
