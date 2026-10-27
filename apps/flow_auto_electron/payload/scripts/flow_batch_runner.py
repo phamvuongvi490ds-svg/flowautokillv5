@@ -1900,8 +1900,25 @@ def current_flow_download_tile_via_ui(page, resolution="720p", before_ids=None, 
                     last = f'tile_{idx}:quality_missing:{quality}'
                     continue
                 quality_option.first.wait_for(state='visible', timeout=7000)
+                # In the current Flow DOM the resolution row is a mat-menu-trigger
+                # (submenu), not the final download action. Open it first, then
+                # select the child item such as 720p / Kích thước gốc.
+                is_submenu = 'mat-mdc-menu-trigger' in (quality_option.first.get_attribute('class') or '')
+                if is_submenu:
+                    quality_option.first.hover(timeout=5000)
+                    quality_option.first.click(timeout=7000, force=True)
+                    time.sleep(0.8)
+                    child_overlay = page.locator('.cdk-overlay-pane:visible')
+                    child_items = child_overlay.locator('button.mat-mdc-menu-item,[role="menuitem"],button') if child_overlay.count() else page.locator('.cdk-overlay-pane button.mat-mdc-menu-item,.cdk-overlay-pane [role="menuitem"],.cdk-overlay-pane button')
+                    child_option = child_items.filter(has_text=re.compile(r"(?:720\s*p|k[ií]ch\s*th[ướư][ớơ]c\s*g[ốo]c|original|1080\s*p)", re.I))
+                    if child_option.count() < 1:
+                        last = f'tile_{idx}:download_submenu_item_missing:{quality}'
+                        close_open_menus(page)
+                        continue
+                    quality_option = child_option
+                    log_line(f'[flow] hotbar submenu option found tile={idx}')
                 with page.expect_download(timeout=300000) as info:
-                    quality_option.first.click(timeout=5000)
+                    quality_option.first.click(timeout=7000, force=True)
                 dl=info.value
                 tmp=Path(dl.path())
                 data=tmp.read_bytes(); ext=_detect_ext_from_bytes(data[:64])
