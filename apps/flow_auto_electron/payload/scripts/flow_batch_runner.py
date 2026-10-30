@@ -1908,9 +1908,14 @@ def current_flow_download_tile_via_ui(page, resolution="720p", before_ids=None, 
                     quality_option.first.hover(timeout=5000)
                     quality_option.first.click(timeout=7000, force=True)
                     time.sleep(0.8)
-                    child_overlay = page.locator('.cdk-overlay-pane:visible')
-                    child_items = child_overlay.locator('button.mat-mdc-menu-item,[role="menuitem"],button') if child_overlay.count() else page.locator('.cdk-overlay-pane button.mat-mdc-menu-item,.cdk-overlay-pane [role="menuitem"],.cdk-overlay-pane button')
+                    child_overlays = page.locator('.cdk-overlay-pane:visible')
+                    # Flow keeps the parent menu visible while rendering the child
+                    # menu in a second overlay. Use the last overlay and exclude
+                    # menu triggers; otherwise the parent row is clicked again.
+                    child_overlay = child_overlays.last if child_overlays.count() else child_overlays
+                    child_items = child_overlay.locator('button.mat-mdc-menu-item,[role="menuitem"]') if child_overlay.count() else page.locator('.cdk-overlay-pane:visible button.mat-mdc-menu-item,.cdk-overlay-pane:visible [role="menuitem"]')
                     child_option = child_items.filter(has_text=re.compile(r"(?:720\s*p|k[ií]ch\s*th[ướư][ớơ]c\s*g[ốo]c|original|1080\s*p)", re.I))
+                    child_option = child_option.filter(has_not=page.locator('.mat-mdc-menu-trigger'))
                     if child_option.count() < 1:
                         last = f'tile_{idx}:download_submenu_item_missing:{quality}'
                         close_open_menus(page)
