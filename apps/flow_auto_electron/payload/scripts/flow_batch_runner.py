@@ -1900,28 +1900,38 @@ def current_flow_download_tile_via_ui(page, resolution="720p", before_ids=None, 
                     last = f'tile_{idx}:quality_missing:{quality}'
                     continue
                 quality_option.first.wait_for(state='visible', timeout=7000)
-                # In the current Flow DOM the resolution row is a mat-menu-trigger
-                # (submenu), not the final download action. Open it first, then
-                # select the child item such as 720p / Kích thước gốc.
-                is_submenu = 'mat-mdc-menu-trigger' in (quality_option.first.get_attribute('class') or '')
-                if is_submenu:
+                # Current Flow uses nested menus: More -> Download -> 720p /
+                # Original -> final leaf action. Walk submenu triggers until leaf.
+                for menu_depth in range(4):
+                    classes = quality_option.first.get_attribute('class') or ''
+                    if 'mat-mdc-menu-trigger' not in classes and 'mat-mdc-menu-item-submenu-trigger' not in classes:
+                        break
                     quality_option.first.hover(timeout=5000)
                     quality_option.first.click(timeout=7000, force=True)
                     time.sleep(0.8)
-                    child_overlays = page.locator('.cdk-overlay-pane:visible')
-                    # Flow keeps the parent menu visible while rendering the child
-                    # menu in a second overlay. Use the last overlay and exclude
-                    # menu triggers; otherwise the parent row is clicked again.
-                    child_overlay = child_overlays.last if child_overlays.count() else child_overlays
-                    child_items = child_overlay.locator('button.mat-mdc-menu-item,[role="menuitem"]') if child_overlay.count() else page.locator('.cdk-overlay-pane:visible button.mat-mdc-menu-item,.cdk-overlay-pane:visible [role="menuitem"]')
-                    child_option = child_items.filter(has_text=re.compile(r"(?:720\s*p|k[ií]ch\s*th[ướư][ớơ]c\s*g[ốo]c|original|1080\s*p)", re.I))
-                    child_option = child_option.filter(has_not=page.locator('.mat-mdc-menu-trigger'))
-                    if child_option.count() < 1:
+                    overlays = page.locator('.cdk-overlay-pane:visible')
+                    overlay_next = overlays.last if overlays.count() else overlays
+                    children = overlay_next.locator('button.mat-mdc-menu-item,[role="menuitem"]') if overlay_next.count() else page.locator('.cdk-overlay-pane:visible button.mat-mdc-menu-item,.cdk-overlay-pane:visible [role="menuitem"]')
+                    if menu_depth < 3:
+                        desired = children.filter(has_text=re.compile(r"(?:720\s*p|k[ií]ch\s*th[ướư][ớơ]c\s*g[ốo]c|original|1080\s*p)", re.I))
+                        if desired.count() < 1:
+                            desired = children.filter(has_text=re.compile(r"download|tải\s*xuống", re.I))
+                    else:
+                        desired = children
+                    if desired.count() < 1:
                         last = f'tile_{idx}:download_submenu_item_missing:{quality}'
                         close_open_menus(page)
-                        continue
-                    quality_option = child_option
-                    log_line(f'[flow] hotbar submenu option found tile={idx}')
+                        break
+                    quality_option = desired.first
+                    log_line(f'[flow] hotbar submenu level={menu_depth + 1} tile={idx}')
+                else:
+                    last = f'tile_{idx}:download_menu_depth_exceeded'
+                    close_open_menus(page)
+                    continue
+                if 'mat-mdc-menu-trigger' in (quality_option.first.get_attribute('class') or '') or 'mat-mdc-menu-item-submenu-trigger' in (quality_option.first.get_attribute('class') or ''):
+                    last = f'tile_{idx}:download_leaf_missing:{quality}'
+                    close_open_menus(page)
+                    continue
                 with page.expect_download(timeout=300000) as info:
                     quality_option.first.click(timeout=7000, force=True)
                 dl=info.value
