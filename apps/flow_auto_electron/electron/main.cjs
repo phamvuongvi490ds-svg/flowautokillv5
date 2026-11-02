@@ -1225,9 +1225,6 @@ ipcMain.handle('flow:outputTimeline', async(_e,dirs=[])=>{
   }}catch(e){return {ok:false,error:'timeline_scan_failed:'+String(e.message||e),dir,items:[]}}
   return {ok:true,dir,items:[...byPrompt.values()].sort((a,b)=>a.prompt-b.prompt),...runState()};
 });
-ipcMain.handle('flow:debugStart', async()=>{try{await ensureCdp();return await startFlowDebug()}catch(e){return {ok:false,error:String(e.message||e)}}});
-ipcMain.handle('flow:debugStop', async()=>stopFlowDebug());
-ipcMain.handle('flow:debugExport', async()=>{try{return await exportFlowDebug()}catch(e){return {ok:false,error:String(e.message||e)}}});
 ipcMain.handle('flow:ensureCdp', async()=>ensureCdp());
 ipcMain.handle('flow:openProfileLogin', async(_e,profile,idx=0)=>{ const port=CDP_PORT+Number(idx||0); const dir=flowProfileDir(profile||{},Number(idx||0)); return ensureCdpOn(port,dir); });
 ipcMain.handle('prompt:saveGenerated', async(_e,file)=>{
