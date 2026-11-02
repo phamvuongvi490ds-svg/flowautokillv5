@@ -1940,8 +1940,18 @@ def current_flow_download_tile_via_ui(page, resolution="720p", before_ids=None, 
                 if not ext:
                     last = f'tile_{idx}:invalid_download_bytes'
                     continue
+                # Flow's browser download may use a UUID/no-extension temporary
+                # filename even when the payload is valid MP4. Never preserve that
+                # temporary name: save to our own sequential media filename.
+                # Video hotbar downloads are expected to be MP4 when the payload
+                # has an ISO-BMFF `ftyp` signature; `_detect_ext_from_bytes` has
+                # already validated this before reaching here.
                 target_path=_next_numbered_media_target(output_dir=output_dir, ext=ext)
-                dl.save_as(str(target_path)); _remember_media_hash(data,target_path.name,output_dir=output_dir)
+                dl.save_as(str(target_path))
+                if not target_path.exists() or target_path.stat().st_size != len(data):
+                    target_path.write_bytes(data)
+                _remember_media_hash(data,target_path.name,output_dir=output_dir)
+                log_line(f'[flow] normalized download filename={target_path.name} ext={ext} bytes={len(data)}')
                 return True, f'current_saved_as:{target_path.name}'
             except Exception as e:
                 try:
